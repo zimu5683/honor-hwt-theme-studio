@@ -20,6 +20,20 @@ IMAGE_LAYOUT = {
     "preview/preview_widget_1.jpg": (1080, 2160),
 }
 
+# Honor Theme Manager 20.x does not infer ZIP directories from child paths.
+# For a third-party local theme it explicitly requires a ``preview/`` entry
+# and an ``icons`` module before the package is admitted to the local-theme
+# list.  The icons module is deliberately empty, so unconfigured icons still
+# fall back to the system defaults.
+DIRECTORY_ENTRIES = ("unlock/", "wallpaper/", "preview/")
+
+
+def empty_icons_module() -> bytes:
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=9):
+        pass
+    return output.getvalue()
+
 
 def description_xml(title: str, author: str, designer: str, version: str, screen: str) -> bytes:
     from xml.sax.saxutils import escape
@@ -56,10 +70,12 @@ def placeholder_jpeg(size: tuple[int, int]) -> bytes:
 
 
 def blank_entries(title="空白主题", author="子木", designer="子木", version="1.0.0", screen="FHD") -> dict[str, bytes]:
-    entries = {
+    entries = {name: b"" for name in DIRECTORY_ENTRIES}
+    entries.update({
         "description.xml": description_xml(title, author, designer, version, screen),
         "unlock/theme.xml": unlock_xml(),
-    }
+        "icons": empty_icons_module(),
+    })
     entries.update({path: placeholder_jpeg(size) for path, size in IMAGE_LAYOUT.items()})
     return entries
 
@@ -78,4 +94,3 @@ def create_blank_theme(
         for name, data in blank_entries(title, author, designer, version, screen).items():
             archive.writestr(name, data)
     return output
-

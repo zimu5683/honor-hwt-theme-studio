@@ -34,7 +34,17 @@ def validate_theme(path: Path) -> dict:
             if bad:
                 errors.append({"kind": "crc", "path": bad})
             names = set(outer.namelist())
-            required = {"description.xml", "unlock/theme.xml", "wallpaper/home_wallpaper_0.jpg", "wallpaper/unlock_wallpaper_0.jpg"}
+            required = {
+                "description.xml",
+                "unlock/theme.xml",
+                "wallpaper/home_wallpaper_0.jpg",
+                "wallpaper/unlock_wallpaper_0.jpg",
+                # Required by Honor Theme Manager's isValidThemeInfo() for
+                # external/local HWT packages.  Merely having preview/* files
+                # is not enough: the directory entry itself must exist.
+                "preview/",
+                "icons",
+            }
             for missing in sorted(required - names):
                 errors.append({"kind": "missing_required", "path": missing})
             for info in outer.infolist():
@@ -86,4 +96,3 @@ def validate_theme(path: Path) -> dict:
     except BadZipFile as exc:
         errors.append({"kind": "outer_zip", "message": str(exc)})
     return {"valid": not errors, "errors": errors, "warnings": warnings, "modules": modules, "resource_nodes": resources}
-

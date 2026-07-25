@@ -63,9 +63,27 @@ def transfer_to_phone(path: Path, host: str = "phone-termux", timeout: int = 180
     if remote_sha != digest.lower():
         raise RuntimeError(f"上传校验失败：本机 {digest}，手机 {remote_sha or '无结果'}")
     finalize = _run(
-        ["ssh", host, f"mv -f {shlex.quote(remote_temp)} {shlex.quote(remote_final)}"],
+        ["ssh", host, f"mv -f {shlex.quote(remote_temp)} {shlex.quote(remote_final)} && sync"],
         timeout=60,
     )
     if finalize.returncode != 0:
         raise RuntimeError("手机端改名失败：" + (finalize.stderr or finalize.stdout).strip())
-    return {"local": str(path), "remote": remote_final, "sha256": digest}
+    # Opening the app makes the normal, unprivileged workflow explicit and
+    # gives Theme Manager a chance to rescan its local-theme directory.  Do
+    # not force-stop it here: Termux is intentionally not granted that power.
+    opened = _run(
+        [
+            "ssh",
+            host,
+            "am start -a android.intent.action.MAIN "
+            "-c android.intent.category.LAUNCHER "
+            "-n com.hihonor.android.thememanager/.PageActivity",
+        ],
+        timeout=30,
+    )
+    return {
+        "local": str(path),
+        "remote": remote_final,
+        "sha256": digest,
+        "theme_app_opened": opened.returncode == 0,
+    }

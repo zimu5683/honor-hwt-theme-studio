@@ -886,7 +886,13 @@ class MainWindow(QMainWindow):
     def _transfer_finished(self, result: dict):
         self.progress.close()
         self.log(f"发送成功：{result['remote']}\nSHA-256：{result['sha256']}")
-        QMessageBox.information(self, "发送成功", f"手机路径：\n{result['remote']}\n\nSHA-256 校验一致。")
+        opened = "已为你打开荣耀‘主题’应用。" if result.get("theme_app_opened") else "请手动打开荣耀‘主题’应用。"
+        QMessageBox.information(
+            self,
+            "发送成功",
+            f"手机路径：\n{result['remote']}\n\nSHA-256 校验一致。\n{opened}"
+            "\n请进入‘我的→下载→主题’查找；如页面已经打开，请返回后重新进入一次。",
+        )
 
     def _transfer_failed(self, detail: str):
         self.progress.close()

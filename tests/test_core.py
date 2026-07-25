@@ -10,7 +10,7 @@ from zipfile import ZipFile
 
 from PIL import Image
 
-from hwtstudio.blank import IMAGE_LAYOUT, create_blank_theme
+from hwtstudio.blank import DIRECTORY_ENTRIES, IMAGE_LAYOUT, create_blank_theme
 from hwtstudio.catalog import load_catalog, scan_theme
 from hwtstudio.exporter import export_theme
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
@@ -44,10 +44,27 @@ class CoreTests(unittest.TestCase):
                 self.assertEqual(archive.testzip(), None)
                 self.assertEqual(
                     set(archive.namelist()),
-                    {"description.xml", "unlock/theme.xml", *IMAGE_LAYOUT.keys()},
+                    {
+                        "description.xml",
+                        "unlock/theme.xml",
+                        "icons",
+                        *DIRECTORY_ENTRIES,
+                        *IMAGE_LAYOUT.keys(),
+                    },
                 )
                 self.assertFalse(any(name.startswith("com.") for name in archive.namelist()))
-                self.assertNotIn("icons", archive.namelist())
+                with ZipFile(BytesIO(archive.read("icons"))) as icons:
+                    self.assertEqual(icons.namelist(), [])
+
+    def test_honor_local_theme_admission_entries_are_required(self):
+        """Mirror Theme Manager 20.x isValidThemeInfo()'s local-HWT gate."""
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "blank.hwt"
+            create_blank_theme(output)
+            with ZipFile(output) as archive:
+                names = set(archive.namelist())
+                self.assertIn("preview/", names)
+                self.assertIn("icons", names)
 
     def test_color_only_export_adds_only_one_module(self):
         slot = next(x for x in self.catalog.resources if x.resource_type == "color" and x.module == "com.android.settings")
