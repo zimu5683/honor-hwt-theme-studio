@@ -6,3 +6,10 @@ dist/
 *.spec
 *.tmp
 build_ui_preview.png
+android/.gradle/
+android/.idea/
+android/local.properties
+android/**/build/
+android/*.iml
+android/*.keystore
+android/*.jks

@@ -48,6 +48,7 @@ from .validation import validate_change_value
 from .services.catalog_service import load_preferred_catalog, save_user_catalog
 from .ui.commands import BulkChangeCommand, ChangeCommand
 from .ui.dialogs import CustomResourceDialog, resolve_missing_assets
+from .ui.phone_dialog import PhoneTransferDialog
 from .ui.resource_models import ResourceFilterModel, ResourceTableModel
 from .ui.workers import TransferWorker
 
@@ -99,6 +100,10 @@ class MainWindow(QMainWindow):
             action = QAction(label, self)
             action.triggered.connect(callback)
             toolbar.addAction(action)
+        advanced = self.menuBar().addMenu("高级")
+        ssh_action = QAction("通过 Termux/SSH 发送到手机", self)
+        ssh_action.triggered.connect(self.send_phone_ssh)
+        advanced.addAction(ssh_action)
         toolbar.addSeparator()
         undo_action = self.undo_stack.createUndoAction(self, "撤销")
         redo_action = self.undo_stack.createRedoAction(self, "重做")
@@ -765,28 +770,76 @@ class MainWindow(QMainWindow):
             if not filename:
                 return
             path = Path(filename)
-        self.progress = QProgressDialog("正在通过 phone-termux 上传并校验……", None, 0, 0, self)
+        dialog = PhoneTransferDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        self._start_phone_transfer(
+            path,
+            device=dialog.device,
+            pair_code=dialog.pair_code,
+            use_ssh=dialog.use_ssh,
+        )
+
+    def send_phone_ssh(self):
+        path = self.last_export
+        if not path or not path.is_file():
+            filename, _ = QFileDialog.getOpenFileName(
+                self, "选择要发送的主题", r"D:\HONOR Share\Honor Share", "荣耀主题 (*.hwt)"
+            )
+            if not filename:
+                return
+            path = Path(filename)
+        self._start_phone_transfer(path, use_ssh=True)
+
+    def _start_phone_transfer(self, path: Path, *, device=None, pair_code: str = "", use_ssh: bool = False):
+        if self.transfer_thread and self.transfer_thread.isRunning():
+            QMessageBox.warning(self, "正在发送", "已有一个发送任务正在运行。")
+            return
+        initial = "正在通过 Termux/SSH 上传并校验……" if use_ssh else "正在准备发送到手机……"
+        self.progress = QProgressDialog(initial, "取消", 0, 1000, self)
         self.progress.setWindowTitle("发送到手机")
-        self.progress.setCancelButton(None)
+        self.progress.setMinimumDuration(0)
+        self.progress.setValue(0)
         self.progress.show()
         self.transfer_thread = QThread(self)
-        worker = TransferWorker(path)
+        worker = TransferWorker(path, device=device, pair_code=pair_code, use_ssh=use_ssh)
         worker.moveToThread(self.transfer_thread)
         self.transfer_thread.started.connect(worker.run)
         worker.finished.connect(self._transfer_finished)
         worker.failed.connect(self._transfer_failed)
+        worker.progress.connect(self._transfer_progress)
+        self.progress.canceled.connect(worker.cancel, Qt.DirectConnection)
         worker.finished.connect(self.transfer_thread.quit)
         worker.failed.connect(self.transfer_thread.quit)
         self.transfer_thread.finished.connect(worker.deleteLater)
+        self.transfer_thread.finished.connect(self._transfer_thread_finished)
         self.transfer_thread.start()
         self._transfer_worker = worker
+
+    def _transfer_progress(self, sent: int, total: int, stage: str):
+        if not getattr(self, "progress", None):
+            return
+        self.progress.setLabelText(stage)
+        if total > 0:
+            self.progress.setRange(0, 1000)
+            self.progress.setValue(min(1000, int(sent * 1000 / total)))
+        else:
+            self.progress.setRange(0, 0)
+
+    def _transfer_thread_finished(self):
+        self.transfer_thread = None
+        self._transfer_worker = None
 
     def _transfer_finished(self, result: dict):
         self.progress.close()
         self.log(f"发送成功：{result['remote']}\nSHA-256：{result['sha256']}")
-        opened = "已为你打开荣耀‘主题’应用。" if result.get("theme_app_opened") else "请手动打开荣耀‘主题’应用。"
-        warnings = result.get("preflight", {}).get("warnings", [])
-        warning_text = "\n" + "\n".join(warnings) if warnings else ""
+        if result.get("transport") == "apk":
+            opened = "手机端会显示打开荣耀‘主题’的通知。"
+            warning_text = ""
+        else:
+            opened = "已为你打开荣耀‘主题’应用。" if result.get("theme_app_opened") else "请手动打开荣耀‘主题’应用。"
+            warnings = result.get("preflight", {}).get("warnings", [])
+            warning_text = "\n" + "\n".join(warnings) if warnings else ""
         QMessageBox.information(
             self,
             "发送成功",
@@ -794,10 +847,14 @@ class MainWindow(QMainWindow):
             f"{warning_text}\n请进入‘我的→下载→主题’查找；如页面已经打开，请返回后重新进入一次。",
         )
 
-    def _transfer_failed(self, detail: str):
+    def _transfer_failed(self, detail: str, code: str = "unexpected"):
         self.progress.close()
         self.log(detail)
-        QMessageBox.critical(self, "发送失败", detail.splitlines()[-1] if detail else "未知错误")
+        message = detail.splitlines()[-1] if detail else "未知错误"
+        if code == "cancelled":
+            QMessageBox.information(self, "已取消", message)
+        else:
+            QMessageBox.critical(self, "发送失败", message)
 
     def rescan_source(self):
         filename, _ = QFileDialog.getOpenFileName(self, "选择大雪源主题", str(default_source_theme()), "荣耀主题 (*.hwt)")

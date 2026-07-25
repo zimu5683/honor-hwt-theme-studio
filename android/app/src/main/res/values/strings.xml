@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">荣耀主题传输助手</string>
+    <string name="receiver_channel">主题文件接收</string>
+    <string name="success_channel">传输完成</string>
+</resources>

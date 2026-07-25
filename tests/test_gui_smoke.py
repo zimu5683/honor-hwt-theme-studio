@@ -10,6 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
+from hwtstudio import __version__
 from hwtstudio.app import MainWindow
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
 from hwtstudio.ui.dialogs import resolve_missing_assets
@@ -29,7 +30,7 @@ class GuiSmokeTests(unittest.TestCase):
         window.project.custom_resources.append(custom)
         window.bind_catalog(window.catalog)
         self.assertIn(custom.id, {slot.id for slot in window.resource_model.resources})
-        self.assertEqual(window.windowTitle().split(" - ")[0], "大雪主题编辑器 0.1.0")
+        self.assertEqual(window.windowTitle().split(" - ")[0], f"大雪主题编辑器 {__version__}")
         window.close()
 
     @staticmethod
