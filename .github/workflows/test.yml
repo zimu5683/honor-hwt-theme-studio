@@ -12,7 +12,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Install core dependencies
-        run: python -m pip install Pillow lxml
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt ruff
+      - name: Static checks
+        run: python -m ruff check hwtstudio tests tools run.py
+      - name: Compile sources
+        run: python -m compileall -q hwtstudio tests tools
       - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: python -m unittest discover -s tests -v
+      - name: Validate PyInstaller build
+        run: >-
+          python -m PyInstaller --noconfirm --clean --onefile --windowed
+          --name "大雪主题编辑器" --add-data "assets;assets"
+          --exclude-module PySide6.QtWebEngineCore
+          --exclude-module PySide6.QtWebEngineWidgets
+          --exclude-module PySide6.QtWebEngineQuick run.py

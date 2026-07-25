@@ -3,10 +3,14 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageOps
 
 from .models import ResourceChange, ResourceSlot
 from .pngmeta import inject_android_chunks
+
+
+PLACEHOLDER_SIZE = (1080, 1920)
+PLACEHOLDER_RGBA = (242, 242, 242, 255)
 
 
 def render_image(source: Path, slot: ResourceSlot, change: ResourceChange) -> bytes:
@@ -29,6 +33,25 @@ def render_image(source: Path, slot: ResourceSlot, change: ResourceChange) -> by
     output = BytesIO()
     if target_format == "JPEG":
         image.convert("RGB").save(output, "JPEG", quality=95, optimize=True, subsampling=0)
+    elif target_format == "WEBP":
+        image.save(output, "WEBP", quality=95, method=6)
+    else:
+        image.save(output, "PNG", optimize=True, compress_level=9)
+    data = output.getvalue()
+    if target_format == "PNG" and slot.png_chunks:
+        data = inject_android_chunks(data, slot.png_chunks)
+    return data
+
+
+def render_placeholder(slot: ResourceSlot) -> bytes:
+    """Render a neutral managed placeholder using the slot's output format."""
+    width = slot.width or PLACEHOLDER_SIZE[0]
+    height = slot.height or PLACEHOLDER_SIZE[1]
+    image = Image.new("RGBA", (width, height), PLACEHOLDER_RGBA)
+    target_format = (slot.actual_format or _format_from_extension(slot.extension or Path(slot.path).suffix)).upper()
+    output = BytesIO()
+    if target_format == "JPEG":
+        image.convert("RGB").save(output, "JPEG", quality=90, optimize=True)
     elif target_format == "WEBP":
         image.save(output, "WEBP", quality=95, method=6)
     else:
@@ -74,4 +97,3 @@ def _format_from_extension(extension: str) -> str:
     if lowered == ".webp":
         return "WEBP"
     return "PNG"
-

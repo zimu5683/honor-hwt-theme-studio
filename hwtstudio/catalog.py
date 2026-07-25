@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
-from base64 import b64encode
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -249,7 +249,12 @@ def scan_theme(path: Path) -> ThemeCatalog:
 
 def save_catalog(catalog: ThemeCatalog, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(catalog.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    temp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        temp.write_text(json.dumps(catalog.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def load_catalog(path: Path) -> ThemeCatalog:

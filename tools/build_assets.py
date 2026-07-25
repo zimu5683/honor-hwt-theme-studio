@@ -8,8 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from hwtstudio.blank import create_blank_theme
-from hwtstudio.catalog import save_catalog, scan_theme
+from hwtstudio.blank import create_blank_theme  # noqa: E402
+from hwtstudio.catalog import save_catalog, scan_theme  # noqa: E402
 
 
 def main() -> int:

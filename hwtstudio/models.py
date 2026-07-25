@@ -75,6 +75,7 @@ class ResourceChange:
     enabled: bool = True
     value: str | None = None
     source_file: str | None = None
+    source_kind: str = "file"
     fit: str = "cover"
     focus_x: float = 0.5
     focus_y: float = 0.5
@@ -113,7 +114,7 @@ class ThemeProject:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema": 1,
+            "schema": 2,
             "name": self.name,
             "title": self.title,
             "author": self.author,

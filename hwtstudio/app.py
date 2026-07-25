@@ -1,23 +1,18 @@
 from __future__ import annotations
 
 import copy
-import json
-import shutil
 import sys
 import traceback
-import uuid
-from io import BytesIO
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QObject, QSortFilterProxyModel, Qt, QThread, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPixmap, QUndoCommand, QUndoStack
+from PySide6.QtCore import Qt, QThread, QTimer
+from PySide6.QtGui import QAction, QColor, QFont, QPixmap, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QColorDialog,
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -42,237 +37,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .blank import create_blank_theme
 from . import __version__
-from .catalog import load_catalog, save_catalog, scan_theme
-from .exporter import default_export_name, export_theme
-from .imageops import render_image
+from .catalog import scan_theme
+from .exporter import default_export_name, export_theme, preflight_export
+from .imageops import render_image, render_placeholder
 from .models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
-from .paths import APP_NAME, bundled_blank_theme, bundled_catalog, data_dir, default_source_theme
+from .paths import APP_NAME, default_source_theme
 from .projectio import load_project, save_project
-from .ssh_transfer import transfer_to_phone
-from .validation import normalize_color
-
-
-HEADERS = ["状态", "分类", "模块", "类型", "中文说明", "资源名", "路径", "当前设置"]
-
-
-class ResourceTableModel(QAbstractTableModel):
-    def __init__(self, catalog: ThemeCatalog, project: ThemeProject):
-        super().__init__()
-        self.catalog = catalog
-        self.project = project
-        self.resources = catalog.resources
-
-    def rowCount(self, parent=QModelIndex()):
-        return 0 if parent.isValid() else len(self.resources)
-
-    def columnCount(self, parent=QModelIndex()):
-        return len(HEADERS)
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
-            return HEADERS[section]
-        return super().headerData(section, orientation, role)
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        slot = self.resources[index.row()]
-        change = self.project.changes.get(slot.id)
-        if role == Qt.DisplayRole:
-            values = [
-                "已启用" if change and change.enabled else "未启用（系统默认）",
-                slot.category,
-                slot.module,
-                slot.resource_type,
-                slot.label,
-                slot.name,
-                slot.path or "—",
-                self._change_text(change),
-            ]
-            return values[index.column()]
-        if role == Qt.ToolTipRole:
-            return f"状态：{slot.status}\n风险：{slot.risk}\nID：{slot.id}"
-        if role == Qt.ForegroundRole:
-            if slot.status == "当前版本不支持":
-                return QColor("#B00020")
-            if change and change.enabled:
-                return QColor("#006C4C")
-        if role == Qt.UserRole:
-            return slot.id
-        return None
-
-    @staticmethod
-    def _change_text(change: ResourceChange | None) -> str:
-        if not change or not change.enabled:
-            return "—"
-        if change.value is not None:
-            return change.value
-        if change.source_file:
-            return Path(change.source_file).name
-        return "已启用"
-
-    def slot(self, row: int) -> ResourceSlot:
-        return self.resources[row]
-
-    def refresh(self):
-        self.layoutChanged.emit()
-
-
-class ResourceFilterModel(QSortFilterProxyModel):
-    def __init__(self):
-        super().__init__()
-        self.query = ""
-        self.category = "全部"
-        self.resource_type = "全部"
-        self.modified_only = False
-
-    def filterAcceptsRow(self, source_row, source_parent):
-        model: ResourceTableModel = self.sourceModel()
-        slot = model.slot(source_row)
-        if self.category != "全部" and slot.category != self.category:
-            return False
-        if self.resource_type != "全部" and slot.resource_type != self.resource_type:
-            return False
-        if self.modified_only and slot.id not in model.project.changes:
-            return False
-        if self.query:
-            haystack = " ".join((slot.id, slot.module, slot.container, slot.name, slot.path, slot.category, slot.label)).lower()
-            if self.query.lower() not in haystack:
-                return False
-        return True
-
-    def set_filters(self, query: str, category: str, resource_type: str, modified_only: bool):
-        self.query = query
-        self.category = category
-        self.resource_type = resource_type
-        self.modified_only = modified_only
-        self.invalidateFilter()
-
-
-class ChangeCommand(QUndoCommand):
-    def __init__(self, window: "MainWindow", slot_id: str, new_change: ResourceChange | None, text: str):
-        super().__init__(text)
-        self.window = window
-        self.slot_id = slot_id
-        self.new_change = copy.deepcopy(new_change)
-        self.old_change = copy.deepcopy(window.project.changes.get(slot_id))
-
-    def _set(self, change):
-        if change is None:
-            self.window.project.changes.pop(self.slot_id, None)
-        else:
-            self.window.project.changes[self.slot_id] = copy.deepcopy(change)
-        self.window.project.dirty = True
-        self.window.refresh_views()
-
-    def redo(self):
-        self._set(self.new_change)
-
-    def undo(self):
-        self._set(self.old_change)
-
-
-class BulkChangeCommand(QUndoCommand):
-    def __init__(self, window: "MainWindow", new_changes: dict[str, ResourceChange], text: str):
-        super().__init__(text)
-        self.window = window
-        self.new_changes = copy.deepcopy(new_changes)
-        self.old_changes = {key: copy.deepcopy(window.project.changes.get(key)) for key in new_changes}
-
-    def _apply(self, values):
-        for key, change in values.items():
-            if change is None:
-                self.window.project.changes.pop(key, None)
-            else:
-                self.window.project.changes[key] = copy.deepcopy(change)
-        self.window.project.dirty = True
-        self.window.refresh_views()
-
-    def redo(self):
-        self._apply(self.new_changes)
-
-    def undo(self):
-        self._apply(self.old_changes)
-
-
-class CustomResourceDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("添加高级覆盖资源")
-        layout = QFormLayout(self)
-        self.module = QLineEdit("com.android.settings")
-        self.kind = QComboBox()
-        self.kind.addItems(["color", "bool", "string", "image"])
-        self.name = QLineEdit()
-        self.path = QLineEdit("theme.xml")
-        self.width = QLineEdit()
-        self.height = QLineEdit()
-        layout.addRow("目标包名/模块", self.module)
-        layout.addRow("资源类型", self.kind)
-        layout.addRow("资源名", self.name)
-        layout.addRow("theme.xml 或图片路径", self.path)
-        layout.addRow("目标宽度（图片可选）", self.width)
-        layout.addRow("目标高度（图片可选）", self.height)
-        hint = QLabel("仅在已经确认准确包名和 Android 资源路径时使用。图片路径示例：res/drawable-xxhdpi/example.png")
-        hint.setWordWrap(True)
-        layout.addRow(hint)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addRow(buttons)
-
-    def create_slot(self) -> ResourceSlot:
-        module = self.module.text().strip()
-        kind = self.kind.currentText()
-        name = self.name.text().strip()
-        path = self.path.text().strip().replace("\\", "/")
-        if not module or not name or not path:
-            raise ValueError("模块、资源名和路径不能为空")
-        if kind == "image" and Path(path).suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
-            raise ValueError("图片路径必须以 .png、.jpg、.jpeg 或 .webp 结尾")
-        try:
-            width = int(self.width.text()) if self.width.text().strip() else None
-            height = int(self.height.text()) if self.height.text().strip() else None
-        except ValueError:
-            raise ValueError("宽度和高度必须是整数")
-        actual = None
-        if kind == "image":
-            suffix = Path(path).suffix.lower()
-            actual = "JPEG" if suffix in {".jpg", ".jpeg"} else "WEBP" if suffix == ".webp" else "PNG"
-        return ResourceSlot(
-            id=f"__custom__::{uuid.uuid4().hex}",
-            module=module,
-            container=path if kind != "image" else "",
-            resource_type=kind,
-            name=name,
-            path=path,
-            category="高级自定义",
-            label=f"自定义：{name}",
-            status="可能支持",
-            risk="高",
-            width=width,
-            height=height,
-            actual_format=actual,
-            extension=Path(path).suffix.lower() if kind == "image" else None,
-            synthetic=False,
-        )
-
-
-class TransferWorker(QObject):
-    finished = Signal(dict)
-    failed = Signal(str)
-
-    def __init__(self, path: Path):
-        super().__init__()
-        self.path = path
-
-    def run(self):
-        try:
-            self.finished.emit(transfer_to_phone(self.path))
-        except Exception:
-            self.failed.emit(traceback.format_exc())
+from .validation import validate_change_value
+from .services.catalog_service import load_preferred_catalog, save_user_catalog
+from .ui.commands import BulkChangeCommand, ChangeCommand
+from .ui.dialogs import CustomResourceDialog, resolve_missing_assets
+from .ui.resource_models import ResourceFilterModel, ResourceTableModel
+from .ui.workers import TransferWorker
 
 
 class MainWindow(QMainWindow):
@@ -288,19 +65,11 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._bind_project()
         self.log("已加载大雪资源目录。原始主题仅用于只读分析，不会被修改。")
+        if self._catalog_load_warning:
+            self.log(self._catalog_load_warning)
 
     def _load_initial_catalog(self) -> ThemeCatalog:
-        catalog_path = bundled_catalog()
-        if catalog_path.is_file():
-            return load_catalog(catalog_path)
-        cached = data_dir() / "catalog_daxue.json"
-        if cached.is_file():
-            return load_catalog(cached)
-        source = default_source_theme()
-        if not source.is_file():
-            raise FileNotFoundError("找不到资源目录，也找不到默认大雪主题。")
-        catalog = scan_theme(source)
-        save_catalog(catalog, cached)
+        catalog, self._catalog_load_warning = load_preferred_catalog()
         return catalog
 
     def _build_ui(self):
@@ -359,6 +128,7 @@ class MainWindow(QMainWindow):
             f"资源总槽位：{stats.get('resource_slots', len(self.catalog.resources))}"
         )
         stats_label = QLabel(stats_text)
+        self.stats_label = stats_label
         stats_label.setStyleSheet("padding: 12px; background: #EEF3F8; border-radius: 6px;")
         layout.addWidget(stats_label)
 
@@ -387,6 +157,7 @@ class MainWindow(QMainWindow):
             "微信 8.0.76 主界面图片背景已标记为当前 HWT 方案不支持。"
         )
         warning.setWordWrap(True)
+        self.catalog_warning_label = warning
         warning.setStyleSheet("padding: 10px; color: #7A3E00; background: #FFF4E5;")
         layout.addWidget(warning)
         layout.addStretch(1)
@@ -419,15 +190,65 @@ class MainWindow(QMainWindow):
         layout.addLayout(grid)
 
         backgrounds = QGroupBox("独立应用背景快捷入口")
-        bg_layout = QHBoxLayout(backgrounds)
+        self.backgrounds_group = backgrounds
+        self.backgrounds_layout = QHBoxLayout(backgrounds)
+        self._refresh_background_shortcuts()
+        layout.addWidget(backgrounds)
+        layout.addStretch(1)
+        return page
+
+    def _refresh_background_shortcuts(self):
+        while self.backgrounds_layout.count():
+            item = self.backgrounds_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
         for slot in self.catalog.resources:
             if slot.synthetic and slot.id.startswith("__synthetic__::background"):
                 button = QPushButton(slot.label)
                 button.clicked.connect(lambda checked=False, sid=slot.id: self.select_slot(sid))
-                bg_layout.addWidget(button)
-        layout.addWidget(backgrounds)
-        layout.addStretch(1)
-        return page
+                self.backgrounds_layout.addWidget(button)
+
+    def _refresh_catalog_summary(self):
+        stats = self.catalog.stats
+        self.stats_label.setText(
+            f"应用/框架 ZIP：{stats.get('modules', 0)}　"
+            f"颜色槽位：{stats.get('color_slots', 0)}　"
+            f"图片槽位：{stats.get('image_slots', 0)}　"
+            f"图标槽位：{stats.get('icon_slots', 0)}　"
+            f"资源总槽位：{stats.get('resource_slots', len(self.catalog.resources))}"
+        )
+        self.catalog_warning_label.setText(
+            f"源主题包含 {len(self.catalog.warnings)} 条兼容性记录；它们不会复制到空白主题。"
+            "微信 8.0.76 主界面图片背景已标记为当前 HWT 方案不支持。"
+        )
+
+    def _replace_combo_items(self, combo: QComboBox, values: list[str]):
+        current = combo.currentText()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItems(values)
+        index = combo.findText(current)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
+    def bind_catalog(self, catalog: ThemeCatalog):
+        self.catalog = catalog
+        self.resource_model.catalog = catalog
+        self.resource_model.project = self.project
+        resources = [*catalog.resources, *self.project.custom_resources]
+        self.resource_model.set_resources(resources)
+        self._replace_combo_items(self.category_combo, ["全部"] + sorted({x.category for x in resources}))
+        self._replace_combo_items(self.type_combo, ["全部"] + sorted({x.resource_type for x in resources}))
+        self._refresh_catalog_summary()
+        self._refresh_background_shortcuts()
+        self.selected_slot = None
+        self.table.clearSelection()
+        self.detail_title.setText("请选择一个资源")
+        self.detail_info.clear()
+        self.image_source = None
+        self._apply_filters()
+        self.refresh_views()
 
     def _build_resources_tab(self):
         page = QWidget()
@@ -460,7 +281,9 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setSelectionMode(QTableView.SingleSelection)
         self.table.setSortingEnabled(True)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        for column, width in enumerate((150, 130, 230, 90, 250, 220, 380)):
+            self.table.setColumnWidth(column, width)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.selectionModel().selectionChanged.connect(self._selection_changed)
 
@@ -471,6 +294,10 @@ class MainWindow(QMainWindow):
         splitter.setSizes([1050, 380])
         root.addWidget(splitter, 1)
 
+        self.filter_timer = QTimer(self)
+        self.filter_timer.setSingleShot(True)
+        self.filter_timer.setInterval(200)
+        self.filter_timer.timeout.connect(self._apply_filters)
         self.search_edit.textChanged.connect(self._filters_changed)
         self.category_combo.currentTextChanged.connect(self._filters_changed)
         self.type_combo.currentTextChanged.connect(self._filters_changed)
@@ -501,6 +328,7 @@ class MainWindow(QMainWindow):
         self.image_edit = QLineEdit()
         self.image_edit.setReadOnly(True)
         choose = QPushButton("选择图片")
+        self.choose_image_button = choose
         choose.clicked.connect(self.choose_image)
         image_row.addWidget(self.image_edit, 1)
         image_row.addWidget(choose)
@@ -538,6 +366,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(form)
 
         preview_button = QPushButton("刷新处理后预览")
+        self.processed_preview_button = preview_button
         preview_button.clicked.connect(self.preview_processed_image)
         layout.addWidget(preview_button)
         buttons = QHBoxLayout()
@@ -586,9 +415,10 @@ class MainWindow(QMainWindow):
 
     def _bind_project(self):
         self.resource_model.project = self.project
-        self.resource_model.beginResetModel()
-        self.resource_model.resources = [*self.catalog.resources, *self.project.custom_resources]
-        self.resource_model.endResetModel()
+        resources = [*self.catalog.resources, *self.project.custom_resources]
+        self.resource_model.set_resources(resources)
+        self._replace_combo_items(self.category_combo, ["全部"] + sorted({x.category for x in resources}))
+        self._replace_combo_items(self.type_combo, ["全部"] + sorted({x.resource_type for x in resources}))
         self.name_edit.setText(self.project.name)
         self.title_edit.setText(self.project.title)
         self.author_edit.setText(self.project.author)
@@ -607,6 +437,9 @@ class MainWindow(QMainWindow):
         self.project.dirty = True
 
     def _filters_changed(self):
+        self.filter_timer.start()
+
+    def _apply_filters(self):
         self.proxy_model.set_filters(
             self.search_edit.text(), self.category_combo.currentText(), self.type_combo.currentText(), self.modified_check.isChecked()
         )
@@ -629,8 +462,8 @@ class MainWindow(QMainWindow):
             f"重复声明：{slot.occurrences}"
         )
         self.value_edit.setText(change.value if change and change.value is not None else "")
-        self.image_source = change.source_file if change else None
-        self.image_edit.setText(self.image_source or "")
+        self.image_source = change.source_file if change and change.source_kind == "file" else None
+        self.image_edit.setText("默认灰白图片" if change and change.source_kind == "placeholder" else self.image_source or "")
         self._set_combo_data(self.fit_combo, change.fit if change else "cover")
         self._set_combo_data(self.enhance_combo, change.enhance if change else "none")
         self.enhance_slider.setValue(round((change.enhance_strength if change else 0) * 100))
@@ -640,7 +473,10 @@ class MainWindow(QMainWindow):
         is_image = slot.resource_type in {"image", "icon", "wallpaper", "preview"}
         self.value_edit.setVisible(not is_image)
         self.color_button.setVisible(slot.resource_type == "color")
-        for widget in [self.image_edit, self.fit_combo, self.enhance_combo, self.enhance_slider, self.focus_x, self.focus_y, self.preview_label]:
+        for widget in [
+            self.image_edit, self.choose_image_button, self.fit_combo, self.enhance_combo,
+            self.enhance_slider, self.focus_x, self.focus_y, self.preview_label, self.processed_preview_button,
+        ]:
             widget.setVisible(is_image)
         unsupported = slot.status == "当前版本不支持"
         for widget in self.detail_widgets:
@@ -665,6 +501,14 @@ class MainWindow(QMainWindow):
             self._show_raw_preview()
 
     def _show_raw_preview(self):
+        if self.selected_slot:
+            change = self.project.changes.get(self.selected_slot.id)
+            if change and change.source_kind == "placeholder" and not self.image_source:
+                pixmap = QPixmap()
+                pixmap.loadFromData(render_placeholder(self.selected_slot))
+                self.preview_label.setText("")
+                self.preview_label.setPixmap(pixmap.scaled(320, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                return
         if not self.image_source or not Path(self.image_source).is_file():
             self.preview_label.setPixmap(QPixmap())
             self.preview_label.setText("图片预览")
@@ -674,11 +518,17 @@ class MainWindow(QMainWindow):
         self.preview_label.setPixmap(pixmap.scaled(320, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def preview_processed_image(self):
-        if not self.selected_slot or not self.image_source:
+        if not self.selected_slot:
             return
         try:
-            change = self._detail_change()
-            data = render_image(Path(self.image_source), self.selected_slot, change)
+            existing = self.project.changes.get(self.selected_slot.id)
+            if not self.image_source and existing and existing.source_kind == "placeholder":
+                data = render_placeholder(self.selected_slot)
+            elif self.image_source:
+                change = self._detail_change()
+                data = render_image(Path(self.image_source), self.selected_slot, change)
+            else:
+                return
             pixmap = QPixmap()
             pixmap.loadFromData(data)
             self.preview_label.setText("")
@@ -692,10 +542,20 @@ class MainWindow(QMainWindow):
             raise ValueError("没有选择资源")
         if slot.resource_type in {"image", "icon", "wallpaper", "preview"}:
             if not self.image_source:
+                existing = self.project.changes.get(slot.id)
+                if existing and existing.source_kind == "placeholder":
+                    updated = copy.deepcopy(existing)
+                    updated.fit = self.fit_combo.currentData()
+                    updated.focus_x = self.focus_x.value() / 100
+                    updated.focus_y = self.focus_y.value() / 100
+                    updated.enhance = self.enhance_combo.currentData()
+                    updated.enhance_strength = self.enhance_slider.value() / 100
+                    return updated
                 raise ValueError("请先选择图片")
             return ResourceChange(
                 slot_id=slot.id,
                 source_file=self.image_source,
+                source_kind="file",
                 fit=self.fit_combo.currentData(),
                 focus_x=self.focus_x.value() / 100,
                 focus_y=self.focus_y.value() / 100,
@@ -705,10 +565,7 @@ class MainWindow(QMainWindow):
         value = self.value_edit.text().strip()
         if not value:
             raise ValueError("请输入资源值")
-        if slot.resource_type == "color":
-            value = normalize_color(value)
-        if slot.resource_type == "bool" and value.lower() not in {"true", "false"}:
-            raise ValueError("布尔值只能是 true 或 false")
+        value = validate_change_value(slot.resource_type, value)
         return ResourceChange(slot_id=slot.id, value=value)
 
     def apply_detail(self):
@@ -742,13 +599,16 @@ class MainWindow(QMainWindow):
     def refresh_views(self):
         if hasattr(self, "resource_model"):
             self.resource_model.project = self.project
-            expected = len(self.catalog.resources) + len(self.project.custom_resources)
-            if len(self.resource_model.resources) != expected:
-                self.resource_model.beginResetModel()
-                self.resource_model.resources = [*self.catalog.resources, *self.project.custom_resources]
-                self.resource_model.endResetModel()
+            expected_resources = [*self.catalog.resources, *self.project.custom_resources]
+            if [slot.id for slot in self.resource_model.resources] != [slot.id for slot in expected_resources]:
+                self.resource_model.set_resources(expected_resources)
             self.resource_model.refresh()
-            self.proxy_model.invalidateFilter()
+            self.proxy_model.set_filters(
+                self.proxy_model.query,
+                self.proxy_model.category,
+                self.proxy_model.resource_type,
+                self.proxy_model.modified_only,
+            )
         if hasattr(self, "changes_text"):
             slot_map = {slot.id: slot for slot in [*self.catalog.resources, *self.project.custom_resources]}
             lines = []
@@ -821,7 +681,11 @@ class MainWindow(QMainWindow):
         if not filename:
             return
         try:
-            self.project = load_project(Path(filename))
+            loaded = load_project(Path(filename))
+            slot_map = {slot.id: slot for slot in [*self.catalog.resources, *loaded.custom_resources]}
+            if not resolve_missing_assets(self, loaded, slot_map):
+                return
+            self.project = loaded
             self.undo_stack.clear()
             self._bind_project()
             self.log(f"已打开工程：{filename}")
@@ -836,6 +700,9 @@ class MainWindow(QMainWindow):
                 return
             path = Path(filename)
         try:
+            slot_map = {slot.id: slot for slot in [*self.catalog.resources, *self.project.custom_resources]}
+            if not resolve_missing_assets(self, self.project, slot_map):
+                return
             save_project(self.project, path)
             self.refresh_views()
             self.log(f"工程已保存：{path}")
@@ -843,7 +710,30 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "保存失败", str(exc))
 
     def export_hwt(self):
-        self._identity_edited()
+        slot_map = {slot.id: slot for slot in [*self.catalog.resources, *self.project.custom_resources]}
+        if not resolve_missing_assets(self, self.project, slot_map):
+            return
+        preflight = preflight_export(self.project, self.catalog)
+        if not preflight["valid"]:
+            detail = "\n".join(
+                f"• {item.get('slot_id', item.get('kind', '错误'))}：{item.get('message', item.get('kind', '无法导出'))}"
+                for item in preflight["errors"][:10]
+            )
+            first_slot = preflight["errors"][0].get("slot_id") if preflight["errors"] else None
+            if first_slot:
+                self.select_slot(first_slot)
+            else:
+                self.tabs.setCurrentIndex(3)
+            QMessageBox.warning(self, "导出预检失败", f"请先处理以下问题：\n\n{detail}")
+            return
+        summary = (
+            f"已启用修改：{preflight['enabled_changes']}\n"
+            f"值资源目标：{preflight['value_targets']}\n"
+            f"图片目标：{preflight['image_targets']}\n"
+            f"预计跳过：{preflight['skipped']}\n\n是否继续选择导出位置？"
+        )
+        if QMessageBox.question(self, "导出预检通过", summary) != QMessageBox.Yes:
+            return
         start = Path(r"D:\HONOR Share\Honor Share")
         if not start.exists():
             start = Path.home()
@@ -854,8 +744,16 @@ class MainWindow(QMainWindow):
             path, report = export_theme(self.project, self.catalog, Path(filename))
             self.last_export = path
             self.refresh_views()
-            self.log(f"导出成功：{path}\nSHA-256：{report['sha256']}\n已写入 {report['applied_count']} 个覆盖目标。")
-            QMessageBox.information(self, "导出成功", f"主题已生成：\n{path}\n\nSHA-256：\n{report['sha256']}")
+            warning = f"\n\n{report['report_warning']}" if report.get("report_warning") else ""
+            detail = (
+                f"主题已生成：\n{path}\n\n模块：{report['module_count']}\n"
+                f"颜色/文字目标：{report['preflight']['value_targets']}\n"
+                f"图片目标：{report['preflight']['image_targets']}\n"
+                f"跳过：{len(report['skipped'])}\n文件大小：{report['file_size'] / 1024 / 1024:.2f} MB\n"
+                f"验证：通过\n\nSHA-256：\n{report['sha256']}{warning}"
+            )
+            self.log(f"导出成功：{path}\nSHA-256：{report['sha256']}\n已写入 {report['applied_count']} 个覆盖目标。{warning}")
+            QMessageBox.information(self, "导出成功", detail)
         except Exception as exc:
             self.log(traceback.format_exc())
             QMessageBox.critical(self, "导出失败", str(exc))
@@ -887,11 +785,13 @@ class MainWindow(QMainWindow):
         self.progress.close()
         self.log(f"发送成功：{result['remote']}\nSHA-256：{result['sha256']}")
         opened = "已为你打开荣耀‘主题’应用。" if result.get("theme_app_opened") else "请手动打开荣耀‘主题’应用。"
+        warnings = result.get("preflight", {}).get("warnings", [])
+        warning_text = "\n" + "\n".join(warnings) if warnings else ""
         QMessageBox.information(
             self,
             "发送成功",
             f"手机路径：\n{result['remote']}\n\nSHA-256 校验一致。\n{opened}"
-            "\n请进入‘我的→下载→主题’查找；如页面已经打开，请返回后重新进入一次。",
+            f"{warning_text}\n请进入‘我的→下载→主题’查找；如页面已经打开，请返回后重新进入一次。",
         )
 
     def _transfer_failed(self, detail: str):
@@ -905,15 +805,8 @@ class MainWindow(QMainWindow):
             return
         try:
             catalog = scan_theme(Path(filename))
-            cached = data_dir() / "catalog_daxue.json"
-            save_catalog(catalog, cached)
-            self.catalog = catalog
-            self.resource_model.beginResetModel()
-            self.resource_model.catalog = catalog
-            self.resource_model.resources = catalog.resources
-            self.resource_model.endResetModel()
-            self.category_combo.clear()
-            self.category_combo.addItems(["全部"] + sorted({x.category for x in catalog.resources}))
+            save_user_catalog(catalog)
+            self.bind_catalog(catalog)
             self.log(f"扫描完成：{filename}，资源槽位 {len(catalog.resources)}。")
         except Exception as exc:
             QMessageBox.critical(self, "扫描失败", str(exc))

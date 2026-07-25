@@ -12,9 +12,9 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from lxml import etree
 
 from .blank import blank_entries
-from .imageops import render_image
-from .models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
-from .validation import normalize_color, validate_theme
+from .imageops import render_image, render_placeholder
+from .models import ResourceSlot, ThemeCatalog, ThemeProject
+from .validation import validate_change_value, validate_custom_slot, validate_theme
 
 
 def safe_filename(value: str) -> str:
@@ -30,6 +30,86 @@ def default_export_name(project: ThemeProject) -> str:
 
 def _slot_map(catalog: ThemeCatalog, project: ThemeProject) -> dict[str, ResourceSlot]:
     return {slot.id: slot for slot in [*catalog.resources, *project.custom_resources]}
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    try:
+        if left.exists() and right.exists():
+            return os.path.samefile(left, right)
+    except OSError:
+        pass
+    return os.path.normcase(str(left.resolve())) == os.path.normcase(str(right.resolve()))
+
+
+def preflight_export(project: ThemeProject, catalog: ThemeCatalog) -> dict:
+    slots = _slot_map(catalog, project)
+    errors: list[dict] = []
+    warnings: list[dict] = []
+    targets: dict[tuple, str] = {}
+    custom_ids = [slot.id for slot in project.custom_resources]
+    known_ids = {slot.id for slot in catalog.resources}
+    for slot in project.custom_resources:
+        try:
+            validate_custom_slot(slot)
+        except ValueError as exc:
+            errors.append({"kind": "invalid_custom_slot", "slot_id": slot.id, "message": str(exc)})
+        if slot.id in known_ids or custom_ids.count(slot.id) > 1:
+            errors.append({"kind": "duplicate_slot_id", "slot_id": slot.id})
+
+    value_count = image_count = skipped_count = 0
+    for slot_id, change in project.changes.items():
+        if not change.enabled:
+            continue
+        slot = slots.get(slot_id)
+        if not slot:
+            warnings.append({"kind": "missing_slot", "slot_id": slot_id})
+            skipped_count += 1
+            continue
+        if slot.status == "当前版本不支持":
+            warnings.append({"kind": "unsupported", "slot_id": slot_id})
+            skipped_count += 1
+            continue
+        if slot.resource_type in {"color", "bool", "integer", "dimen", "string"}:
+            if change.value is None:
+                errors.append({"kind": "missing_value", "slot_id": slot_id})
+                continue
+            try:
+                validate_change_value(slot.resource_type, change.value)
+            except ValueError as exc:
+                errors.append({"kind": "invalid_value", "slot_id": slot_id, "message": str(exc)})
+            target_keys = [("xml", slot.module, slot.container, slot.resource_type, slot.name)]
+            value_count += 1
+        elif slot.resource_type in {"image", "icon", "wallpaper", "preview"}:
+            if change.source_kind == "placeholder":
+                pass
+            elif change.source_kind != "file":
+                errors.append({"kind": "invalid_source_kind", "slot_id": slot_id, "value": change.source_kind})
+            elif not change.source_file or not Path(change.source_file).is_file():
+                errors.append({"kind": "missing_image", "slot_id": slot_id, "path": change.source_file or ""})
+            if slot.synthetic:
+                target_keys = [("image", target["module"], target["path"]) for target in slot.targets]
+            else:
+                target_keys = [("image", slot.module, slot.path)]
+            image_count += len(target_keys)
+        else:
+            warnings.append({"kind": "unsupported_type", "slot_id": slot_id, "type": slot.resource_type})
+            skipped_count += 1
+            continue
+        for key in target_keys:
+            previous = targets.get(key)
+            if previous and previous != slot_id:
+                errors.append({"kind": "duplicate_target", "slot_id": slot_id, "other_slot_id": previous, "target": list(key)})
+            else:
+                targets[key] = slot_id
+    return {
+        "valid": not errors,
+        "errors": errors,
+        "warnings": warnings,
+        "enabled_changes": sum(1 for change in project.changes.values() if change.enabled),
+        "value_targets": value_count,
+        "image_targets": image_count,
+        "skipped": skipped_count,
+    }
 
 
 def _xml_bytes(items: dict[tuple[str, str], str]) -> bytes:
@@ -53,6 +133,11 @@ def _module_bytes(files: dict[str, bytes], xml_items: dict[str, dict[tuple[str, 
 
 def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> tuple[Path, dict]:
     output = Path(output)
+    if catalog.source_path and _same_path(output, Path(catalog.source_path)):
+        raise ValueError("不能覆盖资源目录对应的原始主题，请选择新的导出文件名")
+    preflight = preflight_export(project, catalog)
+    if not preflight["valid"]:
+        raise ValueError("导出预检失败：" + json.dumps(preflight["errors"][:8], ensure_ascii=False))
     output.parent.mkdir(parents=True, exist_ok=True)
     slots = _slot_map(catalog, project)
     root_entries = blank_entries(project.title, project.author, project.designer, project.version, project.screen)
@@ -75,21 +160,15 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
             if change.value is None:
                 skipped.append({"slot_id": slot_id, "reason": "没有设置值"})
                 continue
-            value = change.value.strip()
-            if slot.resource_type == "color":
-                value = normalize_color(value)
-            elif slot.resource_type == "bool":
-                value = value.lower()
-                if value not in {"true", "false"}:
-                    raise ValueError(f"{slot.label} 的布尔值必须是 true 或 false")
+            value = validate_change_value(slot.resource_type, change.value)
             module_xml[slot.module][slot.container][(slot.resource_type, slot.name)] = value
             applied.append({"slot_id": slot_id, "module": slot.module, "path": slot.container, "value": value})
             continue
         if slot.resource_type in {"image", "icon", "wallpaper", "preview"}:
-            if not change.source_file or not Path(change.source_file).is_file():
-                skipped.append({"slot_id": slot_id, "reason": "图片文件不存在"})
-                continue
-            rendered = render_image(Path(change.source_file), slot, change)
+            if change.source_kind == "placeholder":
+                rendered = render_placeholder(slot)
+            else:
+                rendered = render_image(Path(change.source_file), slot, change)
             if slot.synthetic:
                 for target in slot.targets:
                     module_files[target["module"]][target["path"]] = rendered
@@ -102,22 +181,33 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
                 applied.append({"slot_id": slot_id, "module": slot.module, "path": slot.path})
 
     temp = output.with_suffix(output.suffix + ".tmp")
-    if temp.exists():
-        temp.unlink()
-    with ZipFile(temp, "w", ZIP_DEFLATED, compresslevel=9) as archive:
-        for name, data in root_entries.items():
-            archive.writestr(name, data)
+    temp.unlink(missing_ok=True)
+    try:
         modules = sorted(set(module_files) | set(module_xml))
+        built_modules: dict[str, bytes] = {}
         for module in modules:
             data = _module_bytes(module_files[module], module_xml[module])
-            archive.writestr(module, data)
+            if module == "icons":
+                root_entries["icons"] = data
+            else:
+                built_modules[module] = data
+        with ZipFile(temp, "w", ZIP_DEFLATED, compresslevel=9) as archive:
+            for name, data in root_entries.items():
+                archive.writestr(name, data)
+            for module, data in built_modules.items():
+                archive.writestr(module, data)
 
-    validation = validate_theme(temp)
-    if not validation["valid"]:
+        validation = validate_theme(temp)
+        if not validation["valid"]:
+            raise ValueError("导出的主题未通过验证：" + json.dumps(validation["errors"][:5], ensure_ascii=False))
+        os.replace(temp, output)
+    finally:
         temp.unlink(missing_ok=True)
-        raise ValueError("导出的主题未通过验证：" + json.dumps(validation["errors"][:5], ensure_ascii=False))
-    os.replace(temp, output)
-    digest = hashlib.sha256(output.read_bytes()).hexdigest()
+    digest_builder = hashlib.sha256()
+    with output.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest_builder.update(block)
+    digest = digest_builder.hexdigest()
     report = {
         "schema": 1,
         "output": str(output),
@@ -128,8 +218,17 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
         "applied": applied,
         "skipped": skipped,
         "validation": validation,
+        "preflight": preflight,
+        "module_count": len(modules),
+        "file_size": output.stat().st_size,
     }
     report_path = output.with_suffix(".report.json")
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    project.dirty = False
+    report_temp = report_path.with_suffix(report_path.suffix + ".tmp")
+    try:
+        report_temp.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(report_temp, report_path)
+    except OSError as exc:
+        report["report_warning"] = f"导出成功，但报告写入失败：{exc}"
+    finally:
+        report_temp.unlink(missing_ok=True)
     return output, report
