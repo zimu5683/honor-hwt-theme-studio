@@ -36,6 +36,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+import qtawesome as qta
+from qt_material import apply_stylesheet
 
 from . import __version__
 from .catalog import scan_theme
@@ -89,15 +91,15 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
         actions = [
-            ("新建工程", self.new_project),
-            ("打开工程", self.open_project),
-            ("保存工程", self.save_project),
-            ("导出 HWT", self.export_hwt),
-            ("发送到手机", self.send_phone),
-            ("重新扫描大雪", self.rescan_source),
+            ("fa5s.file", "新建工程", self.new_project),
+            ("fa5s.folder-open", "打开工程", self.open_project),
+            ("fa5s.save", "保存工程", self.save_project),
+            ("fa5s.file-export", "导出 HWT", self.export_hwt),
+            ("fa5s.mobile-alt", "发送到手机", self.send_phone),
+            ("fa5s.sync-alt", "重新扫描大雪", self.rescan_source),
         ]
-        for label, callback in actions:
-            action = QAction(label, self)
+        for icon_name, label, callback in actions:
+            action = QAction(qta.icon(icon_name, color="#2563EB"), label, self)
             action.triggered.connect(callback)
             toolbar.addAction(action)
         advanced = self.menuBar().addMenu("高级")
@@ -887,14 +889,88 @@ class MainWindow(QMainWindow):
 
 def apply_style(app: QApplication):
     app.setStyle("Fusion")
+    apply_stylesheet(app, theme="light_blue.xml")
     app.setStyleSheet(
-        """
-        QWidget { font-family: 'Microsoft YaHei UI'; font-size: 10pt; }
-        QPushButton { padding: 7px 12px; }
-        QLineEdit, QComboBox { padding: 5px; }
-        QGroupBox { font-weight: bold; margin-top: 10px; }
-        QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
-        QTableView { gridline-color: #E0E0E0; alternate-background-color: #F7F9FB; }
+        app.styleSheet()
+        + """
+        QWidget {
+            font-family: "Microsoft YaHei UI";
+            font-size: 10pt;
+        }
+        QMainWindow, QDialog { background-color: #F5F7FB; }
+        QMenuBar {
+            padding: 3px 8px;
+            background-color: #FFFFFF;
+            border-bottom: 1px solid #DFE5EF;
+        }
+        QMenuBar::item { padding: 6px 10px; border-radius: 6px; }
+        QMenuBar::item:selected { background-color: #E8F0FE; color: #1D4ED8; }
+        QToolBar {
+            spacing: 6px;
+            padding: 8px;
+            background-color: #FFFFFF;
+            border: none;
+            border-bottom: 1px solid #DFE5EF;
+        }
+        QToolButton { padding: 7px 10px; border-radius: 7px; }
+        QToolButton:hover { background-color: #E8F0FE; color: #1D4ED8; }
+        QPushButton {
+            min-height: 30px;
+            padding: 4px 14px;
+            border-radius: 7px;
+        }
+        QLineEdit, QComboBox, QPlainTextEdit {
+            padding: 6px 9px;
+            border: 1px solid #CBD5E1;
+            border-radius: 7px;
+            background-color: #FFFFFF;
+        }
+        QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {
+            border: 2px solid #3B82F6;
+        }
+        QGroupBox {
+            margin-top: 14px;
+            padding: 14px;
+            border: 1px solid #DFE5EF;
+            border-radius: 10px;
+            background-color: #FFFFFF;
+            font-weight: 600;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 12px;
+            padding: 0 6px;
+        }
+        QTabWidget::pane { border: none; background-color: #F5F7FB; }
+        QTabBar::tab {
+            min-width: 90px;
+            margin: 4px 2px;
+            padding: 10px 16px;
+            border-radius: 7px;
+        }
+        QTabBar::tab:selected {
+            color: #2563EB;
+            background-color: #E8F0FE;
+            font-weight: 600;
+        }
+        QTableView {
+            border: 1px solid #DFE5EF;
+            border-radius: 8px;
+            background-color: #FFFFFF;
+            alternate-background-color: #F8FAFC;
+            gridline-color: #EDF0F5;
+        }
+        QHeaderView::section {
+            padding: 9px;
+            border: none;
+            border-bottom: 1px solid #DFE5EF;
+            background-color: #F1F5F9;
+            font-weight: 600;
+        }
+        QStatusBar {
+            background-color: #FFFFFF;
+            border-top: 1px solid #DFE5EF;
+        }
         """
     )
 
