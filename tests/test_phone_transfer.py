@@ -16,6 +16,7 @@ from hwtstudio.phone_transfer import (
     PhoneDevice,
     PhoneRegistry,
     discover_phones,
+    fetch_phone_profile,
     pair_phone,
     probe_phone,
     safe_hwt_filename,
@@ -40,11 +41,22 @@ class ReceiverHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path == "/api/v1/profile":
+            if self.headers.get("Authorization") != "Bearer test-token":
+                self._json(401, {"message": "未授权", "code": "unauthorized"})
+                return
+            self._json(200, {
+                "manufacturer": "HONOR", "model": "ELP-AN00", "android_release": "16",
+                "sdk_int": 36, "os_name": "MagicOS_10.0.0", "build_display": "test",
+                "installed_packages": ["com.android.settings", "com.tencent.mm"],
+            })
+            return
         self._json(200, {
             "protocol": 1,
             "device_id": "phone-1",
             "name": "测试手机",
             "app_version": "0.1.0",
+            "features": ["device_profile"],
         })
 
     def do_POST(self):
@@ -58,6 +70,7 @@ class ReceiverHandler(BaseHTTPRequestHandler):
             "name": "测试手机",
             "token": "test-token",
             "app_version": "0.1.0",
+            "features": ["device_profile"],
         })
 
     def do_PUT(self):
@@ -102,6 +115,7 @@ class FakeDiscoverySocket:
                 "name": "荣耀测试机",
                 "http_port": 48621,
                 "app_version": "0.1.0",
+                "features": ["device_profile"],
             }).encode()
             return body, ("10.0.0.8", 48620)
         raise socket.timeout()
@@ -136,6 +150,10 @@ class PhoneTransferTests(unittest.TestCase):
                     archive.writestr("wallpaper/home_wallpaper_0.jpg", b"image")
                 device = probe_phone("127.0.0.1", server.server_port, registry=registry)
                 paired = pair_phone(device, "123456", registry=registry)
+                profile = fetch_phone_profile(paired, registry=registry)
+                self.assertEqual(profile.model, "ELP-AN00")
+                self.assertEqual(profile.installed_packages, ["com.android.settings", "com.tencent.mm"])
+                self.assertEqual(registry.load()["phone-1"].profile.os_name, "MagicOS_10.0.0")
                 progress = []
                 result = upload_theme(theme, paired, progress=lambda sent, total, stage: progress.append((sent, total, stage)))
                 self.assertEqual(ReceiverHandler.received, theme.read_bytes())

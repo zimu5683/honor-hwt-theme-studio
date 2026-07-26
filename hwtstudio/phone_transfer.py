@@ -7,7 +7,8 @@ import re
 import socket
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 from urllib.parse import quote
@@ -35,6 +36,18 @@ class TransferCancelled(PhoneTransferError):
 
 
 @dataclass(slots=True)
+class PhoneProfile:
+    manufacturer: str = ""
+    model: str = ""
+    android_release: str = ""
+    sdk_int: int = 0
+    os_name: str = ""
+    build_display: str = ""
+    installed_packages: list[str] = field(default_factory=list)
+    updated_at: str = ""
+
+
+@dataclass(slots=True)
 class PhoneDevice:
     device_id: str
     name: str
@@ -43,6 +56,8 @@ class PhoneDevice:
     protocol: int = PROTOCOL_VERSION
     app_version: str = ""
     token: str = ""
+    features: list[str] = field(default_factory=list)
+    profile: PhoneProfile | None = None
 
     @property
     def paired(self) -> bool:
@@ -76,6 +91,11 @@ class PhoneRegistry:
                     protocol=int(item.get("protocol", PROTOCOL_VERSION)),
                     app_version=str(item.get("app_version") or ""),
                     token=str(item.get("token") or ""),
+                    features=[str(value) for value in item.get("features", [])],
+                    profile=PhoneProfile(**{
+                        key: value for key, value in (item.get("profile") or {}).items()
+                        if key in PhoneProfile.__dataclass_fields__
+                    }) if item.get("profile") else None,
                 )
             except (KeyError, TypeError, ValueError):
                 continue
@@ -118,6 +138,9 @@ def _merge_saved(device: PhoneDevice, saved: dict[str, PhoneDevice]) -> PhoneDev
     previous = saved.get(device.device_id)
     if previous:
         device.token = previous.token
+        device.profile = previous.profile
+        if not device.features:
+            device.features = previous.features
     return device
 
 
@@ -156,6 +179,7 @@ def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
                     port=int(raw.get("http_port", HTTP_PORT)),
                     protocol=int(raw["protocol"]),
                     app_version=str(raw.get("app_version") or ""),
+                    features=[str(value) for value in raw.get("features", [])],
                 )
             except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
                 continue
@@ -193,6 +217,7 @@ def probe_phone(host: str, port: int = HTTP_PORT, timeout: float = 5.0,
         port=port,
         protocol=protocol,
         app_version=str(payload.get("app_version") or ""),
+        features=[str(value) for value in payload.get("features", [])],
     )
     registry = registry or PhoneRegistry()
     device = _merge_saved(device, registry.load())
@@ -232,9 +257,43 @@ def pair_phone(device: PhoneDevice, code: str, *, client_name: str = "大雪主�
         protocol=PROTOCOL_VERSION,
         app_version=str(payload.get("app_version") or device.app_version),
         token=token,
+        features=[str(value) for value in payload.get("features", device.features)],
+        profile=device.profile,
     )
     (registry or PhoneRegistry()).update(paired)
     return paired
+
+
+def fetch_phone_profile(device: PhoneDevice, *, timeout: float = 10.0,
+                        registry: PhoneRegistry | None = None) -> PhoneProfile:
+    if not device.token:
+        raise PhoneTransferError("手机尚未配对，无法读取适配信息", code="not_paired")
+    if "device_profile" not in device.features:
+        raise PhoneTransferError("手机助手版本较旧，请先更新手机助手", code="profile_unsupported")
+    connection = http.client.HTTPConnection(device.host, device.port, timeout=timeout)
+    try:
+        connection.request("GET", "/api/v1/profile", headers={"Authorization": f"Bearer {device.token}"})
+        response = connection.getresponse()
+        payload = _decode_json(response.read(), "手机配置")
+    except (OSError, http.client.HTTPException) as exc:
+        raise PhoneTransferError(f"无法读取手机适配信息：{exc}", code="connect_failed") from exc
+    finally:
+        connection.close()
+    if response.status != 200:
+        raise _error_from_response(response.status, payload)
+    profile = PhoneProfile(
+        manufacturer=str(payload.get("manufacturer") or ""),
+        model=str(payload.get("model") or device.name),
+        android_release=str(payload.get("android_release") or ""),
+        sdk_int=int(payload.get("sdk_int") or 0),
+        os_name=str(payload.get("os_name") or ""),
+        build_display=str(payload.get("build_display") or ""),
+        installed_packages=sorted({str(value) for value in payload.get("installed_packages", []) if value}),
+        updated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    device.profile = profile
+    (registry or PhoneRegistry()).update(device)
+    return profile
 
 
 def safe_hwt_filename(name: str) -> str:

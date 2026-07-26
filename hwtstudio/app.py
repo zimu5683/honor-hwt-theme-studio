@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressDialog,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSplitter,
     QStatusBar,
@@ -45,14 +46,17 @@ from .exporter import default_export_name, export_theme, preflight_export
 from .imageops import render_image, render_placeholder
 from .models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
 from .paths import APP_NAME, default_source_theme
+from .phone_transfer import PhoneRegistry
 from .projectio import load_project, save_project
 from .validation import validate_change_value
 from .services.catalog_service import load_preferred_catalog, save_user_catalog
+from .semantic import SIMPLE_SETTINGS, TYPE_LABELS, friendly_resource_label, resolve_all
 from .ui.commands import BulkChangeCommand, ChangeCommand
 from .ui.dialogs import CustomResourceDialog, resolve_missing_assets
 from .ui.phone_dialog import PhoneTransferDialog
 from .ui.resource_models import ResourceFilterModel, ResourceTableModel
-from .ui.workers import TransferWorker
+from .ui.simple_editor import SimpleEditor
+from .ui.workers import ProfileWorker, TransferWorker
 
 
 class MainWindow(QMainWindow):
@@ -65,8 +69,17 @@ class MainWindow(QMainWindow):
         self.undo_stack = QUndoStack(self)
         self.last_export: Path | None = None
         self.transfer_thread: QThread | None = None
+        cached_profiles = [device.profile for device in PhoneRegistry().load().values() if device.profile]
+        self.phone_profile = max(cached_profiles, key=lambda item: item.updated_at, default=None)
+        self.installed_packages: set[str] | None = (
+            set(self.phone_profile.installed_packages) if self.phone_profile else None
+        )
+        self.profile_thread: QThread | None = None
+        self._log_lines: list[str] = []
+        self.simple_resolved = resolve_all(self.catalog)
         self._build_ui()
         self._bind_project()
+        self._update_phone_ui(cached=bool(self.phone_profile))
         self.log("已加载大雪资源目录。原始主题仅用于只读分析，不会被修改。")
         if self._catalog_load_warning:
             self.log(self._catalog_load_warning)
@@ -80,15 +93,14 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
-        self.tabs.addTab(self._build_overview_tab(), "概览")
-        self.tabs.addTab(self._build_common_tab(), "常用编辑")
-        self.tabs.addTab(self._build_resources_tab(), "全部资源")
-        self.tabs.addTab(self._build_changes_tab(), "修改清单")
-        self.tabs.addTab(self._build_log_tab(), "日志")
+        self.tabs.addTab(self._build_simple_tab(), "简洁编辑")
+        self.tabs.addTab(self._build_changes_tab(), "修改记录")
+        self.tabs.addTab(self._build_resources_tab(), "高级编辑")
 
     def _build_toolbar(self):
         toolbar = QToolBar("主工具栏")
         toolbar.setMovable(False)
+        toolbar.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
         self.addToolBar(toolbar)
         actions = [
             ("fa5s.file", "新建工程", self.new_project),
@@ -96,23 +108,92 @@ class MainWindow(QMainWindow):
             ("fa5s.save", "保存工程", self.save_project),
             ("fa5s.file-export", "导出 HWT", self.export_hwt),
             ("fa5s.mobile-alt", "发送到手机", self.send_phone),
-            ("fa5s.sync-alt", "重新扫描大雪", self.rescan_source),
         ]
         for icon_name, label, callback in actions:
             action = QAction(qta.icon(icon_name, color="#2563EB"), label, self)
             action.triggered.connect(callback)
             toolbar.addAction(action)
         advanced = self.menuBar().addMenu("高级")
+        custom_action = QAction("添加自定义资源", self)
+        custom_action.triggered.connect(self.add_custom_resource)
+        advanced.addAction(custom_action)
+        rescan_action = QAction("重新扫描资源目录", self)
+        rescan_action.triggered.connect(self.rescan_source)
+        advanced.addAction(rescan_action)
+        log_action = QAction("查看运行日志", self)
+        log_action.triggered.connect(self.show_log_dialog)
+        advanced.addAction(log_action)
+        advanced.addSeparator()
         ssh_action = QAction("通过 Termux/SSH 发送到手机", self)
         ssh_action.triggered.connect(self.send_phone_ssh)
         advanced.addAction(ssh_action)
         toolbar.addSeparator()
         undo_action = self.undo_stack.createUndoAction(self, "撤销")
         redo_action = self.undo_stack.createRedoAction(self, "重做")
+        undo_action.setIcon(qta.icon("fa5s.undo", color="#2563EB"))
+        redo_action.setIcon(qta.icon("fa5s.redo", color="#2563EB"))
         undo_action.setShortcut("Ctrl+Z")
         redo_action.setShortcut("Ctrl+Y")
         toolbar.addAction(undo_action)
         toolbar.addAction(redo_action)
+
+    def _build_simple_tab(self):
+        page = QWidget()
+        root = QVBoxLayout(page)
+        header = QHBoxLayout()
+        title_box = QVBoxLayout()
+        title = QLabel("用看得懂的项目制作主题")
+        title.setFont(QFont("Microsoft YaHei UI", 19, QFont.Bold))
+        title_box.addWidget(title)
+        subtitle = QLabel("一次设置会自动同步相关兼容资源；需要逐项调整时再进入“高级编辑”。")
+        subtitle.setObjectName("simpleDescription")
+        title_box.addWidget(subtitle)
+        header.addLayout(title_box, 1)
+        self.phone_status = QLabel("通用模式 · 尚未识别手机")
+        self.phone_status.setObjectName("phoneStatus")
+        header.addWidget(self.phone_status)
+        self.connect_phone_button = QPushButton("识别手机")
+        self.connect_phone_button.clicked.connect(self.connect_phone_profile)
+        header.addWidget(self.connect_phone_button)
+        root.addLayout(header)
+
+        identity = QGroupBox("主题信息")
+        identity.setCheckable(True)
+        identity.setChecked(False)
+        form = QFormLayout(identity)
+        self.name_edit = QLineEdit()
+        self.title_edit = QLineEdit()
+        self.author_edit = QLineEdit()
+        self.designer_edit = QLineEdit()
+        self.version_edit = QLineEdit()
+        self.screen_edit = QLineEdit()
+        identity_fields = QWidget()
+        identity_form = QFormLayout(identity_fields)
+        for label, widget in [
+            ("方案名称", self.name_edit),
+            ("主题标题", self.title_edit),
+            ("作者", self.author_edit),
+            ("设计者", self.designer_edit),
+            ("版本", self.version_edit),
+            ("屏幕类型", self.screen_edit),
+        ]:
+            identity_form.addRow(label, widget)
+            widget.textEdited.connect(self._identity_edited)
+        form.addRow(identity_fields)
+        identity_fields.setVisible(False)
+        identity.toggled.connect(identity_fields.setVisible)
+        root.addWidget(identity)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        host = QWidget()
+        host_layout = QVBoxLayout(host)
+        self.simple_editor = SimpleEditor(self.apply_simple_setting, self.reset_simple_setting)
+        host_layout.addWidget(self.simple_editor)
+        scroll.setWidget(host)
+        root.addWidget(scroll, 1)
+        return page
 
     def _build_overview_tab(self):
         page = QWidget()
@@ -239,16 +320,30 @@ class MainWindow(QMainWindow):
         combo.setCurrentIndex(index if index >= 0 else 0)
         combo.blockSignals(False)
 
+    def _replace_type_items(self, resources: list[ResourceSlot]):
+        current = self.type_combo.currentData() or "全部"
+        self.type_combo.blockSignals(True)
+        self.type_combo.clear()
+        self.type_combo.addItem("全部类型", "全部")
+        for resource_type in sorted({item.resource_type for item in resources}):
+            self.type_combo.addItem(TYPE_LABELS.get(resource_type, resource_type), resource_type)
+        index = self.type_combo.findData(current)
+        self.type_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.type_combo.blockSignals(False)
+
     def bind_catalog(self, catalog: ThemeCatalog):
         self.catalog = catalog
+        self.simple_resolved = resolve_all(catalog)
         self.resource_model.catalog = catalog
         self.resource_model.project = self.project
         resources = [*catalog.resources, *self.project.custom_resources]
         self.resource_model.set_resources(resources)
         self._replace_combo_items(self.category_combo, ["全部"] + sorted({x.category for x in resources}))
-        self._replace_combo_items(self.type_combo, ["全部"] + sorted({x.resource_type for x in resources}))
-        self._refresh_catalog_summary()
-        self._refresh_background_shortcuts()
+        self._replace_type_items(resources)
+        if hasattr(self, "stats_label"):
+            self._refresh_catalog_summary()
+        if hasattr(self, "backgrounds_layout"):
+            self._refresh_background_shortcuts()
         self.selected_slot = None
         self.table.clearSelection()
         self.detail_title.setText("请选择一个资源")
@@ -262,22 +357,24 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(page)
         filters = QHBoxLayout()
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("搜索包名、资源名、路径或中文说明……")
+        self.search_edit.setPlaceholderText("搜索应用、中文作用、资源名或路径……")
         self.category_combo = QComboBox()
         self.category_combo.addItems(["全部"] + sorted({x.category for x in self.catalog.resources}))
         self.type_combo = QComboBox()
-        self.type_combo.addItems(["全部"] + sorted({x.resource_type for x in self.catalog.resources}))
+        self.type_combo.addItem("全部类型", "全部")
+        for resource_type in sorted({x.resource_type for x in self.catalog.resources}):
+            self.type_combo.addItem(TYPE_LABELS.get(resource_type, resource_type), resource_type)
         self.modified_check = QCheckBox("仅显示已修改")
         bulk_button = QPushButton("批量设置筛选颜色")
         bulk_button.clicked.connect(self.bulk_set_filtered_colors)
-        custom_button = QPushButton("添加高级资源")
-        custom_button.clicked.connect(self.add_custom_resource)
+        self.technical_columns_check = QCheckBox("显示技术信息")
+        self.technical_columns_check.toggled.connect(self._toggle_technical_columns)
         filters.addWidget(self.search_edit, 1)
         filters.addWidget(self.category_combo)
         filters.addWidget(self.type_combo)
         filters.addWidget(self.modified_check)
         filters.addWidget(bulk_button)
-        filters.addWidget(custom_button)
+        filters.addWidget(self.technical_columns_check)
         root.addLayout(filters)
 
         self.resource_model = ResourceTableModel(self.catalog, self.project)
@@ -293,6 +390,7 @@ class MainWindow(QMainWindow):
             self.table.setColumnWidth(column, width)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.selectionModel().selectionChanged.connect(self._selection_changed)
+        self._toggle_technical_columns(False)
 
         self.detail = self._build_detail_panel()
         splitter = QSplitter()
@@ -310,6 +408,12 @@ class MainWindow(QMainWindow):
         self.type_combo.currentTextChanged.connect(self._filters_changed)
         self.modified_check.toggled.connect(self._filters_changed)
         return page
+
+    def _toggle_technical_columns(self, visible: bool):
+        if not hasattr(self, "table"):
+            return
+        for column in (2, 5, 6):
+            self.table.setColumnHidden(column, not visible)
 
     def _build_detail_panel(self):
         panel = QFrame()
@@ -420,12 +524,82 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.log_text)
         return page
 
+    def show_log_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("运行日志")
+        dialog.resize(850, 560)
+        layout = QVBoxLayout(dialog)
+        text = QPlainTextEdit()
+        text.setReadOnly(True)
+        text.setPlainText("\n".join(self._log_lines))
+        layout.addWidget(text)
+        close_button = QPushButton("关闭")
+        close_button.clicked.connect(dialog.accept)
+        layout.addWidget(close_button)
+        dialog.exec()
+
+    def connect_phone_profile(self):
+        if self.profile_thread and self.profile_thread.isRunning():
+            return
+        dialog = PhoneTransferDialog(self, purpose="profile")
+        if dialog.exec() != QDialog.Accepted or dialog.device is None:
+            return
+        self.connect_phone_button.setEnabled(False)
+        self.phone_status.setText("正在读取手机适配信息……")
+        thread = QThread(self)
+        worker = ProfileWorker(dialog.device, dialog.pair_code)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._profile_finished)
+        worker.failed.connect(self._profile_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._profile_thread_finished)
+        self.profile_thread = thread
+        self._profile_worker = worker
+        thread.start()
+
+    def _profile_finished(self, _device, profile):
+        self.phone_profile = profile
+        self.installed_packages = set(profile.installed_packages)
+        self.resource_model.set_installed_packages(self.installed_packages)
+        self._update_phone_ui(cached=False)
+        self.refresh_views()
+        self.log(f"已识别手机：{profile.manufacturer} {profile.model}，适用应用 {len(profile.installed_packages)} 个。")
+
+    def _profile_failed(self, detail: str, code: str):
+        message = detail.splitlines()[-1] if detail else "无法读取手机信息"
+        self._update_phone_ui(cached=bool(self.phone_profile))
+        if code == "profile_unsupported":
+            QMessageBox.information(self, "需要更新手机助手", message)
+        else:
+            QMessageBox.warning(self, "识别失败", message)
+
+    def _profile_thread_finished(self):
+        self.profile_thread = None
+        self._profile_worker = None
+        self.connect_phone_button.setEnabled(True)
+
+    def _update_phone_ui(self, *, cached: bool):
+        if not hasattr(self, "phone_status"):
+            return
+        profile = self.phone_profile
+        if profile is None:
+            self.phone_status.setText("通用模式 · 尚未识别手机")
+            return
+        os_text = profile.os_name or (f"Android {profile.android_release}" if profile.android_release else "系统版本未知")
+        prefix = "上次识别" if cached else "已连接"
+        self.phone_status.setText(f"{prefix} · {profile.model} · {os_text}")
+        if hasattr(self, "resource_model"):
+            self.resource_model.set_installed_packages(self.installed_packages)
+
     def _bind_project(self):
         self.resource_model.project = self.project
         resources = [*self.catalog.resources, *self.project.custom_resources]
         self.resource_model.set_resources(resources)
         self._replace_combo_items(self.category_combo, ["全部"] + sorted({x.category for x in resources}))
-        self._replace_combo_items(self.type_combo, ["全部"] + sorted({x.resource_type for x in resources}))
+        self._replace_type_items(resources)
         self.name_edit.setText(self.project.name)
         self.title_edit.setText(self.project.title)
         self.author_edit.setText(self.project.author)
@@ -448,7 +622,8 @@ class MainWindow(QMainWindow):
 
     def _apply_filters(self):
         self.proxy_model.set_filters(
-            self.search_edit.text(), self.category_combo.currentText(), self.type_combo.currentText(), self.modified_check.isChecked()
+            self.search_edit.text(), self.category_combo.currentText(), self.type_combo.currentData() or "全部",
+            self.modified_check.isChecked()
         )
 
     def _selection_changed(self):
@@ -461,9 +636,10 @@ class MainWindow(QMainWindow):
     def load_slot(self, slot: ResourceSlot):
         self.selected_slot = slot
         change = self.project.changes.get(slot.id)
-        self.detail_title.setText(slot.label)
+        display_label = friendly_resource_label(slot)
+        self.detail_title.setText(display_label)
         self.detail_info.setText(
-            f"分类：{slot.category}\n模块：{slot.module}\n类型：{slot.resource_type}\n"
+            f"应用/区域：{slot.category}\n模块：{slot.module}\n类型：{TYPE_LABELS.get(slot.resource_type, slot.resource_type)}\n"
             f"资源：{slot.name}\n路径：{slot.path or '按目标注入'}\n支持状态：{slot.status}　风险：{slot.risk}\n"
             f"尺寸：{slot.width or '—'} × {slot.height or '—'}　格式：{slot.actual_format or '—'}\n"
             f"重复声明：{slot.occurrences}"
@@ -592,16 +768,35 @@ class MainWindow(QMainWindow):
                         cloned = copy.deepcopy(change)
                         cloned.slot_id = candidate.id
                         matches[candidate.id] = cloned
-                self.undo_stack.push(BulkChangeCommand(self, matches, f"同步修改 {self.selected_slot.label}"))
+                self.undo_stack.push(BulkChangeCommand(self, matches, f"同步修改 {friendly_resource_label(self.selected_slot)}"))
             else:
-                self.undo_stack.push(ChangeCommand(self, self.selected_slot.id, change, f"修改 {self.selected_slot.label}"))
-            self.statusBar().showMessage(f"已启用：{self.selected_slot.label}", 4000)
+                self.undo_stack.push(ChangeCommand(self, self.selected_slot.id, change, f"修改 {friendly_resource_label(self.selected_slot)}"))
+            self.statusBar().showMessage(f"已修改：{friendly_resource_label(self.selected_slot)}", 4000)
         except Exception as exc:
             QMessageBox.warning(self, "无法应用", str(exc))
 
     def reset_detail(self):
         if self.selected_slot and self.selected_slot.id in self.project.changes:
-            self.undo_stack.push(ChangeCommand(self, self.selected_slot.id, None, f"恢复 {self.selected_slot.label}"))
+            self.undo_stack.push(ChangeCommand(self, self.selected_slot.id, None, f"恢复 {friendly_resource_label(self.selected_slot)}"))
+
+    def apply_simple_setting(self, setting, template: ResourceChange):
+        slots = self.simple_resolved.get(setting.id, [])
+        changes: dict[str, ResourceChange] = {}
+        for slot in slots:
+            change = copy.deepcopy(template)
+            change.slot_id = slot.id
+            changes[slot.id] = change
+        if not changes:
+            QMessageBox.information(self, "没有适用资源", "当前资源目录中没有找到这个项目的可用资源。")
+            return
+        self.undo_stack.push(BulkChangeCommand(self, changes, f"设置{setting.title}"))
+        self.statusBar().showMessage(f"已设置“{setting.title}”，同步 {len(changes)} 个兼容资源", 5000)
+
+    def reset_simple_setting(self, setting):
+        slots = self.simple_resolved.get(setting.id, [])
+        resets = {slot.id: None for slot in slots if slot.id in self.project.changes}
+        if resets:
+            self.undo_stack.push(BulkChangeCommand(self, resets, f"恢复{setting.title}"))
 
     def refresh_views(self):
         if hasattr(self, "resource_model"):
@@ -616,15 +811,36 @@ class MainWindow(QMainWindow):
                 self.proxy_model.resource_type,
                 self.proxy_model.modified_only,
             )
+        if hasattr(self, "simple_editor"):
+            self.simple_editor.bind(self.simple_resolved, self.project, self.installed_packages)
         if hasattr(self, "changes_text"):
-            slot_map = {slot.id: slot for slot in [*self.catalog.resources, *self.project.custom_resources]}
             lines = []
-            for slot_id, change in self.project.changes.items():
-                slot = slot_map.get(slot_id)
-                label = slot.label if slot else slot_id
-                value = change.value or change.source_file or "已启用"
-                lines.append(f"{label}\n  {slot_id}\n  → {value}")
-            self.changes_text.setPlainText("\n\n".join(lines) if lines else "当前没有启用任何覆盖资源。")
+            grouped_ids: set[str] = set()
+            changed_groups = 0
+            affected = 0
+            for setting in SIMPLE_SETTINGS:
+                slots = self.simple_resolved.get(setting.id, [])
+                modified = [slot for slot in slots if slot.id in self.project.changes]
+                if not modified:
+                    continue
+                changed_groups += 1
+                affected += len(modified)
+                grouped_ids.update(slot.id for slot in modified)
+                values = {self.project.changes[slot.id].value for slot in modified if self.project.changes[slot.id].value}
+                value_text = next(iter(values)) if len(values) == 1 else "自定义图片" if setting.kind == "image" else "含单独调整"
+                if len(modified) != len(slots):
+                    value_text = "含单独调整"
+                lines.append(f"● {setting.title}\n  {value_text} · 已修改 {len(modified)}/{len(slots)} 个兼容资源")
+            advanced = [slot_id for slot_id in self.project.changes if slot_id not in grouped_ids]
+            header = f"已修改 {changed_groups + len(advanced)} 项，涉及 {affected + len(advanced)} 个资源。"
+            if advanced:
+                slot_map = {slot.id: slot for slot in [*self.catalog.resources, *self.project.custom_resources]}
+                details = []
+                for slot_id in advanced:
+                    slot = slot_map.get(slot_id)
+                    details.append(f"  • {friendly_resource_label(slot) if slot else '未知高级资源'}")
+                lines.append(f"高级修改（{len(advanced)} 项）\n" + "\n".join(details))
+            self.changes_text.setPlainText(header + ("\n\n" + "\n\n".join(lines) if lines else "\n\n当前使用系统默认资源。"))
         self.setWindowTitle(f"{APP_NAME} {__version__} - {self.project.name}{' *' if self.project.dirty else ''}")
 
     def show_category(self, category: str):
@@ -730,7 +946,7 @@ class MainWindow(QMainWindow):
             if first_slot:
                 self.select_slot(first_slot)
             else:
-                self.tabs.setCurrentIndex(3)
+                self.tabs.setCurrentIndex(1)
             QMessageBox.warning(self, "导出预检失败", f"请先处理以下问题：\n\n{detail}")
             return
         summary = (
@@ -883,6 +1099,7 @@ class MainWindow(QMainWindow):
             event.ignore()
 
     def log(self, message: str):
+        self._log_lines.append(message.rstrip())
         if hasattr(self, "log_text"):
             self.log_text.appendPlainText(message.rstrip() + "\n")
 
@@ -971,6 +1188,32 @@ def apply_style(app: QApplication):
             background-color: #FFFFFF;
             border-top: 1px solid #DFE5EF;
         }
+        QScrollArea { background: transparent; border: none; }
+        QFrame#simpleCard {
+            background-color: #FFFFFF;
+            border: 1px solid #DFE5EF;
+            border-radius: 11px;
+        }
+        QLabel#simpleCardTitle { font-size: 12pt; font-weight: 650; color: #172033; }
+        QLabel#simpleSectionTitle { font-size: 15pt; font-weight: 700; padding: 16px 2px 6px 2px; }
+        QLabel#simpleDescription { color: #5D687A; }
+        QLabel#targetCount {
+            color: #2563EB;
+            background: #E8F0FE;
+            border-radius: 8px;
+            padding: 3px 8px;
+        }
+        QLabel#simpleState { color: #526074; padding: 3px 0; }
+        QLabel#simpleState[mixed="true"] { color: #B45309; font-weight: 600; }
+        QLabel#phoneStatus {
+            color: #1D4ED8;
+            background: #E8F0FE;
+            border-radius: 8px;
+            padding: 7px 10px;
+        }
+        QLabel#simplePreview { background: #F4F6F9; border-radius: 7px; }
+        QPushButton#primaryAction { background: #2563EB; color: white; font-weight: 600; }
+        QPushButton#primaryAction:hover { background: #1D4ED8; }
         """
     )
 

@@ -15,7 +15,8 @@
   "device_id": "stable-uuid",
   "name": "ELP-AN00",
   "http_port": 48621,
-  "app_version": "0.1.1"
+  "app_version": "0.1.3",
+  "features": ["device_profile"]
 }
 ```
 
@@ -26,6 +27,25 @@
 ### `GET /api/v1/status`
 
 返回协议版本、设备 ID、设备名、APK 版本、运行状态和存储授权状态，不要求认证。
+
+### `GET /api/v1/profile`
+
+请求头为 `Authorization: Bearer <token>`。该可选接口由 `device_profile` 功能标记声明，返回：
+
+```json
+{
+  "manufacturer": "HONOR",
+  "model": "ELP-AN00",
+  "android_release": "16",
+  "sdk_int": 36,
+  "os_name": "MagicOS_10.0.0",
+  "build_display": "...",
+  "installed_packages": ["com.android.settings", "com.tencent.mm"]
+}
+```
+
+`installed_packages` 仅检查 HWT 资源目录涉及且在 Android 清单 `<queries>` 中声明的白名单，
+不申请 `QUERY_ALL_PACKAGES`，也不返回其他应用。
 
 ### `POST /api/v1/pair`
 

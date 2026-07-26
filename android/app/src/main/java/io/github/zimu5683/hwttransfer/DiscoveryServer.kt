@@ -1,6 +1,7 @@
 package io.github.zimu5683.hwttransfer
 
 import android.os.Build
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -44,6 +45,7 @@ class DiscoveryServer(private val pairing: PairingManager) {
                         .put("name", Build.MODEL)
                         .put("http_port", Protocol.HTTP_PORT)
                         .put("app_version", BuildConfig.VERSION_NAME)
+                        .put("features", JSONArray(listOf("device_profile")))
                         .toString().toByteArray(Charsets.UTF_8)
                     server.send(DatagramPacket(response, response.size, request.address, request.port))
                 }

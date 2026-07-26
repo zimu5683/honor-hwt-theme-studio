@@ -45,7 +45,7 @@ class DiscoveryWorker(QObject):
 class PhoneTransferDialog(QDialog):
     """Choose a discovered receiver, or opt into the legacy SSH path."""
 
-    def __init__(self, parent=None, registry: PhoneRegistry | None = None):
+    def __init__(self, parent=None, registry: PhoneRegistry | None = None, purpose: str = "send"):
         super().__init__(parent)
         self.setWindowTitle("发送到荣耀主题传输助手")
         self.resize(620, 280)
@@ -53,6 +53,7 @@ class PhoneTransferDialog(QDialog):
         self.device: PhoneDevice | None = None
         self.pair_code = ""
         self.use_ssh = False
+        self.purpose = purpose
         self.discovery_thread: QThread | None = None
         self._devices: dict[str, PhoneDevice] = self.registry.load()
         self._build_ui()
@@ -94,8 +95,9 @@ class PhoneTransferDialog(QDialog):
         layout.addWidget(self.status)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
-        self.send_button = buttons.addButton("发送", QDialogButtonBox.AcceptRole)
+        self.send_button = buttons.addButton("识别手机" if self.purpose == "profile" else "发送", QDialogButtonBox.AcceptRole)
         self.ssh_button = buttons.addButton("使用 Termux/SSH 备用", QDialogButtonBox.ActionRole)
+        self.ssh_button.setVisible(self.purpose == "send")
         self.send_button.clicked.connect(self.accept_phone)
         self.ssh_button.clicked.connect(self.accept_ssh)
         buttons.rejected.connect(self.reject)

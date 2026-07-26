@@ -7,6 +7,7 @@ dist/
 *.tmp
 build_ui_preview.png
 android/.gradle/
+android/.kotlin/
 android/.idea/
 android/local.properties
 android/**/build/

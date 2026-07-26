@@ -6,9 +6,10 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyMod
 from PySide6.QtGui import QColor
 
 from ..models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
+from ..semantic import TYPE_LABELS, friendly_resource_label
 
 
-HEADERS = ["状态", "分类", "模块", "类型", "中文说明", "资源名", "路径", "当前设置"]
+HEADERS = ["状态", "应用/区域", "模块", "类型", "中文作用", "资源名", "路径", "当前设置"]
 
 
 class ResourceTableModel(QAbstractTableModel):
@@ -17,6 +18,7 @@ class ResourceTableModel(QAbstractTableModel):
         self.catalog = catalog
         self.project = project
         self.resources: list[ResourceSlot] = []
+        self.installed_packages: set[str] | None = None
         self._search_texts: list[str] = []
         self.set_resources(catalog.resources)
 
@@ -24,7 +26,8 @@ class ResourceTableModel(QAbstractTableModel):
         self.beginResetModel()
         self.resources = list(resources)
         self._search_texts = [
-            " ".join((slot.id, slot.module, slot.container, slot.name, slot.path, slot.category, slot.label)).lower()
+            " ".join((slot.id, slot.module, slot.container, slot.name, slot.path, slot.category,
+                       slot.label, friendly_resource_label(slot))).lower()
             for slot in self.resources
         ]
         self.endResetModel()
@@ -46,19 +49,22 @@ class ResourceTableModel(QAbstractTableModel):
         slot = self.resources[index.row()]
         change = self.project.changes.get(slot.id)
         if role == Qt.DisplayRole:
+            applicability = self._applicability(slot)
             values = [
-                "已启用" if change and change.enabled else "未启用（系统默认）",
+                "已修改" if change and change.enabled else applicability or "使用系统默认",
                 slot.category,
                 slot.module,
-                slot.resource_type,
-                slot.label,
+                TYPE_LABELS.get(slot.resource_type, slot.resource_type),
+                friendly_resource_label(slot),
                 slot.name,
                 slot.path or "—",
                 self._change_text(change),
             ]
             return values[index.column()]
         if role == Qt.ToolTipRole:
-            return f"状态：{slot.status}\n风险：{slot.risk}\nID：{slot.id}"
+            applicability = self._applicability(slot)
+            prefix = f"本机状态：{applicability}\n" if applicability else ""
+            return f"{prefix}支持状态：{slot.status}\n风险：{slot.risk}\nID：{slot.id}"
         if role == Qt.ForegroundRole:
             if slot.status == "当前版本不支持":
                 return QColor("#B00020")
@@ -85,6 +91,19 @@ class ResourceTableModel(QAbstractTableModel):
 
     def search_text(self, row: int) -> str:
         return self._search_texts[row]
+
+    def _applicability(self, slot: ResourceSlot) -> str:
+        if self.installed_packages is None or not slot.module.startswith("com."):
+            return ""
+        if slot.module in self.installed_packages:
+            return "本机适用"
+        if slot.module.startswith("com.huawei."):
+            return "兼容资源"
+        return "本机未安装"
+
+    def set_installed_packages(self, packages: set[str] | None) -> None:
+        self.installed_packages = packages
+        self.refresh()
 
     def refresh(self):
         self.layoutChanged.emit()

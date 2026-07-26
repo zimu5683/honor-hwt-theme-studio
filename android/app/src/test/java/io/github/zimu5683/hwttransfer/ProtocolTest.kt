@@ -2,12 +2,21 @@ package io.github.zimu5683.hwttransfer
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 class ProtocolTest {
+    @Test
+    fun profilePackageListIsThemeSpecific() {
+        assertTrue(DeviceProfile.targetPackages.contains("com.android.systemui"))
+        assertTrue(DeviceProfile.targetPackages.contains("com.hihonor.android.launcher"))
+        assertTrue(DeviceProfile.targetPackages.contains("com.tencent.mm"))
+        assertTrue(DeviceProfile.targetPackages.none { it == "*" })
+    }
+
     @Test
     fun safeFileNameRemovesTraversalAndKeepsChinese() {
         assertEquals("我的_主题.hwt", Protocol.safeFileName("../我的 主题.hwt"))

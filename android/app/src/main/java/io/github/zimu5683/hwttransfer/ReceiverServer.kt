@@ -2,6 +2,7 @@ package io.github.zimu5683.hwttransfer
 
 import android.content.Context
 import fi.iki.elonen.NanoHTTPD
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.URLDecoder
@@ -22,6 +23,7 @@ class ReceiverServer(
         return try {
             when {
                 session.method == Method.GET && session.uri == "/api/v1/status" -> status()
+                session.method == Method.GET && session.uri == "/api/v1/profile" -> profile(session)
                 session.method == Method.POST && session.uri == "/api/v1/pair" -> pair(session)
                 session.method == Method.PUT && session.uri.startsWith("/api/v1/themes/") -> upload(session)
                 else -> json(404, JSONObject().put("code", "not_found").put("message", "接口不存在"))
@@ -41,6 +43,7 @@ class ReceiverServer(
         .put("device_id", pairing.deviceId)
         .put("name", android.os.Build.MODEL)
         .put("app_version", BuildConfig.VERSION_NAME)
+        .put("features", JSONArray(listOf("device_profile")))
         .put("running", true)
         .put("storage_ready", storage.isAvailable()))
 
@@ -55,12 +58,21 @@ class ReceiverServer(
             .put("device_id", pairing.deviceId)
             .put("name", android.os.Build.MODEL)
             .put("app_version", BuildConfig.VERSION_NAME)
+            .put("features", JSONArray(listOf("device_profile")))
             .put("token", result.token))
     }
 
-    private fun upload(session: IHTTPSession): Response {
+    private fun profile(session: IHTTPSession): Response {
+        requireAuthorized(session)
+        return json(200, DeviceProfile.json(appContext))
+    }
+
+    private fun requireAuthorized(session: IHTTPSession) {
         val bearer = session.headers["authorization"]?.removePrefix("Bearer ")
         if (!pairing.isAuthorized(bearer)) throw TransferException(401, "unauthorized", "配对令牌无效或已撤销")
+    }
+    private fun upload(session: IHTTPSession): Response {
+        requireAuthorized(session)
         val declaredSize = session.headers["content-length"]?.toLongOrNull()
             ?: throw TransferException(400, "missing_length", "请求缺少 Content-Length")
         if (declaredSize < 0 || declaredSize > Protocol.MAX_FILE_SIZE) {

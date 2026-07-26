@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication
 from hwtstudio import __version__
 from hwtstudio.app import MainWindow
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
+from hwtstudio.semantic import SIMPLE_BY_ID
 from hwtstudio.ui.dialogs import resolve_missing_assets
 
 
@@ -31,6 +32,27 @@ class GuiSmokeTests(unittest.TestCase):
         window.bind_catalog(window.catalog)
         self.assertIn(custom.id, {slot.id for slot in window.resource_model.resources})
         self.assertEqual(window.windowTitle().split(" - ")[0], f"大雪主题编辑器 {__version__}")
+        self.assertEqual([window.tabs.tabText(i) for i in range(window.tabs.count())], ["简洁编辑", "修改记录", "高级编辑"])
+        self.assertEqual(len(window.simple_editor.cards), 30)
+        self.assertTrue(window.table.isColumnHidden(2))
+        self.assertTrue(window.table.isColumnHidden(5))
+        window._toggle_technical_columns(True)
+        self.assertFalse(window.table.isColumnHidden(2))
+        window.close()
+
+    def test_simple_group_apply_reset_and_undo(self):
+        window = MainWindow()
+        setting = SIMPLE_BY_ID["page_background"]
+        slots = window.simple_resolved[setting.id]
+        window.apply_simple_setting(setting, ResourceChange(slot_id="", value="#FF112233"))
+        self.assertEqual({window.project.changes[slot.id].value for slot in slots}, {"#FF112233"})
+        self.assertIn(f"涉及 {len(slots)} 个资源", window.changes_text.toPlainText())
+        window.undo_stack.undo()
+        self.assertFalse(any(slot.id in window.project.changes for slot in slots))
+        window.undo_stack.redo()
+        window.reset_simple_setting(setting)
+        self.assertFalse(any(slot.id in window.project.changes for slot in slots))
+        window.project.dirty = False
         window.close()
 
     @staticmethod
