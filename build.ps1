@@ -9,6 +9,7 @@ python -m PyInstaller `
   --noconfirm `
   --clean `
   --onefile `
+  --noupx `
   --windowed `
   --name "大雪主题编辑器" `
   --add-data "assets;assets" `

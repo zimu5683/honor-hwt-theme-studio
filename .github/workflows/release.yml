@@ -36,6 +36,7 @@ jobs:
       - name: Build EXE
         run: >-
           python -m PyInstaller --noconfirm --clean --onefile --windowed
+          --noupx
           --name "大雪主题编辑器" --add-data "assets;assets"
           --exclude-module PySide6.QtWebEngineCore
           --exclude-module PySide6.QtWebEngineWidgets

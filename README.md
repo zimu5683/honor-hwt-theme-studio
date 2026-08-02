@@ -1,6 +1,6 @@
 # 大雪主题编辑器
 
-当前版本：`0.1.4`
+当前版本：`0.1.5`
 
 一个面向荣耀 `.hwt` 主题的中文可视化编辑器。程序只读分析
 `30039574_大雪.hwt`，把资源位置整理成目录；新主题从空白模板生成，
@@ -65,6 +65,10 @@ python -m unittest discover -s tests -v
 ```
 
 输出程序位于 `dist/大雪主题编辑器.exe`。
+
+Windows 版使用 PyInstaller 单文件构建并关闭 UPX 压缩，以减少安全软件对自解压载荷的启发式误报。
+如果本机 Defender 仍提示 `Trojan:Win32/Sabsik.TE.A!ml`，请先核对发布页中的 SHA-256，再将该文件提交到
+Microsoft Security Intelligence 的误报分析入口；不要从非 GitHub Release 来源下载或替换程序文件。
 
 ## Android 传输助手
 

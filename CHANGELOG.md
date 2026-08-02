@@ -1,5 +1,10 @@
 # 更新记录
 
+## 0.1.5 - 2026-08-02
+
+- 修复 Windows 单文件发布包被 Microsoft Defender 启发式误报的问题：PyInstaller 构建关闭 UPX 压缩，并同步更新发布校验文件。
+- 保留 IBM Carbon Light 桌面端、Compose Android 助手和主题工程格式兼容性；Android `versionCode` 更新为 6。
+
 ## 0.1.4 - 2026-08-02
 
 - 按根目录 `DESIGN.md` 将 Windows 桌面端统一为 IBM Carbon Light：集中式 PySide6 QSS、IBM Plex Sans SC、IBM Blue 语义色、方角和 1px hairline，无阴影。
@@ -7,6 +12,7 @@
 - 统一 primary、secondary、tertiary、ghost、danger 按钮角色，以及 success、warning、error、info 状态反馈。
 - Android 传输助手改为 Jetpack Compose Carbon Light 主题：自定义 ColorScheme、Typography、Shapes，移除默认 Material 圆角和 elevation，并在 672dp 处切换单栏/双栏布局。
 - 将 IBM Plex Sans SC 字体和 `docs/design-md/awesome-design-md/` 设计资料纳入发布资源；桌面与 Android 版本同步至 0.1.4。
+- Windows 发布构建关闭 UPX 压缩，降低 PyInstaller 单文件被 Defender 启发式误报为 `Trojan:Win32/Sabsik.TE.A!ml` 的概率。
 
 ## 0.1.3 - 2026-07-26
 
