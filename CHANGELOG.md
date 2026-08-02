@@ -1,5 +1,13 @@
 # 更新记录
 
+## 0.1.5.1 - 2026-08-02
+
+- 将 Windows 和 Android 界面从 IBM Carbon Light 重构为 Studio Soft Light：暖灰画布、紫色主操作、白色圆角卡片和低饱和度类别色块。
+- Windows 新增自定义客户端标题栏，支持拖动、双击最大化、最小化、还原、关闭和边缘缩放；“高级”操作收进工具栏“更多”菜单。
+- 简洁编辑卡片改为 1200/720px 断点下的 3/2/1 列布局，并增加更大的图片预览区域和可折叠主题信息卡片。
+- Android 传输助手新增 StudioSoftTheme、淡紫欢迎区域、圆角状态卡片和语义状态色；协议、文件格式与传输流程保持兼容。
+- 桌面与 Android 版本更新为 0.1.5.1，Android `versionCode` 更新为 7。
+
 ## 0.1.5 - 2026-08-02
 
 - 修复 Windows 单文件发布包被 Microsoft Defender 启发式误报的问题：PyInstaller 构建关闭 UPX 压缩，并同步更新发布校验文件。

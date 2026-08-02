@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from hwtstudio import __version__
@@ -56,15 +57,18 @@ class GuiSmokeTests(unittest.TestCase):
         window.project.dirty = False
         window.close()
 
-    def test_carbon_tokens_and_responsive_layout(self):
-        self.assertEqual(Colors.PRIMARY, "#0F62FE")
-        self.assertEqual(Colors.INK, "#161616")
-        self.assertIn("border-radius: 0", STYLE_SHEET)
+    def test_studio_tokens_titlebar_and_responsive_layout(self):
+        self.assertEqual(Colors.PRIMARY, "#5645D4")
+        self.assertEqual(Colors.CANVAS, "#F6F5F4")
+        self.assertIn("border-radius: 12px", STYLE_SHEET)
+        self.assertIn("QFrame#windowTitleBar", STYLE_SHEET)
         self.assertNotIn("box-shadow", STYLE_SHEET)
 
         window = MainWindow()
+        self.assertTrue(window.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        self.assertEqual(window.title_bar.title.text().split(" - ")[0], f"大雪主题编辑器 {__version__}")
         window.show()
-        for width, columns, orientation in ((1500, 4, 1), (900, 2, 2), (640, 1, 2)):
+        for width, columns, orientation in ((1500, 3, 1), (900, 2, 2), (640, 1, 2)):
             window.resize(width, 720)
             self.app.processEvents()
             self.assertEqual(window.simple_editor._column_count, columns)

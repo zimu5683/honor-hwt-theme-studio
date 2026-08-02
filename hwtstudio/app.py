@@ -5,8 +5,8 @@ import sys
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QThread, QTimer
-from PySide6.QtGui import QAction, QColor, QPixmap, QUndoStack
+from PySide6.QtCore import QEvent, QSize, Qt, QThread, QTimer
+from PySide6.QtGui import QAction, QColor, QMouseEvent, QPixmap, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -18,11 +18,11 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableView,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -57,12 +58,14 @@ from .ui.dialogs import CustomResourceDialog, resolve_missing_assets
 from .ui.phone_dialog import PhoneTransferDialog
 from .ui.resource_models import ResourceFilterModel, ResourceTableModel
 from .ui.simple_editor import SimpleEditor
+from .ui.titlebar import WindowTitleBar
 from .ui.workers import ProfileWorker, TransferWorker
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.resize(1500, 920)
         self.catalog = self._load_initial_catalog()
@@ -77,8 +80,12 @@ class MainWindow(QMainWindow):
         )
         self.profile_thread: QThread | None = None
         self._log_lines: list[str] = []
+        self._resize_margin = 6
         self.simple_resolved = resolve_all(self.catalog)
         self._build_ui()
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
         self._bind_project()
         self._update_phone_ui(cached=bool(self.phone_profile))
         self.log("已加载大雪资源目录。原始主题仅用于只读分析，不会被修改。")
@@ -90,6 +97,8 @@ class MainWindow(QMainWindow):
         return catalog
 
     def _build_ui(self):
+        self.title_bar = WindowTitleBar(self)
+        self.setMenuWidget(self.title_bar)
         self.setStatusBar(QStatusBar())
         self._build_toolbar()
         self.tabs = QTabWidget()
@@ -102,24 +111,29 @@ class MainWindow(QMainWindow):
 
     def _build_toolbar(self):
         toolbar = QToolBar("主工具栏")
+        toolbar.setObjectName("mainToolbar")
         toolbar.setMovable(False)
-        toolbar.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         toolbar.setMinimumWidth(0)
         self.main_toolbar = toolbar
         self.addToolBar(toolbar)
         actions = [
-            ("fa5s.file", "新建工程", self.new_project, Colors.INK),
-            ("fa5s.folder-open", "打开工程", self.open_project, Colors.INK),
-            ("fa5s.save", "保存工程", self.save_project, Colors.INK),
-            ("fa5s.file-export", "导出 HWT", self.export_hwt, Colors.PRIMARY),
-            ("fa5s.mobile-alt", "发送到手机", self.send_phone, Colors.PRIMARY),
+            ("fa5s.file", "新建工程", self.new_project, Colors.INK_MUTED, "ghost"),
+            ("fa5s.folder-open", "打开工程", self.open_project, Colors.INK_MUTED, "ghost"),
+            ("fa5s.save", "保存工程", self.save_project, Colors.INK_MUTED, "ghost"),
+            ("fa5s.file-export", "导出 HWT", self.export_hwt, Colors.PRIMARY, "secondary"),
+            ("fa5s.mobile-alt", "发送到手机", self.send_phone, Colors.PRIMARY, "primary"),
         ]
-        for icon_name, label, callback, icon_color in actions:
+        for icon_name, label, callback, icon_color, role in actions:
             action = QAction(qta.icon(icon_name, color=icon_color), label, self)
             action.setToolTip(label)
             action.triggered.connect(callback)
             toolbar.addAction(action)
-        advanced = self.menuBar().addMenu("高级")
+            button = toolbar.widgetForAction(action)
+            if button is not None:
+                button.setProperty("uiRole", role)
+
+        advanced = QMenu("更多", self)
         custom_action = QAction("添加自定义资源", self)
         custom_action.triggered.connect(self.add_custom_resource)
         advanced.addAction(custom_action)
@@ -133,6 +147,14 @@ class MainWindow(QMainWindow):
         ssh_action = QAction("通过 Termux/SSH 发送到手机", self)
         ssh_action.triggered.connect(self.send_phone_ssh)
         advanced.addAction(ssh_action)
+        more_button = QToolButton()
+        more_button.setText("更多")
+        more_button.setIcon(qta.icon("fa5s.ellipsis-h", color=Colors.INK_MUTED))
+        more_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        more_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        more_button.setMenu(advanced)
+        more_button.setToolTip("更多操作")
+        toolbar.addWidget(more_button)
         toolbar.addSeparator()
         undo_action = self.undo_stack.createUndoAction(self, "撤销")
         redo_action = self.undo_stack.createRedoAction(self, "重做")
@@ -145,9 +167,10 @@ class MainWindow(QMainWindow):
 
     def _build_simple_tab(self):
         page = QWidget()
+        page.setObjectName("simplePage")
         root = QVBoxLayout(page)
-        root.setContentsMargins(24, 24, 24, 24)
-        root.setSpacing(24)
+        root.setContentsMargins(28, 24, 28, 24)
+        root.setSpacing(18)
         self.simple_page = page
         header = QHBoxLayout()
         header.setSpacing(16)
@@ -156,7 +179,7 @@ class MainWindow(QMainWindow):
         title_box.setSpacing(8)
         title = QLabel("用看得懂的项目制作主题")
         title.setObjectName("pageTitle")
-        apply_type(title, 32)
+        apply_type(title, 30)
         title_box.addWidget(title)
         subtitle = QLabel("一次设置会自动同步相关兼容资源；需要逐项调整时再进入“高级编辑”。")
         subtitle.setObjectName("simpleDescription")
@@ -171,11 +194,22 @@ class MainWindow(QMainWindow):
         header.addWidget(self.connect_phone_button)
         root.addLayout(header)
 
-        identity = QGroupBox("主题信息")
+        identity = QFrame()
         identity.setObjectName("identityPanel")
-        identity.setCheckable(True)
-        identity.setChecked(False)
-        form = QFormLayout(identity)
+        identity_layout = QVBoxLayout(identity)
+        identity_layout.setContentsMargins(18, 14, 18, 16)
+        identity_layout.setSpacing(12)
+        identity_header = QHBoxLayout()
+        identity_title = QLabel("主题信息")
+        identity_title.setObjectName("sectionTitle")
+        identity_header.addWidget(identity_title)
+        identity_header.addStretch(1)
+        identity_toggle = QPushButton("展开")
+        identity_toggle.setCheckable(True)
+        set_role(identity_toggle, "ghost")
+        self.identity_toggle = identity_toggle
+        identity_header.addWidget(identity_toggle)
+        identity_layout.addLayout(identity_header)
         self.name_edit = QLineEdit()
         self.title_edit = QLineEdit()
         self.author_edit = QLineEdit()
@@ -196,9 +230,10 @@ class MainWindow(QMainWindow):
         ]:
             identity_form.addRow(label, widget)
             widget.textEdited.connect(self._identity_edited)
-        form.addRow(identity_fields)
+        identity_layout.addWidget(identity_fields)
         identity_fields.setVisible(False)
-        identity.toggled.connect(identity_fields.setVisible)
+        identity_toggle.toggled.connect(identity_fields.setVisible)
+        identity_toggle.toggled.connect(lambda checked: identity_toggle.setText("收起" if checked else "展开"))
         root.addWidget(identity)
 
         scroll = QScrollArea()
@@ -206,10 +241,14 @@ class MainWindow(QMainWindow):
         scroll.setFrameShape(QFrame.NoFrame)
         self.simple_scroll = scroll
         host = QWidget()
+        host.setObjectName("simpleHost")
+        host.setMaximumWidth(1440)
         host_layout = QVBoxLayout(host)
+        host_layout.setContentsMargins(0, 0, 0, 0)
         self.simple_editor = SimpleEditor(self.apply_simple_setting, self.reset_simple_setting)
         host_layout.addWidget(self.simple_editor)
         scroll.setWidget(host)
+        scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         root.addWidget(scroll, 1)
         self.simple_editor.set_available_width(scroll.viewport().width())
         return page
@@ -1052,21 +1091,61 @@ class MainWindow(QMainWindow):
         else:
             event.ignore()
 
+    def _resize_edges_at(self, global_pos):
+        if self.isMaximized() or self.isFullScreen():
+            return Qt.Edges()
+        rect = self.frameGeometry()
+        margin = self._resize_margin
+        edges = Qt.Edges()
+        if abs(global_pos.x() - rect.left()) <= margin:
+            edges |= Qt.Edge.LeftEdge
+        if abs(global_pos.x() - rect.right()) <= margin:
+            edges |= Qt.Edge.RightEdge
+        if abs(global_pos.y() - rect.top()) <= margin:
+            edges |= Qt.Edge.TopEdge
+        if abs(global_pos.y() - rect.bottom()) <= margin:
+            edges |= Qt.Edge.BottomEdge
+        return edges
+
+    def eventFilter(self, watched, event):
+        if isinstance(watched, QWidget) and (watched is self or self.isAncestorOf(watched)):
+            if isinstance(event, QMouseEvent):
+                global_pos = event.globalPosition().toPoint()
+                edges = self._resize_edges_at(global_pos)
+                if event.type() == QEvent.Type.MouseMove and not (event.buttons() & Qt.MouseButton.LeftButton):
+                    if edges & (Qt.Edge.LeftEdge | Qt.Edge.RightEdge):
+                        if edges & (Qt.Edge.TopEdge | Qt.Edge.BottomEdge):
+                            self.setCursor(Qt.CursorShape.SizeFDiagCursor if edges & Qt.Edge.LeftEdge else Qt.CursorShape.SizeBDiagCursor)
+                        else:
+                            self.setCursor(Qt.CursorShape.SizeHorCursor)
+                    elif edges & (Qt.Edge.TopEdge | Qt.Edge.BottomEdge):
+                        self.setCursor(Qt.CursorShape.SizeVerCursor)
+                    else:
+                        self.unsetCursor()
+                elif event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton and edges:
+                    handle = self.windowHandle()
+                    if handle is not None and handle.startSystemResize(edges):
+                        event.accept()
+                        return True
+                elif event.type() == QEvent.Type.MouseButtonRelease:
+                    self.unsetCursor()
+        return super().eventFilter(watched, event)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         width = self.width()
         if hasattr(self, "simple_header"):
             self.main_toolbar.setToolButtonStyle(
-                Qt.ToolButtonIconOnly if width < 672 else Qt.ToolButtonTextBesideIcon
+                Qt.ToolButtonIconOnly if width < 720 else Qt.ToolButtonTextBesideIcon
             )
             self.simple_header.setDirection(
-                QBoxLayout.TopToBottom if width < 672 else QBoxLayout.LeftToRight
+                QBoxLayout.TopToBottom if width < 720 else QBoxLayout.LeftToRight
             )
         if hasattr(self, "simple_scroll"):
             self.simple_editor.set_available_width(self.simple_scroll.viewport().width())
         if hasattr(self, "identity_form"):
             self.identity_form.setRowWrapPolicy(
-                QFormLayout.WrapAllRows if width < 672 else QFormLayout.DontWrapRows
+                QFormLayout.WrapAllRows if width < 720 else QFormLayout.DontWrapRows
             )
         if hasattr(self, "filter_bar"):
             self._layout_filter_bar(width)

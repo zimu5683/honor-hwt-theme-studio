@@ -12,8 +12,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -48,7 +51,7 @@ import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 
-private enum class CarbonButtonKind { Primary, Secondary, Tertiary, Ghost, Danger }
+private enum class StudioButtonKind { Primary, Secondary, Tertiary, Ghost, Danger }
 
 class MainActivity : ComponentActivity() {
     private lateinit var storage: ThemeStorage
@@ -64,7 +67,7 @@ class MainActivity : ComponentActivity() {
         pairing = PairingManager(this)
         refreshState()
         setContent {
-            CarbonTheme {
+            StudioSoftTheme {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     ReceiverScreen()
                 }
@@ -171,42 +174,50 @@ class MainActivity : ComponentActivity() {
                 ),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Text("荣耀主题传输助手", style = MaterialTheme.typography.headlineLarge)
-                Text(
-                    "无需 Termux。授权一次主题目录后，电脑上的大雪主题编辑器即可直接发送 HWT。",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = StudioSemanticColors.lavender,
+                    shape = MaterialTheme.shapes.extraLarge,
+                ) {
+                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("荣耀主题传输助手", style = MaterialTheme.typography.headlineLarge, color = StudioSemanticColors.purpleDeep)
+                        Text(
+                            "无需 Termux。授权一次主题目录后，电脑上的大雪主题编辑器即可直接发送 HWT。",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = StudioSemanticColors.purpleDeep.copy(alpha = 0.82f),
+                        )
+                    }
+                }
 
                 val directorySection: @Composable () -> Unit = {
-                    CarbonSection("主题目录") {
+                    StudioSection("主题目录", StudioSemanticColors.sky) {
                         Text(state.destination, style = MaterialTheme.typography.bodyLarge)
-                        CarbonButtonRow(compact) {
-                            CarbonButton(
+                        StudioButtonRow(compact) {
+                            StudioButton(
                                 text = "选择 Honor/Themes",
                                 onClick = { directoryPicker.launch(null) },
-                                kind = CarbonButtonKind.Primary,
+                                kind = StudioButtonKind.Primary,
                                 modifier = Modifier.weightOrFill(compact),
                             )
-                            CarbonButton(
+                            StudioButton(
                                 text = "全盘权限备用",
                                 onClick = ::grantAllFiles,
-                                kind = CarbonButtonKind.Tertiary,
+                                kind = StudioButtonKind.Tertiary,
                                 modifier = Modifier.weightOrFill(compact),
                             )
                         }
                         Text(
                             "优先使用目录授权；只有 MagicOS 文件选择器无法授权时才使用全盘权限。",
                             style = MaterialTheme.typography.bodySmall,
-                            color = CarbonSemanticColors.muted,
+                            color = StudioSemanticColors.muted,
                         )
                     }
                 }
 
                 val receiverSection: @Composable () -> Unit = {
-                    CarbonSection("电脑接收") {
-                        val statusColor = if (state.running) CarbonSemanticColors.success else CarbonSemanticColors.muted
-                        StatusLine(
+                    StudioSection("电脑接收", StudioSemanticColors.mint) {
+                        val statusColor = if (state.running) StudioSemanticColors.success else StudioSemanticColors.muted
+                        StudioStatusLine(
                             text = if (state.running) "状态：正在接收" else "状态：未启动",
                             color = statusColor,
                         )
@@ -216,24 +227,24 @@ class MainActivity : ComponentActivity() {
                                 Text(
                                     "有效期至 ${DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(state.codeExpiresAt))}",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = CarbonSemanticColors.muted,
+                                    color = StudioSemanticColors.muted,
                                 )
                             }
                             Text("手机地址：${state.addresses.joinToString().ifBlank { "等待网络地址" }}")
                             Text("端口：${Protocol.HTTP_PORT}；30 分钟无活动自动停止", style = MaterialTheme.typography.bodySmall)
                         }
-                        CarbonButtonRow(compact) {
-                            CarbonButton(
+                        StudioButtonRow(compact) {
+                            StudioButton(
                                 text = if (state.running) "停止接收" else "开始接收",
                                 onClick = { if (state.running) stopReceiver() else requestStartReceiver() },
-                                kind = if (state.running) CarbonButtonKind.Danger else CarbonButtonKind.Primary,
+                                kind = if (state.running) StudioButtonKind.Danger else StudioButtonKind.Primary,
                                 modifier = Modifier.weightOrFill(compact),
                             )
                             if (state.running) {
-                                CarbonButton(
+                                StudioButton(
                                     text = "刷新配对码",
                                     onClick = ::regenerateCode,
-                                    kind = CarbonButtonKind.Tertiary,
+                                    kind = StudioButtonKind.Tertiary,
                                     modifier = Modifier.weightOrFill(compact),
                                 )
                             }
@@ -242,49 +253,49 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val importSection: @Composable () -> Unit = {
-                    CarbonSection("本地导入") {
+                    StudioSection("本地导入", StudioSemanticColors.peach) {
                         Text("也可以先通过荣耀分享、微信或数据线把 HWT 放到手机，再从这里导入。")
-                        CarbonButtonRow(compact) {
-                            CarbonButton(
+                        StudioButtonRow(compact) {
+                            StudioButton(
                                 text = "选择 HWT 文件",
                                 onClick = { filePicker.launch(arrayOf("application/octet-stream", "application/zip", "*/*")) },
-                                kind = CarbonButtonKind.Primary,
+                                kind = StudioButtonKind.Primary,
                                 modifier = Modifier.weightOrFill(compact),
                             )
-                            CarbonButton(
+                            StudioButton(
                                 text = "打开荣耀主题",
                                 onClick = ::openThemeManager,
-                                kind = CarbonButtonKind.Ghost,
+                                kind = StudioButtonKind.Ghost,
                                 modifier = Modifier.weightOrFill(compact),
                             )
                         }
-                        Text("最近一次：${state.lastTransfer}", style = MaterialTheme.typography.bodySmall, color = CarbonSemanticColors.muted)
+                        Text("最近一次：${state.lastTransfer}", style = MaterialTheme.typography.bodySmall, color = StudioSemanticColors.muted)
                     }
                 }
 
                 val clientsSection: @Composable () -> Unit = {
-                    CarbonSection("已配对电脑") {
+                    StudioSection("已配对电脑", StudioSemanticColors.lavender) {
                         if (state.clients.isEmpty()) {
-                            Text("暂无", color = CarbonSemanticColors.muted)
+                            Text("暂无", color = StudioSemanticColors.muted)
                         } else {
                             state.clients.forEachIndexed { index, client ->
-                                if (index > 0) HorizontalDivider(color = CarbonSemanticColors.hairline)
+                                if (index > 0) HorizontalDivider(color = StudioSemanticColors.hairline)
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                         Text(client.name, style = MaterialTheme.typography.bodyLarge)
                                         Text(
                                             DateFormat.getDateTimeInstance().format(Date(client.pairedAt)),
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = CarbonSemanticColors.muted,
+                                            color = StudioSemanticColors.muted,
                                         )
                                     }
-                                    CarbonButton(
+                                    StudioButton(
                                         text = "撤销",
                                         onClick = {
                                             pairing.revoke(client.tokenHash)
                                             refreshState()
                                         },
-                                        kind = CarbonButtonKind.Ghost,
+                                        kind = StudioButtonKind.Ghost,
                                     )
                                 }
                             }
@@ -311,64 +322,69 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (state.error.isNotBlank()) {
-                    StatusLine(text = "错误：${state.error}", color = CarbonSemanticColors.error, background = CarbonSemanticColors.error.copy(alpha = 0.08f))
+                    StudioStatusLine(text = "错误：${state.error}", color = StudioSemanticColors.error, background = StudioSemanticColors.rose)
                 }
                 Spacer(Modifier.height(8.dp))
-                Text("协议 v${Protocol.VERSION} · APK ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = CarbonSemanticColors.subtle)
+                Text("协议 v${Protocol.VERSION} · APK ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = StudioSemanticColors.subtle)
             }
         }
     }
 
     @Composable
-    private fun CarbonSection(title: String, content: @Composable () -> Unit) {
+    private fun StudioSection(title: String, accent: Color, content: @Composable () -> Unit) {
         Surface(
-            modifier = Modifier.fillMaxWidth().border(BorderStroke(1.dp, CarbonSemanticColors.hairline), RoundedCornerShape(0.dp)),
+            modifier = Modifier.fillMaxWidth().border(BorderStroke(1.dp, StudioSemanticColors.hairline), MaterialTheme.shapes.large),
             color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(0.dp),
+            shape = MaterialTheme.shapes.large,
             tonalElevation = 0.dp,
             shadowElevation = 0.dp,
         ) {
             Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(title, style = MaterialTheme.typography.titleLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        Modifier.width(4.dp).height(24.dp).background(accent, RoundedCornerShape(2.dp)),
+                    )
+                    Text(title, style = MaterialTheme.typography.titleLarge)
+                }
                 content()
             }
         }
     }
 
     @Composable
-    private fun CarbonButton(
+    private fun StudioButton(
         text: String,
         onClick: () -> Unit,
-        kind: CarbonButtonKind,
+        kind: StudioButtonKind,
         modifier: Modifier = Modifier,
         enabled: Boolean = true,
     ) {
         val colors = when (kind) {
-            CarbonButtonKind.Primary -> ButtonDefaults.buttonColors(
+            StudioButtonKind.Primary -> ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
-                disabledContainerColor = CarbonSemanticColors.surface2,
-                disabledContentColor = CarbonSemanticColors.subtle,
+                disabledContainerColor = StudioSemanticColors.surface2,
+                disabledContentColor = StudioSemanticColors.subtle,
             )
-            CarbonButtonKind.Secondary -> ButtonDefaults.buttonColors(
+            StudioButtonKind.Secondary -> ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.secondary,
                 contentColor = MaterialTheme.colorScheme.onSecondary,
             )
-            CarbonButtonKind.Danger -> ButtonDefaults.buttonColors(
-                containerColor = CarbonSemanticColors.error,
+            StudioButtonKind.Danger -> ButtonDefaults.buttonColors(
+                containerColor = StudioSemanticColors.error,
                 contentColor = Color.White,
             )
-            CarbonButtonKind.Tertiary -> ButtonDefaults.outlinedButtonColors(
+            StudioButtonKind.Tertiary -> ButtonDefaults.outlinedButtonColors(
                 containerColor = Color.Transparent,
                 contentColor = MaterialTheme.colorScheme.primary,
             )
-            CarbonButtonKind.Ghost -> ButtonDefaults.textButtonColors(
+            StudioButtonKind.Ghost -> ButtonDefaults.textButtonColors(
                 contentColor = MaterialTheme.colorScheme.primary,
             )
         }
-        val shape = RoundedCornerShape(0.dp)
+        val shape = MaterialTheme.shapes.small
         when (kind) {
-            CarbonButtonKind.Tertiary -> OutlinedButton(
+            StudioButtonKind.Tertiary -> OutlinedButton(
                 onClick = onClick,
                 enabled = enabled,
                 modifier = modifier.heightIn(min = 48.dp),
@@ -376,7 +392,7 @@ class MainActivity : ComponentActivity() {
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
                 colors = colors,
             ) { Text(text, style = MaterialTheme.typography.labelLarge) }
-            CarbonButtonKind.Ghost -> TextButton(
+            StudioButtonKind.Ghost -> TextButton(
                 onClick = onClick,
                 enabled = enabled,
                 modifier = modifier.heightIn(min = 48.dp),
@@ -395,7 +411,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun CarbonButtonRow(compact: Boolean, content: @Composable () -> Unit) {
+    private fun StudioButtonRow(compact: Boolean, content: @Composable () -> Unit) {
         if (compact) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 // A vertical row keeps every touch target at least 48dp on phones.
@@ -407,11 +423,11 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun StatusLine(text: String, color: Color, background: Color = CarbonSemanticColors.surface1) {
+    private fun StudioStatusLine(text: String, color: Color, background: Color = StudioSemanticColors.surfaceMuted) {
         Surface(
-            modifier = Modifier.fillMaxWidth().border(BorderStroke(1.dp, CarbonSemanticColors.hairline), RoundedCornerShape(0.dp)),
+            modifier = Modifier.fillMaxWidth().border(BorderStroke(1.dp, StudioSemanticColors.hairline), MaterialTheme.shapes.small),
             color = background,
-            shape = RoundedCornerShape(0.dp),
+            shape = MaterialTheme.shapes.small,
         ) {
             Text(text, modifier = Modifier.padding(12.dp), color = color, style = MaterialTheme.typography.bodyMedium)
         }

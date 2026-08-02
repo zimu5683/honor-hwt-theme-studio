@@ -21,7 +21,16 @@ from PySide6.QtWidgets import (
 
 from ..models import ResourceChange, ResourceSlot, ThemeProject
 from ..semantic import SIMPLE_SETTINGS, SimpleSetting, setting_visible
-from .design_system import apply_type, set_role
+from .design_system import Colors, apply_type, set_role
+
+
+_TINT_BY_SECTION = {
+    "主题": "lavender",
+    "全局外观": "cream",
+    "系统界面": "mint",
+    "桌面": "sky",
+    "常用应用": "rose",
+}
 
 
 def _signature(change: ResourceChange) -> tuple:
@@ -53,10 +62,11 @@ class SimpleSettingCard(QFrame):
         self.slots: list[ResourceSlot] = []
         self.project: ThemeProject | None = None
         self.setObjectName("simpleCard")
-        self.setMinimumHeight(176 if setting.kind == "image" else 144)
+        self.setProperty("tintRole", _TINT_BY_SECTION.get(setting.section, "lavender"))
+        self.setMinimumHeight(236 if setting.kind == "image" else 190)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
+        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setSpacing(12)
 
         header = QHBoxLayout()
         self.title = QLabel(setting.title)
@@ -78,10 +88,11 @@ class SimpleSettingCard(QFrame):
         layout.addWidget(self.state)
 
         self.preview = QLabel()
-        self.preview.setFixedHeight(52 if setting.kind == "image" else 24)
+        self.preview.setFixedHeight(132 if setting.kind == "image" else 44)
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setObjectName("simplePreview")
         self.preview.setVisible(True)
+        self.preview.setText("尚未选择图片" if setting.kind == "image" else "使用默认颜色")
         layout.addWidget(self.preview)
 
         self.options = QWidget()
@@ -146,7 +157,7 @@ class SimpleSettingCard(QFrame):
         if not enabled:
             self.state.setText("使用系统默认")
             self.state.setProperty("mixed", False)
-            self.preview.clear()
+            self.preview.setText("尚未选择图片" if self.setting.kind == "image" else "使用默认颜色")
             self.preview.setStyleSheet("")
             self._refresh_style()
             return
@@ -155,13 +166,16 @@ class SimpleSettingCard(QFrame):
         self.state.setProperty("mixed", mixed)
         if mixed:
             self.state.setText(f"含单独调整 · 已修改 {len(enabled)}/{len(slots)} 个")
-            self.preview.clear()
+            self.preview.setText("存在单独调整")
             self.preview.setStyleSheet("")
         else:
             change = enabled[0]
             if change.value:
                 self.state.setText(f"当前颜色：{change.value}")
-                self.preview.setStyleSheet(f"background: {change.value};")
+                self.preview.setText("")
+                self.preview.setStyleSheet(
+                    f"background: {change.value}; border: 1px solid {Colors.HAIRLINE}; border-radius: 8px;"
+                )
             else:
                 self.state.setText("已选择自定义图片")
                 self._set_image_preview(change)
@@ -178,11 +192,12 @@ class SimpleSettingCard(QFrame):
         self.preview.setStyleSheet("")
         if change.source_file and Path(change.source_file).is_file():
             pixmap = QPixmap(change.source_file)
-            self.preview.setPixmap(pixmap.scaled(250, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.preview.setText("")
+            self.preview.setPixmap(pixmap.scaled(420, 112, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         elif change.source_kind == "placeholder":
             self.preview.setText("灰白占位图片")
         else:
-            self.preview.clear()
+            self.preview.setText("尚未选择图片")
 
     def _load_image_options(self, change: ResourceChange):
         for combo, value in ((self.fit, change.fit), (self.enhance, change.enhance)):
@@ -255,9 +270,9 @@ class SimpleEditor(QWidget):
 
     @staticmethod
     def _columns_for_width(width: int) -> int:
-        if width >= 1312:
-            return 4
-        if width >= 672:
+        if width >= 1200:
+            return 3
+        if width >= 720:
             return 2
         return 1
 
