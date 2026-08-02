@@ -2,6 +2,6 @@
     <style name="Theme.HwtThemeReceiver" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#F7F9FC</item>
+        <item name="android:statusBarColor">#FFFFFF</item>
     </style>
 </resources>

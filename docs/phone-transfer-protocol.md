@@ -15,7 +15,7 @@
   "device_id": "stable-uuid",
   "name": "ELP-AN00",
   "http_port": 48621,
-  "app_version": "0.1.3",
+  "app_version": "0.1.4",
   "features": ["device_profile"]
 }
 ```

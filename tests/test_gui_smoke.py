@@ -15,6 +15,7 @@ from hwtstudio.app import MainWindow
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
 from hwtstudio.semantic import SIMPLE_BY_ID
 from hwtstudio.ui.dialogs import resolve_missing_assets
+from hwtstudio.ui.design_system import Colors, STYLE_SHEET
 
 
 class GuiSmokeTests(unittest.TestCase):
@@ -53,6 +54,21 @@ class GuiSmokeTests(unittest.TestCase):
         window.reset_simple_setting(setting)
         self.assertFalse(any(slot.id in window.project.changes for slot in slots))
         window.project.dirty = False
+        window.close()
+
+    def test_carbon_tokens_and_responsive_layout(self):
+        self.assertEqual(Colors.PRIMARY, "#0F62FE")
+        self.assertEqual(Colors.INK, "#161616")
+        self.assertIn("border-radius: 0", STYLE_SHEET)
+        self.assertNotIn("box-shadow", STYLE_SHEET)
+
+        window = MainWindow()
+        window.show()
+        for width, columns, orientation in ((1500, 4, 1), (900, 2, 2), (640, 1, 2)):
+            window.resize(width, 720)
+            self.app.processEvents()
+            self.assertEqual(window.simple_editor._column_count, columns)
+            self.assertEqual(window.resource_splitter.orientation().value, orientation)
         window.close()
 
     @staticmethod

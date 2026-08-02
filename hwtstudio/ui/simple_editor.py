@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from ..models import ResourceChange, ResourceSlot, ThemeProject
 from ..semantic import SIMPLE_SETTINGS, SimpleSetting, setting_visible
+from .design_system import apply_type, set_role
 
 
 def _signature(change: ResourceChange) -> tuple:
@@ -52,9 +53,10 @@ class SimpleSettingCard(QFrame):
         self.slots: list[ResourceSlot] = []
         self.project: ThemeProject | None = None
         self.setObjectName("simpleCard")
-        self.setMinimumHeight(168 if setting.kind == "image" else 142)
+        self.setMinimumHeight(176 if setting.kind == "image" else 144)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
 
         header = QHBoxLayout()
         self.title = QLabel(setting.title)
@@ -116,16 +118,18 @@ class SimpleSettingCard(QFrame):
 
         buttons = QHBoxLayout()
         self.more_button = QPushButton("更多图片选项")
+        set_role(self.more_button, "ghost")
         self.more_button.setCheckable(True)
         self.more_button.toggled.connect(self.options.setVisible)
         self.more_button.setVisible(setting.kind == "image")
         buttons.addWidget(self.more_button)
         buttons.addStretch(1)
         self.reset_button = QPushButton("恢复默认")
+        set_role(self.reset_button, "ghost")
         self.reset_button.clicked.connect(lambda: self.reset_callback(self.setting))
         buttons.addWidget(self.reset_button)
         self.apply_button = QPushButton("选择图片" if setting.kind == "image" else "设置颜色")
-        self.apply_button.setObjectName("primaryAction")
+        set_role(self.apply_button, "primary")
         self.apply_button.clicked.connect(self._apply)
         buttons.addWidget(self.apply_button)
         layout.addLayout(buttons)
@@ -137,6 +141,7 @@ class SimpleSettingCard(QFrame):
         self.setEnabled(bool(slots))
         changes = [project.changes.get(slot.id) for slot in slots]
         enabled = [change for change in changes if change and change.enabled]
+        self.setProperty("changed", bool(enabled))
         self.reset_button.setEnabled(bool(enabled))
         if not enabled:
             self.state.setText("使用系统默认")
@@ -156,7 +161,7 @@ class SimpleSettingCard(QFrame):
             change = enabled[0]
             if change.value:
                 self.state.setText(f"当前颜色：{change.value}")
-                self.preview.setStyleSheet(f"background: {change.value}; border-radius: 6px;")
+                self.preview.setStyleSheet(f"background: {change.value};")
             else:
                 self.state.setText("已选择自定义图片")
                 self._set_image_preview(change)
@@ -166,6 +171,8 @@ class SimpleSettingCard(QFrame):
     def _refresh_style(self):
         self.state.style().unpolish(self.state)
         self.state.style().polish(self.state)
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def _set_image_preview(self, change: ResourceChange):
         self.preview.setStyleSheet("")
@@ -219,24 +226,61 @@ class SimpleEditor(QWidget):
     def __init__(self, apply_callback, reset_callback, parent=None):
         super().__init__(parent)
         self.cards: dict[str, SimpleSettingCard] = {}
+        self._section_grids: list[tuple[QGridLayout, list[SimpleSettingCard]]] = []
+        self._column_count = 0
+        self._available_width = 0
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(32)
         for section in dict.fromkeys(item.section for item in SIMPLE_SETTINGS):
             title = QLabel(section)
             title.setObjectName("simpleSectionTitle")
+            apply_type(title, 24)
             root.addWidget(title)
             container = QWidget()
             grid = QGridLayout(container)
-            grid.setContentsMargins(0, 0, 0, 8)
-            grid.setHorizontalSpacing(12)
-            grid.setVerticalSpacing(12)
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setHorizontalSpacing(16)
+            grid.setVerticalSpacing(16)
             items = [item for item in SIMPLE_SETTINGS if item.section == section]
+            section_cards: list[SimpleSettingCard] = []
             for index, setting in enumerate(items):
                 card = SimpleSettingCard(setting, apply_callback, reset_callback)
                 self.cards[setting.id] = card
-                grid.addWidget(card, index // 2, index % 2)
+                section_cards.append(card)
             root.addWidget(container)
+            self._section_grids.append((grid, section_cards))
+        self._relayout_cards()
         root.addStretch(1)
+
+    @staticmethod
+    def _columns_for_width(width: int) -> int:
+        if width >= 1312:
+            return 4
+        if width >= 672:
+            return 2
+        return 1
+
+    def _relayout_cards(self):
+        columns = self._columns_for_width(self._available_width or self.width())
+        if columns == self._column_count:
+            return
+        self._column_count = columns
+        for grid, cards in self._section_grids:
+            while grid.count():
+                grid.takeAt(0)
+            for column in range(columns):
+                grid.setColumnStretch(column, 1)
+            for index, card in enumerate(cards):
+                grid.addWidget(card, index // columns, index % columns)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._relayout_cards()
+
+    def set_available_width(self, width: int):
+        self._available_width = max(0, width)
+        self._relayout_cards()
 
     def bind(
         self,

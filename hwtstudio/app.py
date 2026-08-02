@@ -5,8 +5,8 @@ import sys
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, QTimer
-from PySide6.QtGui import QAction, QColor, QFont, QPixmap, QUndoStack
+from PySide6.QtCore import QSize, Qt, QThread, QTimer
+from PySide6.QtGui import QAction, QColor, QPixmap, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
+    QBoxLayout,
     QFormLayout,
     QFrame,
     QGridLayout,
@@ -38,7 +39,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 import qtawesome as qta
-from qt_material import apply_stylesheet
 
 from . import __version__
 from .catalog import scan_theme
@@ -52,6 +52,7 @@ from .validation import validate_change_value
 from .services.catalog_service import load_preferred_catalog, save_user_catalog
 from .semantic import SIMPLE_SETTINGS, TYPE_LABELS, friendly_resource_label, resolve_all
 from .ui.commands import BulkChangeCommand, ChangeCommand
+from .ui.design_system import Colors, apply_design_system, apply_type, set_role, set_state
 from .ui.dialogs import CustomResourceDialog, resolve_missing_assets
 from .ui.phone_dialog import PhoneTransferDialog
 from .ui.resource_models import ResourceFilterModel, ResourceTableModel
@@ -92,25 +93,30 @@ class MainWindow(QMainWindow):
         self.setStatusBar(QStatusBar())
         self._build_toolbar()
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("mainTabs")
         self.setCentralWidget(self.tabs)
         self.tabs.addTab(self._build_simple_tab(), "简洁编辑")
         self.tabs.addTab(self._build_changes_tab(), "修改记录")
         self.tabs.addTab(self._build_resources_tab(), "高级编辑")
+        self.setMinimumSize(320, 480)
 
     def _build_toolbar(self):
         toolbar = QToolBar("主工具栏")
         toolbar.setMovable(False)
-        toolbar.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        toolbar.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        toolbar.setMinimumWidth(0)
+        self.main_toolbar = toolbar
         self.addToolBar(toolbar)
         actions = [
-            ("fa5s.file", "新建工程", self.new_project),
-            ("fa5s.folder-open", "打开工程", self.open_project),
-            ("fa5s.save", "保存工程", self.save_project),
-            ("fa5s.file-export", "导出 HWT", self.export_hwt),
-            ("fa5s.mobile-alt", "发送到手机", self.send_phone),
+            ("fa5s.file", "新建工程", self.new_project, Colors.INK),
+            ("fa5s.folder-open", "打开工程", self.open_project, Colors.INK),
+            ("fa5s.save", "保存工程", self.save_project, Colors.INK),
+            ("fa5s.file-export", "导出 HWT", self.export_hwt, Colors.PRIMARY),
+            ("fa5s.mobile-alt", "发送到手机", self.send_phone, Colors.PRIMARY),
         ]
-        for icon_name, label, callback in actions:
-            action = QAction(qta.icon(icon_name, color="#2563EB"), label, self)
+        for icon_name, label, callback, icon_color in actions:
+            action = QAction(qta.icon(icon_name, color=icon_color), label, self)
+            action.setToolTip(label)
             action.triggered.connect(callback)
             toolbar.addAction(action)
         advanced = self.menuBar().addMenu("高级")
@@ -130,8 +136,8 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         undo_action = self.undo_stack.createUndoAction(self, "撤销")
         redo_action = self.undo_stack.createRedoAction(self, "重做")
-        undo_action.setIcon(qta.icon("fa5s.undo", color="#2563EB"))
-        redo_action.setIcon(qta.icon("fa5s.redo", color="#2563EB"))
+        undo_action.setIcon(qta.icon("fa5s.undo", color=Colors.INK_MUTED))
+        redo_action.setIcon(qta.icon("fa5s.redo", color=Colors.INK_MUTED))
         undo_action.setShortcut("Ctrl+Z")
         redo_action.setShortcut("Ctrl+Y")
         toolbar.addAction(undo_action)
@@ -140,10 +146,17 @@ class MainWindow(QMainWindow):
     def _build_simple_tab(self):
         page = QWidget()
         root = QVBoxLayout(page)
+        root.setContentsMargins(24, 24, 24, 24)
+        root.setSpacing(24)
+        self.simple_page = page
         header = QHBoxLayout()
+        header.setSpacing(16)
+        self.simple_header = header
         title_box = QVBoxLayout()
+        title_box.setSpacing(8)
         title = QLabel("用看得懂的项目制作主题")
-        title.setFont(QFont("Microsoft YaHei UI", 19, QFont.Bold))
+        title.setObjectName("pageTitle")
+        apply_type(title, 32)
         title_box.addWidget(title)
         subtitle = QLabel("一次设置会自动同步相关兼容资源；需要逐项调整时再进入“高级编辑”。")
         subtitle.setObjectName("simpleDescription")
@@ -153,11 +166,13 @@ class MainWindow(QMainWindow):
         self.phone_status.setObjectName("phoneStatus")
         header.addWidget(self.phone_status)
         self.connect_phone_button = QPushButton("识别手机")
+        set_role(self.connect_phone_button, "tertiary")
         self.connect_phone_button.clicked.connect(self.connect_phone_profile)
         header.addWidget(self.connect_phone_button)
         root.addLayout(header)
 
         identity = QGroupBox("主题信息")
+        identity.setObjectName("identityPanel")
         identity.setCheckable(True)
         identity.setChecked(False)
         form = QFormLayout(identity)
@@ -169,6 +184,8 @@ class MainWindow(QMainWindow):
         self.screen_edit = QLineEdit()
         identity_fields = QWidget()
         identity_form = QFormLayout(identity_fields)
+        identity_form.setRowWrapPolicy(QFormLayout.DontWrapRows)
+        self.identity_form = identity_form
         for label, widget in [
             ("方案名称", self.name_edit),
             ("主题标题", self.title_edit),
@@ -187,129 +204,15 @@ class MainWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        self.simple_scroll = scroll
         host = QWidget()
         host_layout = QVBoxLayout(host)
         self.simple_editor = SimpleEditor(self.apply_simple_setting, self.reset_simple_setting)
         host_layout.addWidget(self.simple_editor)
         scroll.setWidget(host)
         root.addWidget(scroll, 1)
+        self.simple_editor.set_available_width(scroll.viewport().width())
         return page
-
-    def _build_overview_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        title = QLabel("空白主题工程")
-        title.setFont(QFont("Microsoft YaHei UI", 20, QFont.Bold))
-        layout.addWidget(title)
-        description = QLabel(
-            "大雪主题只提供资源名称和目标路径。未启用的项目不会写入新主题，手机将继续使用系统默认资源。"
-        )
-        description.setWordWrap(True)
-        layout.addWidget(description)
-
-        stats = self.catalog.stats
-        stats_text = (
-            f"应用/框架 ZIP：{stats.get('modules', 0)}　"
-            f"颜色槽位：{stats.get('color_slots', 0)}　"
-            f"图片槽位：{stats.get('image_slots', 0)}　"
-            f"图标槽位：{stats.get('icon_slots', 0)}　"
-            f"资源总槽位：{stats.get('resource_slots', len(self.catalog.resources))}"
-        )
-        stats_label = QLabel(stats_text)
-        self.stats_label = stats_label
-        stats_label.setStyleSheet("padding: 12px; background: #EEF3F8; border-radius: 6px;")
-        layout.addWidget(stats_label)
-
-        identity = QGroupBox("主题身份")
-        form = QFormLayout(identity)
-        self.name_edit = QLineEdit()
-        self.title_edit = QLineEdit()
-        self.author_edit = QLineEdit()
-        self.designer_edit = QLineEdit()
-        self.version_edit = QLineEdit()
-        self.screen_edit = QLineEdit()
-        for label, widget in [
-            ("方案名称", self.name_edit),
-            ("主题标题", self.title_edit),
-            ("作者", self.author_edit),
-            ("设计者", self.designer_edit),
-            ("版本", self.version_edit),
-            ("屏幕类型", self.screen_edit),
-        ]:
-            form.addRow(label, widget)
-            widget.textEdited.connect(self._identity_edited)
-        layout.addWidget(identity)
-
-        warning = QLabel(
-            f"源主题包含 {len(self.catalog.warnings)} 条兼容性记录；它们不会复制到空白主题。"
-            "微信 8.0.76 主界面图片背景已标记为当前 HWT 方案不支持。"
-        )
-        warning.setWordWrap(True)
-        self.catalog_warning_label = warning
-        warning.setStyleSheet("padding: 10px; color: #7A3E00; background: #FFF4E5;")
-        layout.addWidget(warning)
-        layout.addStretch(1)
-        return page
-
-    def _build_common_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        hint = QLabel("选择常用区域后会跳转到对应资源。只有点击“应用修改”的资源才会进入导出的 HWT。")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-        grid = QGridLayout()
-        categories = [
-            ("桌面和锁屏壁纸", "主题基础"),
-            ("微信", "微信"),
-            ("设置", "设置"),
-            ("信息/短信", "信息与短信"),
-            ("电话", "电话与通话"),
-            ("联系人", "联系人"),
-            ("桌面", "桌面"),
-            ("控制中心/通知栏", "控制中心与通知栏"),
-            ("系统通用框架", "系统通用框架"),
-            ("桌面图标", "桌面图标"),
-        ]
-        for index, (label, category) in enumerate(categories):
-            button = QPushButton(label)
-            button.setMinimumHeight(56)
-            button.clicked.connect(lambda checked=False, c=category: self.show_category(c))
-            grid.addWidget(button, index // 3, index % 3)
-        layout.addLayout(grid)
-
-        backgrounds = QGroupBox("独立应用背景快捷入口")
-        self.backgrounds_group = backgrounds
-        self.backgrounds_layout = QHBoxLayout(backgrounds)
-        self._refresh_background_shortcuts()
-        layout.addWidget(backgrounds)
-        layout.addStretch(1)
-        return page
-
-    def _refresh_background_shortcuts(self):
-        while self.backgrounds_layout.count():
-            item = self.backgrounds_layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-        for slot in self.catalog.resources:
-            if slot.synthetic and slot.id.startswith("__synthetic__::background"):
-                button = QPushButton(slot.label)
-                button.clicked.connect(lambda checked=False, sid=slot.id: self.select_slot(sid))
-                self.backgrounds_layout.addWidget(button)
-
-    def _refresh_catalog_summary(self):
-        stats = self.catalog.stats
-        self.stats_label.setText(
-            f"应用/框架 ZIP：{stats.get('modules', 0)}　"
-            f"颜色槽位：{stats.get('color_slots', 0)}　"
-            f"图片槽位：{stats.get('image_slots', 0)}　"
-            f"图标槽位：{stats.get('icon_slots', 0)}　"
-            f"资源总槽位：{stats.get('resource_slots', len(self.catalog.resources))}"
-        )
-        self.catalog_warning_label.setText(
-            f"源主题包含 {len(self.catalog.warnings)} 条兼容性记录；它们不会复制到空白主题。"
-            "微信 8.0.76 主界面图片背景已标记为当前 HWT 方案不支持。"
-        )
 
     def _replace_combo_items(self, combo: QComboBox, values: list[str]):
         current = combo.currentText()
@@ -340,10 +243,6 @@ class MainWindow(QMainWindow):
         self.resource_model.set_resources(resources)
         self._replace_combo_items(self.category_combo, ["全部"] + sorted({x.category for x in resources}))
         self._replace_type_items(resources)
-        if hasattr(self, "stats_label"):
-            self._refresh_catalog_summary()
-        if hasattr(self, "backgrounds_layout"):
-            self._refresh_background_shortcuts()
         self.selected_slot = None
         self.table.clearSelection()
         self.detail_title.setText("请选择一个资源")
@@ -355,7 +254,15 @@ class MainWindow(QMainWindow):
     def _build_resources_tab(self):
         page = QWidget()
         root = QVBoxLayout(page)
-        filters = QHBoxLayout()
+        root.setContentsMargins(24, 24, 24, 24)
+        root.setSpacing(16)
+        filter_bar = QWidget()
+        filter_layout = QGridLayout(filter_bar)
+        filter_layout.setContentsMargins(0, 0, 0, 0)
+        filter_layout.setHorizontalSpacing(16)
+        filter_layout.setVerticalSpacing(8)
+        self.filter_bar = filter_bar
+        self.filter_layout = filter_layout
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("搜索应用、中文作用、资源名或路径……")
         self.category_combo = QComboBox()
@@ -366,16 +273,19 @@ class MainWindow(QMainWindow):
             self.type_combo.addItem(TYPE_LABELS.get(resource_type, resource_type), resource_type)
         self.modified_check = QCheckBox("仅显示已修改")
         bulk_button = QPushButton("批量设置筛选颜色")
+        set_role(bulk_button, "tertiary")
         bulk_button.clicked.connect(self.bulk_set_filtered_colors)
         self.technical_columns_check = QCheckBox("显示技术信息")
         self.technical_columns_check.toggled.connect(self._toggle_technical_columns)
-        filters.addWidget(self.search_edit, 1)
-        filters.addWidget(self.category_combo)
-        filters.addWidget(self.type_combo)
-        filters.addWidget(self.modified_check)
-        filters.addWidget(bulk_button)
-        filters.addWidget(self.technical_columns_check)
-        root.addLayout(filters)
+        self.filter_widgets = [
+            self.search_edit,
+            self.category_combo,
+            self.type_combo,
+            self.modified_check,
+            bulk_button,
+            self.technical_columns_check,
+        ]
+        root.addWidget(filter_bar)
 
         self.resource_model = ResourceTableModel(self.catalog, self.project)
         self.proxy_model = ResourceFilterModel()
@@ -393,11 +303,12 @@ class MainWindow(QMainWindow):
         self._toggle_technical_columns(False)
 
         self.detail = self._build_detail_panel()
-        splitter = QSplitter()
-        splitter.addWidget(self.table)
-        splitter.addWidget(self.detail)
-        splitter.setSizes([1050, 380])
-        root.addWidget(splitter, 1)
+        self.resource_splitter = QSplitter(Qt.Horizontal)
+        self.resource_splitter.addWidget(self.table)
+        self.resource_splitter.addWidget(self.detail)
+        self.resource_splitter.setSizes([1050, 380])
+        root.addWidget(self.resource_splitter, 1)
+        self._layout_filter_bar(self.width())
 
         self.filter_timer = QTimer(self)
         self.filter_timer.setSingleShot(True)
@@ -409,6 +320,36 @@ class MainWindow(QMainWindow):
         self.modified_check.toggled.connect(self._filters_changed)
         return page
 
+    def _layout_filter_bar(self, width: int):
+        if not hasattr(self, "filter_layout"):
+            return
+        while self.filter_layout.count():
+            self.filter_layout.takeAt(0)
+        for column in range(6):
+            self.filter_layout.setColumnStretch(column, 0)
+        search, category, resource_type, modified, bulk, technical = self.filter_widgets
+        if width >= 1056:
+            self.filter_layout.addWidget(search, 0, 0, 1, 2)
+            self.filter_layout.addWidget(category, 0, 2)
+            self.filter_layout.addWidget(resource_type, 0, 3)
+            self.filter_layout.addWidget(modified, 0, 4)
+            self.filter_layout.addWidget(bulk, 0, 5)
+            self.filter_layout.addWidget(technical, 0, 6)
+            self.filter_layout.setColumnStretch(0, 1)
+            self.filter_layout.setColumnStretch(1, 1)
+        elif width >= 672:
+            self.filter_layout.addWidget(search, 0, 0, 1, 4)
+            self.filter_layout.addWidget(category, 1, 0)
+            self.filter_layout.addWidget(resource_type, 1, 1)
+            self.filter_layout.addWidget(modified, 1, 2)
+            self.filter_layout.addWidget(bulk, 1, 3)
+            self.filter_layout.addWidget(technical, 1, 4)
+            self.filter_layout.setColumnStretch(0, 1)
+        else:
+            for row, widget in enumerate(self.filter_widgets):
+                self.filter_layout.addWidget(widget, row, 0)
+            self.filter_layout.setColumnStretch(0, 1)
+
     def _toggle_technical_columns(self, visible: bool):
         if not hasattr(self, "table"):
             return
@@ -417,13 +358,16 @@ class MainWindow(QMainWindow):
 
     def _build_detail_panel(self):
         panel = QFrame()
+        panel.setObjectName("detailPanel")
         panel.setFrameShape(QFrame.StyledPanel)
         layout = QVBoxLayout(panel)
         self.detail_title = QLabel("请选择一个资源")
-        self.detail_title.setFont(QFont("Microsoft YaHei UI", 13, QFont.Bold))
+        self.detail_title.setObjectName("detailTitle")
+        apply_type(self.detail_title, 24)
         self.detail_title.setWordWrap(True)
         layout.addWidget(self.detail_title)
         self.detail_info = QLabel()
+        self.detail_info.setObjectName("detailInfo")
         self.detail_info.setWordWrap(True)
         self.detail_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.detail_info)
@@ -432,6 +376,7 @@ class MainWindow(QMainWindow):
         self.value_edit.setPlaceholderText("颜色、布尔值或文字")
         layout.addWidget(self.value_edit)
         self.color_button = QPushButton("选择颜色")
+        set_role(self.color_button, "tertiary")
         self.color_button.clicked.connect(self.pick_color)
         layout.addWidget(self.color_button)
 
@@ -439,15 +384,16 @@ class MainWindow(QMainWindow):
         self.image_edit = QLineEdit()
         self.image_edit.setReadOnly(True)
         choose = QPushButton("选择图片")
+        set_role(choose, "tertiary")
         self.choose_image_button = choose
         choose.clicked.connect(self.choose_image)
         image_row.addWidget(self.image_edit, 1)
         image_row.addWidget(choose)
         layout.addLayout(image_row)
         self.preview_label = QLabel("图片预览")
+        self.preview_label.setObjectName("previewPanel")
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setMinimumHeight(220)
-        self.preview_label.setStyleSheet("background: #F2F2F2; border: 1px solid #C8C8C8;")
         layout.addWidget(self.preview_label)
 
         form = QFormLayout()
@@ -477,13 +423,16 @@ class MainWindow(QMainWindow):
         layout.addLayout(form)
 
         preview_button = QPushButton("刷新处理后预览")
+        set_role(preview_button, "tertiary")
         self.processed_preview_button = preview_button
         preview_button.clicked.connect(self.preview_processed_image)
         layout.addWidget(preview_button)
         buttons = QHBoxLayout()
         apply_button = QPushButton("应用修改")
+        set_role(apply_button, "primary")
         apply_button.clicked.connect(self.apply_detail)
         reset_button = QPushButton("恢复系统默认")
+        set_role(reset_button, "ghost")
         reset_button.clicked.connect(self.reset_detail)
         buttons.addWidget(apply_button)
         buttons.addWidget(reset_button)
@@ -534,6 +483,7 @@ class MainWindow(QMainWindow):
         text.setPlainText("\n".join(self._log_lines))
         layout.addWidget(text)
         close_button = QPushButton("关闭")
+        set_role(close_button, "ghost")
         close_button.clicked.connect(dialog.accept)
         layout.addWidget(close_button)
         dialog.exec()
@@ -571,6 +521,8 @@ class MainWindow(QMainWindow):
     def _profile_failed(self, detail: str, code: str):
         message = detail.splitlines()[-1] if detail else "无法读取手机信息"
         self._update_phone_ui(cached=bool(self.phone_profile))
+        self.phone_status.setText(message)
+        set_state(self.phone_status, "error")
         if code == "profile_unsupported":
             QMessageBox.information(self, "需要更新手机助手", message)
         else:
@@ -587,10 +539,12 @@ class MainWindow(QMainWindow):
         profile = self.phone_profile
         if profile is None:
             self.phone_status.setText("通用模式 · 尚未识别手机")
+            set_state(self.phone_status, "warning")
             return
         os_text = profile.os_name or (f"Android {profile.android_release}" if profile.android_release else "系统版本未知")
         prefix = "上次识别" if cached else "已连接"
         self.phone_status.setText(f"{prefix} · {profile.model} · {os_text}")
+        set_state(self.phone_status, "success")
         if hasattr(self, "resource_model"):
             self.resource_model.set_installed_packages(self.installed_packages)
 
@@ -671,7 +625,7 @@ class MainWindow(QMainWindow):
         combo.setCurrentIndex(max(0, index))
 
     def pick_color(self):
-        initial = QColor(self.value_edit.text()) if self.value_edit.text() else QColor("#808080")
+        initial = QColor(self.value_edit.text()) if self.value_edit.text() else QColor(Colors.INK_MUTED)
         color = QColorDialog.getColor(initial, self, "选择颜色", QColorDialog.ShowAlphaChannel)
         if color.isValid():
             self.value_edit.setText(color.name(QColor.HexArgb).upper())
@@ -856,7 +810,7 @@ class MainWindow(QMainWindow):
             self.table.selectRow(0)
 
     def bulk_set_filtered_colors(self):
-        color = QColorDialog.getColor(QColor("#808080"), self, "批量设置当前筛选结果中的颜色", QColorDialog.ShowAlphaChannel)
+        color = QColorDialog.getColor(QColor(Colors.INK_MUTED), self, "批量设置当前筛选结果中的颜色", QColorDialog.ShowAlphaChannel)
         if not color.isValid():
             return
         value = color.name(QColor.HexArgb).upper()
@@ -1098,6 +1052,35 @@ class MainWindow(QMainWindow):
         else:
             event.ignore()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        width = self.width()
+        if hasattr(self, "simple_header"):
+            self.main_toolbar.setToolButtonStyle(
+                Qt.ToolButtonIconOnly if width < 672 else Qt.ToolButtonTextBesideIcon
+            )
+            self.simple_header.setDirection(
+                QBoxLayout.TopToBottom if width < 672 else QBoxLayout.LeftToRight
+            )
+        if hasattr(self, "simple_scroll"):
+            self.simple_editor.set_available_width(self.simple_scroll.viewport().width())
+        if hasattr(self, "identity_form"):
+            self.identity_form.setRowWrapPolicy(
+                QFormLayout.WrapAllRows if width < 672 else QFormLayout.DontWrapRows
+            )
+        if hasattr(self, "filter_bar"):
+            self._layout_filter_bar(width)
+        if hasattr(self, "resource_splitter"):
+            self.resource_splitter.setOrientation(Qt.Vertical if width < 1056 else Qt.Horizontal)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if hasattr(self, "simple_scroll"):
+            self.simple_editor.set_available_width(self.simple_scroll.viewport().width())
+
+    def minimumSizeHint(self):
+        return QSize(320, 480)
+
     def log(self, message: str):
         self._log_lines.append(message.rstrip())
         if hasattr(self, "log_text"):
@@ -1105,117 +1088,7 @@ class MainWindow(QMainWindow):
 
 
 def apply_style(app: QApplication):
-    app.setStyle("Fusion")
-    apply_stylesheet(app, theme="light_blue.xml")
-    app.setStyleSheet(
-        app.styleSheet()
-        + """
-        QWidget {
-            font-family: "Microsoft YaHei UI";
-            font-size: 10pt;
-        }
-        QMainWindow, QDialog { background-color: #F5F7FB; }
-        QMenuBar {
-            padding: 3px 8px;
-            background-color: #FFFFFF;
-            border-bottom: 1px solid #DFE5EF;
-        }
-        QMenuBar::item { padding: 6px 10px; border-radius: 6px; }
-        QMenuBar::item:selected { background-color: #E8F0FE; color: #1D4ED8; }
-        QToolBar {
-            spacing: 6px;
-            padding: 8px;
-            background-color: #FFFFFF;
-            border: none;
-            border-bottom: 1px solid #DFE5EF;
-        }
-        QToolButton { padding: 7px 10px; border-radius: 7px; }
-        QToolButton:hover { background-color: #E8F0FE; color: #1D4ED8; }
-        QPushButton {
-            min-height: 30px;
-            padding: 4px 14px;
-            border-radius: 7px;
-        }
-        QLineEdit, QComboBox, QPlainTextEdit {
-            padding: 6px 9px;
-            border: 1px solid #CBD5E1;
-            border-radius: 7px;
-            background-color: #FFFFFF;
-        }
-        QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {
-            border: 2px solid #3B82F6;
-        }
-        QGroupBox {
-            margin-top: 14px;
-            padding: 14px;
-            border: 1px solid #DFE5EF;
-            border-radius: 10px;
-            background-color: #FFFFFF;
-            font-weight: 600;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 12px;
-            padding: 0 6px;
-        }
-        QTabWidget::pane { border: none; background-color: #F5F7FB; }
-        QTabBar::tab {
-            min-width: 90px;
-            margin: 4px 2px;
-            padding: 10px 16px;
-            border-radius: 7px;
-        }
-        QTabBar::tab:selected {
-            color: #2563EB;
-            background-color: #E8F0FE;
-            font-weight: 600;
-        }
-        QTableView {
-            border: 1px solid #DFE5EF;
-            border-radius: 8px;
-            background-color: #FFFFFF;
-            alternate-background-color: #F8FAFC;
-            gridline-color: #EDF0F5;
-        }
-        QHeaderView::section {
-            padding: 9px;
-            border: none;
-            border-bottom: 1px solid #DFE5EF;
-            background-color: #F1F5F9;
-            font-weight: 600;
-        }
-        QStatusBar {
-            background-color: #FFFFFF;
-            border-top: 1px solid #DFE5EF;
-        }
-        QScrollArea { background: transparent; border: none; }
-        QFrame#simpleCard {
-            background-color: #FFFFFF;
-            border: 1px solid #DFE5EF;
-            border-radius: 11px;
-        }
-        QLabel#simpleCardTitle { font-size: 12pt; font-weight: 650; color: #172033; }
-        QLabel#simpleSectionTitle { font-size: 15pt; font-weight: 700; padding: 16px 2px 6px 2px; }
-        QLabel#simpleDescription { color: #5D687A; }
-        QLabel#targetCount {
-            color: #2563EB;
-            background: #E8F0FE;
-            border-radius: 8px;
-            padding: 3px 8px;
-        }
-        QLabel#simpleState { color: #526074; padding: 3px 0; }
-        QLabel#simpleState[mixed="true"] { color: #B45309; font-weight: 600; }
-        QLabel#phoneStatus {
-            color: #1D4ED8;
-            background: #E8F0FE;
-            border-radius: 8px;
-            padding: 7px 10px;
-        }
-        QLabel#simplePreview { background: #F4F6F9; border-radius: 7px; }
-        QPushButton#primaryAction { background: #2563EB; color: white; font-weight: 600; }
-        QPushButton#primaryAction:hover { background: #1D4ED8; }
-        """
-    )
+    apply_design_system(app)
 
 
 def main() -> int:

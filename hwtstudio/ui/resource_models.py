@@ -7,6 +7,7 @@ from PySide6.QtGui import QColor
 
 from ..models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
 from ..semantic import TYPE_LABELS, friendly_resource_label
+from .design_system import Colors
 
 
 HEADERS = ["状态", "应用/区域", "模块", "类型", "中文作用", "资源名", "路径", "当前设置"]
@@ -67,9 +68,9 @@ class ResourceTableModel(QAbstractTableModel):
             return f"{prefix}支持状态：{slot.status}\n风险：{slot.risk}\nID：{slot.id}"
         if role == Qt.ForegroundRole:
             if slot.status == "当前版本不支持":
-                return QColor("#B00020")
+                return QColor(Colors.ERROR)
             if change and change.enabled:
-                return QColor("#006C4C")
+                return QColor(Colors.SUCCESS)
         if role == Qt.UserRole:
             return slot.id
         return None

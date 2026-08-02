@@ -1,5 +1,13 @@
 # 更新记录
 
+## 0.1.4 - 2026-08-02
+
+- 按根目录 `DESIGN.md` 将 Windows 桌面端统一为 IBM Carbon Light：集中式 PySide6 QSS、IBM Plex Sans SC、IBM Blue 语义色、方角和 1px hairline，无阴影。
+- 简洁编辑按 1312/672px 断点重排为 4/2/1 列；高级编辑筛选栏和资源详情面板在窄窗口自动改为纵向布局。
+- 统一 primary、secondary、tertiary、ghost、danger 按钮角色，以及 success、warning、error、info 状态反馈。
+- Android 传输助手改为 Jetpack Compose Carbon Light 主题：自定义 ColorScheme、Typography、Shapes，移除默认 Material 圆角和 elevation，并在 672dp 处切换单栏/双栏布局。
+- 将 IBM Plex Sans SC 字体和 `docs/design-md/awesome-design-md/` 设计资料纳入发布资源；桌面与 Android 版本同步至 0.1.4。
+
 ## 0.1.3 - 2026-07-26
 
 - 默认使用 30 项纯中文“简洁编辑”，将数千个荣耀、Android、华为兼容资源自动合并处理。

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..phone_transfer import HTTP_PORT, PhoneDevice, PhoneRegistry, discover_phones
+from .design_system import set_role, set_state
 
 
 class DiscoveryWorker(QObject):
@@ -62,10 +63,13 @@ class PhoneTransferDialog(QDialog):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
         intro = QLabel(
             "请先在手机打开“荣耀主题传输助手”，授权 Honor/Themes 后点击“开始接收”。\n"
             "首次连接输入手机显示的 6 位配对码，后续会自动记住。"
         )
+        intro.setObjectName("infoCallout")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
@@ -74,9 +78,11 @@ class PhoneTransferDialog(QDialog):
         self.devices = QComboBox()
         device_row.addWidget(self.devices, 1)
         self.refresh_button = QPushButton("刷新")
+        set_role(self.refresh_button, "tertiary")
         self.refresh_button.clicked.connect(self.refresh)
         device_row.addWidget(self.refresh_button)
         self.forget_button = QPushButton("忘记配对")
+        set_role(self.forget_button, "danger")
         self.forget_button.clicked.connect(self.forget_selected)
         device_row.addWidget(self.forget_button)
         form.addRow("发现的手机", device_row)
@@ -91,12 +97,15 @@ class PhoneTransferDialog(QDialog):
         layout.addLayout(form)
 
         self.status = QLabel("正在搜索同一局域网内的手机……")
+        self.status.setObjectName("infoCallout")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
         self.send_button = buttons.addButton("识别手机" if self.purpose == "profile" else "发送", QDialogButtonBox.AcceptRole)
         self.ssh_button = buttons.addButton("使用 Termux/SSH 备用", QDialogButtonBox.ActionRole)
+        set_role(self.send_button, "primary")
+        set_role(self.ssh_button, "secondary")
         self.ssh_button.setVisible(self.purpose == "send")
         self.send_button.clicked.connect(self.accept_phone)
         self.ssh_button.clicked.connect(self.accept_ssh)
@@ -125,7 +134,7 @@ class PhoneTransferDialog(QDialog):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.found.connect(self._discovery_found)
-        worker.failed.connect(lambda message: self.status.setText(f"搜索失败：{message}"))
+        worker.failed.connect(self._discovery_failed)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(self._discovery_finished)
@@ -140,8 +149,14 @@ class PhoneTransferDialog(QDialog):
         self._render_devices()
         if devices:
             self.status.setText(f"发现 {len(devices)} 台正在接收的手机。")
+            set_state(self.status, "success")
         else:
             self.status.setText("没有发现手机。请确认 APK 已开始接收，或填写手动地址。")
+            set_state(self.status, "warning")
+
+    def _discovery_failed(self, message: str):
+        self.status.setText(f"搜索失败：{message}")
+        set_state(self.status, "error")
 
     def _discovery_finished(self):
         self.refresh_button.setEnabled(True)

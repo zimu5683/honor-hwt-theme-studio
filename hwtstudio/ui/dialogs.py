@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from ..models import ResourceSlot, ThemeProject
 from ..projectio import missing_project_assets
 from ..validation import validate_custom_slot
+from .design_system import set_role
 
 
 class CustomResourceDialog(QDialog):
@@ -26,6 +27,9 @@ class CustomResourceDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("添加高级覆盖资源")
         layout = QFormLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setHorizontalSpacing(16)
+        layout.setVerticalSpacing(16)
         self.module = QLineEdit("com.android.settings")
         self.kind = QComboBox()
         self.kind.addItems(["color", "bool", "integer", "dimen", "string", "image"])
@@ -43,6 +47,8 @@ class CustomResourceDialog(QDialog):
         hint.setWordWrap(True)
         layout.addRow(hint)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        set_role(buttons.button(QDialogButtonBox.Ok), "primary")
+        set_role(buttons.button(QDialogButtonBox.Cancel), "ghost")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
