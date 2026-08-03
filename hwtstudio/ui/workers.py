@@ -91,14 +91,16 @@ class TransferWorker(QObject):
 class UpdateWorker(QObject):
     """Run network and checksum work away from the Qt GUI thread."""
 
-    checked = Signal(object)
+    checked = Signal(object, bool)
+    check_failed = Signal(str, bool)
     downloaded = Signal(object)
     failed = Signal(str)
     progress = Signal(int, int, str)
 
-    def __init__(self, *, release: Release | None = None):
+    def __init__(self, *, release: Release | None = None, silent: bool = False):
         super().__init__()
         self.release = release
+        self.silent = silent
         self.cancelled = threading.Event()
 
     def cancel(self):
@@ -106,9 +108,9 @@ class UpdateWorker(QObject):
 
     def run_check(self):
         try:
-            self.checked.emit(check_for_update())
+            self.checked.emit(check_for_update(), self.silent)
         except Exception:
-            self.failed.emit(traceback.format_exc())
+            self.check_failed.emit(traceback.format_exc(), self.silent)
 
     def run_download(self):
         try:

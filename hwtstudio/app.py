@@ -551,13 +551,13 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage("正在检查 GitHub Release 更新……")
         self.update_thread = QThread(self)
-        worker = UpdateWorker()
+        worker = UpdateWorker(silent=silent)
         worker.moveToThread(self.update_thread)
         self.update_thread.started.connect(worker.run_check)
-        worker.checked.connect(lambda info: self._update_checked(info, silent))
-        worker.failed.connect(lambda detail: self._update_check_failed(detail, silent))
+        worker.checked.connect(self._update_checked, Qt.ConnectionType.QueuedConnection)
+        worker.check_failed.connect(self._update_check_failed, Qt.ConnectionType.QueuedConnection)
         worker.checked.connect(self.update_thread.quit)
-        worker.failed.connect(self.update_thread.quit)
+        worker.check_failed.connect(self.update_thread.quit)
         self.update_thread.finished.connect(worker.deleteLater)
         self.update_thread.finished.connect(self._update_thread_finished)
         self.update_worker = worker
@@ -620,9 +620,9 @@ class MainWindow(QMainWindow):
         worker = UpdateWorker(release=release)
         worker.moveToThread(self.update_thread)
         self.update_thread.started.connect(worker.run_download)
-        worker.progress.connect(self._update_download_progress)
-        worker.downloaded.connect(self._update_downloaded)
-        worker.failed.connect(self._update_download_failed)
+        worker.progress.connect(self._update_download_progress, Qt.ConnectionType.QueuedConnection)
+        worker.downloaded.connect(self._update_downloaded, Qt.ConnectionType.QueuedConnection)
+        worker.failed.connect(self._update_download_failed, Qt.ConnectionType.QueuedConnection)
         worker.downloaded.connect(self.update_thread.quit)
         worker.failed.connect(self.update_thread.quit)
         self.update_thread.finished.connect(worker.deleteLater)
@@ -1394,5 +1394,5 @@ def main() -> int:
         return 1
     window.show()
     if os.environ.get("HWT_DISABLE_UPDATE_CHECK") != "1":
-        QTimer.singleShot(1800, window.check_for_updates)
+        QTimer.singleShot(1800, lambda: window.check_for_updates(silent=True))
     return app.exec()

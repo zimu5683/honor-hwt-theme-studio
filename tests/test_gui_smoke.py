@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEventLoop, QThread, QTimer, Qt
 from PySide6.QtWidgets import QApplication
 
 from hwtstudio import __version__
@@ -17,6 +17,7 @@ from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
 from hwtstudio.semantic import SIMPLE_BY_ID
 from hwtstudio.ui.dialogs import resolve_missing_assets
 from hwtstudio.ui.design_system import Colors, STYLE_SHEET
+from hwtstudio.updater import UpdateCheck
 
 
 class GuiSmokeTests(unittest.TestCase):
@@ -69,6 +70,47 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertIn("处理建议", message)
         self.assertNotIn("broken image header", message)
         self.assertIn("broken image header", "\n".join(window._log_lines))
+        window.close()
+
+    def test_update_check_ui_callback_runs_on_gui_thread(self):
+        window = MainWindow()
+        result = UpdateCheck(
+            current_version=__version__,
+            latest_version=__version__,
+            release=None,
+            update_available=False,
+        )
+        callback_threads = []
+        loop = QEventLoop()
+
+        def show_latest(*_args):
+            callback_threads.append(QThread.currentThread())
+            loop.quit()
+
+        with (
+            patch("hwtstudio.ui.workers.check_for_update", return_value=result),
+            patch("hwtstudio.app.QMessageBox.information", side_effect=show_latest),
+        ):
+            window.check_for_updates(silent=False)
+            QTimer.singleShot(3000, loop.quit)
+            loop.exec()
+
+        self.assertEqual(callback_threads, [self.app.thread()])
+        window.close()
+
+    def test_silent_update_check_suppresses_latest_version_dialog(self):
+        window = MainWindow()
+        result = UpdateCheck(
+            current_version=__version__,
+            latest_version=__version__,
+            release=None,
+            update_available=False,
+        )
+        with patch("hwtstudio.app.QMessageBox.information") as information:
+            window._update_checked(result, silent=True)
+            information.assert_not_called()
+            window._update_checked(result, silent=False)
+            information.assert_called_once()
         window.close()
 
     def test_studio_tokens_titlebar_and_responsive_layout(self):
