@@ -1,0 +1,472 @@
+{
+  "schema": 1,
+  "captured_at": "2026-08-03T06:04:21.427201+00:00",
+  "device": {
+    "model": "ELP-AN00",
+    "android_release": "16",
+    "magic_os": "MagicOS_10.0.0",
+    "width": 1224,
+    "height": 2700,
+    "density": 520
+  },
+  "app_versions": {
+    "com.android.settings": "14.0.0.210",
+    "com.android.systemui": "16.0.0.2",
+    "com.hihonor.android.launcher": "17.0.20.200",
+    "com.hihonor.android.thememanager": "20.1.42.303",
+    "com.hihonor.mms": "18.1.18.301",
+    "com.hihonor.contacts": "18.1.18.301",
+    "com.tencent.mm": "8.0.76"
+  },
+  "note": "基于真机截图的位置与效果预览；系统或应用版本变化可能影响最终形状。",
+  "scenes": {
+    "launcher_home": {
+      "file": "launcher_home.png",
+      "width": 612,
+      "height": 1350,
+      "targets": {
+        "wallpaper": [
+          0.0,
+          0.0,
+          1.0,
+          1.0
+        ],
+        "labels": [
+          0.08,
+          0.5,
+          0.96,
+          0.8
+        ],
+        "widget": [
+          0.05,
+          0.08,
+          0.95,
+          0.28
+        ]
+      },
+      "privacy_masks": []
+    },
+    "launcher_folder": {
+      "file": "launcher_folder.png",
+      "width": 612,
+      "height": 1350,
+      "targets": {
+        "folder": [
+          0.08,
+          0.18,
+          0.92,
+          0.78
+        ]
+      },
+      "privacy_masks": []
+    },
+    "lock_screen": {
+      "file": "lock_screen.png",
+      "width": 612,
+      "height": 1350,
+      "targets": {
+        "wallpaper": [
+          0.0,
+          0.0,
+          1.0,
+          1.0
+        ]
+      },
+      "privacy_masks": []
+    },
+    "theme_gallery": {
+      "file": "theme_gallery.png",
+      "width": 612,
+      "height": 1350,
+      "targets": {
+        "cover": [
+          0.03,
+          0.17,
+          0.97,
+          0.43
+        ],
+        "accent": [
+          0.03,
+          0.52,
+          0.23,
+          0.58
+        ]
+      },
+      "privacy_masks": []
+    },
+    "settings_detail": {
+      "file": "settings_detail.png",
+      "width": 612,
+      "height": 1350,
+      "targets": {
+        "page": [
+          0.0,
+          0.19,
+          1.0,
+          1.0
+        ],
+        "surface": [
+          0.03,
+          0.28,
+          0.97,
+          0.96
+        ],
+        "topbar": [
+          0.0,
+          0.04,
+          1.0,
+          0.22
+        ],
+        "primary": [
+          0.18,
+          0.27,
+          0.88,
+          0.92
+        ],
+        "controls": [
+          0.04,
+          0.39,
+          0.96,
+          0.53
+        ],
+        "divider": [
+          0.17,
+          0.44,
+          0.95,
+          0.46
+        ],
+        "content": [
+          0.04,
+          0.26,
+          0.96,
+          0.96
+        ]
+      },
+      "privacy_masks": []
+    },
+    "contacts_list": {
+      "file": "contacts_list.png",
+      "width": 612,
+      "height": 1350,
+      "targets": {
+        "content": [
+          0.02,
+          0.08,
+          0.98,
+          0.93
+        ],
+        "text": [
+          0.18,
+          0.12,
+          0.92,
+          0.68
+        ]
+      },
+      "privacy_masks": []
+    },
+    "notification_shade": {
+      "file": "notification_shade.png",
+      "width": 612,
+      "height": 1350,
+      "targets": {
+        "panel": [
+          0.03,
+          0.1,
+          0.97,
+          0.98
+        ],
+        "icon": [
+          0.78,
+          0.1,
+          0.92,
+          0.18
+        ]
+      },
+      "privacy_masks": []
+    },
+    "quick_settings": {
+      "file": "quick_settings.png",
+      "width": 612,
+      "height": 1350,
+      "targets": {
+        "accent": [
+          0.1,
+          0.44,
+          0.3,
+          0.56
+        ],
+        "brightness": [
+          0.52,
+          0.26,
+          0.69,
+          0.43
+        ]
+      },
+      "privacy_masks": []
+    },
+    "volume_overlay": {
+      "file": "volume_overlay.png",
+      "width": 612,
+      "height": 1350,
+      "targets": {
+        "panel": [
+          0.06,
+          0.2,
+          0.94,
+          0.55
+        ],
+        "slider": [
+          0.11,
+          0.26,
+          0.89,
+          0.5
+        ]
+      },
+      "privacy_masks": []
+    },
+    "recent_tasks": {
+      "file": "recent_tasks.png",
+      "width": 612,
+      "height": 1350,
+      "targets": {
+        "cards": [
+          0.15,
+          0.14,
+          0.85,
+          0.83
+        ]
+      },
+      "privacy_masks": []
+    },
+    "messages": {
+      "file": "messages.png",
+      "width": 612,
+      "height": 1350,
+      "targets": {
+        "content": [
+          0.02,
+          0.08,
+          0.98,
+          0.94
+        ],
+        "secondary": [
+          0.16,
+          0.22,
+          0.55,
+          0.26
+        ],
+        "bottom": [
+          0.0,
+          0.82,
+          1.0,
+          0.98
+        ]
+      },
+      "privacy_masks": []
+    },
+    "dialer": {
+      "file": "dialer.png",
+      "width": 612,
+      "height": 1350,
+      "targets": {
+        "content": [
+          0.03,
+          0.09,
+          0.97,
+          0.93
+        ]
+      },
+      "privacy_masks": []
+    },
+    "wechat_settings": {
+      "file": "wechat_settings.png",
+      "width": 612,
+      "height": 1350,
+      "targets": {
+        "content": [
+          0.02,
+          0.1,
+          0.98,
+          0.93
+        ],
+        "text": [
+          0.18,
+          0.12,
+          0.7,
+          0.31
+        ],
+        "secondary": [
+          0.18,
+          0.14,
+          0.96,
+          0.33
+        ],
+        "brand": [
+          0.05,
+          0.92,
+          0.19,
+          1.0
+        ],
+        "bottom": [
+          0.0,
+          0.92,
+          1.0,
+          1.0
+        ]
+      },
+      "privacy_masks": []
+    }
+  },
+  "settings": {
+    "desktop_wallpaper": {
+      "scene": "launcher_home",
+      "target": "wallpaper",
+      "caption": "桌面整张壁纸位置"
+    },
+    "lock_wallpaper": {
+      "scene": "lock_screen",
+      "target": "wallpaper",
+      "caption": "锁屏整张壁纸位置"
+    },
+    "theme_cover": {
+      "scene": "theme_gallery",
+      "target": "cover",
+      "caption": "主题列表封面区域"
+    },
+    "page_background": {
+      "scene": "settings_detail",
+      "target": "page",
+      "caption": "设置内容背景区域"
+    },
+    "surface_background": {
+      "scene": "settings_detail",
+      "target": "surface",
+      "caption": "设置列表表面区域"
+    },
+    "top_bar": {
+      "scene": "settings_detail",
+      "target": "topbar",
+      "caption": "设置顶部栏区域"
+    },
+    "bottom_bar": {
+      "scene": "wechat_settings",
+      "target": "bottom",
+      "caption": "应用底部导航区域"
+    },
+    "primary_text": {
+      "scene": "settings_detail",
+      "target": "primary",
+      "caption": "设置主要文字区域"
+    },
+    "secondary_text": {
+      "scene": "messages",
+      "target": "secondary",
+      "caption": "短信次要文字区域"
+    },
+    "accent": {
+      "scene": "theme_gallery",
+      "target": "accent",
+      "caption": "主题选中与强调区域"
+    },
+    "controls": {
+      "scene": "settings_detail",
+      "target": "controls",
+      "caption": "设置控件区域"
+    },
+    "divider": {
+      "scene": "settings_detail",
+      "target": "divider",
+      "caption": "设置分隔线区域"
+    },
+    "notification_background": {
+      "scene": "notification_shade",
+      "target": "panel",
+      "caption": "通知面板背景区域"
+    },
+    "notification_icon": {
+      "scene": "notification_shade",
+      "target": "icon",
+      "caption": "通知图标位置"
+    },
+    "system_accent": {
+      "scene": "quick_settings",
+      "target": "accent",
+      "caption": "控制中心选中区域"
+    },
+    "brightness": {
+      "scene": "quick_settings",
+      "target": "brightness",
+      "caption": "亮度滑块区域"
+    },
+    "volume_background": {
+      "scene": "volume_overlay",
+      "target": "panel",
+      "caption": "音量面板表面区域"
+    },
+    "volume_slider": {
+      "scene": "volume_overlay",
+      "target": "slider",
+      "caption": "音量滑块区域"
+    },
+    "folder_background": {
+      "scene": "launcher_folder",
+      "target": "folder",
+      "caption": "桌面文件夹展开区域"
+    },
+    "launcher_label": {
+      "scene": "launcher_home",
+      "target": "labels",
+      "caption": "桌面图标名称区域"
+    },
+    "widget_text": {
+      "scene": "launcher_home",
+      "target": "widget",
+      "caption": "桌面小组件文字区域"
+    },
+    "recent_tasks": {
+      "scene": "recent_tasks",
+      "target": "cards",
+      "caption": "最近任务卡片区域"
+    },
+    "settings_background": {
+      "scene": "settings_detail",
+      "target": "content",
+      "caption": "设置应用内容背景"
+    },
+    "messages_background": {
+      "scene": "messages",
+      "target": "content",
+      "caption": "短信应用内容背景"
+    },
+    "phone_background": {
+      "scene": "dialer",
+      "target": "content",
+      "caption": "电话应用内容背景"
+    },
+    "contacts_background": {
+      "scene": "contacts_list",
+      "target": "content",
+      "caption": "联系人应用内容背景"
+    },
+    "wechat_background": {
+      "scene": "wechat_settings",
+      "target": "content",
+      "caption": "微信内容背景"
+    },
+    "wechat_primary_text": {
+      "scene": "wechat_settings",
+      "target": "text",
+      "caption": "微信主要文字"
+    },
+    "wechat_secondary_text": {
+      "scene": "wechat_settings",
+      "target": "secondary",
+      "caption": "微信次要文字"
+    },
+    "wechat_brand": {
+      "scene": "wechat_settings",
+      "target": "brand",
+      "caption": "微信品牌强调区域"
+    }
+  }
+}

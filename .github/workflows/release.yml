@@ -48,12 +48,26 @@ jobs:
           Copy-Item -LiteralPath "dist\大雪主题编辑器.exe" -Destination $asset
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
           "$hash  $asset" | Set-Content -Encoding ascii "$asset.sha256"
+          $repo = "${{ github.repository }}"
+          $tag = "${{ github.ref_name }}"
+          $assetUrl = "https://github.com/$repo/releases/download/$tag/$asset"
+          $checksumUrl = "${assetUrl}.sha256"
+          @{
+            version = $tag
+            url = "https://github.com/$repo/releases/tag/$tag"
+            body = "GitHub Release $tag"
+            assets = @(
+              @{ name = $asset; url = $assetUrl; sha256 = $hash }
+              @{ name = "$asset.sha256"; url = $checksumUrl }
+            )
+          } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 latest.json
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-release
           path: |
             HwtThemeStudio-${{ github.ref_name }}-win64.exe
             HwtThemeStudio-${{ github.ref_name }}-win64.exe.sha256
+            latest.json
 
   android:
     runs-on: ubuntu-latest

@@ -22,6 +22,16 @@ from ..validation import validate_custom_slot
 from .design_system import set_role
 
 
+RESOURCE_TYPE_LABELS = {
+    "color": "颜色",
+    "bool": "开关",
+    "integer": "整数",
+    "dimen": "尺寸",
+    "string": "文字",
+    "image": "图片",
+}
+
+
 class CustomResourceDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -32,7 +42,8 @@ class CustomResourceDialog(QDialog):
         layout.setVerticalSpacing(16)
         self.module = QLineEdit("com.android.settings")
         self.kind = QComboBox()
-        self.kind.addItems(["color", "bool", "integer", "dimen", "string", "image"])
+        for raw, label in RESOURCE_TYPE_LABELS.items():
+            self.kind.addItem(label, raw)
         self.name = QLineEdit()
         self.path = QLineEdit("theme.xml")
         self.width = QLineEdit()
@@ -55,7 +66,7 @@ class CustomResourceDialog(QDialog):
 
     def create_slot(self) -> ResourceSlot:
         module = self.module.text().strip()
-        kind = self.kind.currentText()
+        kind = self.kind.currentData() or "color"
         name = self.name.text().strip()
         path = self.path.text().strip().replace("\\", "/")
         try:

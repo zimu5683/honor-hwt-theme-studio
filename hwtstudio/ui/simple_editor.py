@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from ..models import ResourceChange, ResourceSlot, ThemeProject
 from ..semantic import SIMPLE_SETTINGS, SimpleSetting, setting_visible
 from .design_system import Colors, apply_type, set_role
+from .simple_preview import ClickablePreview, PreviewDialog, PreviewRepository
 
 
 _TINT_BY_SECTION = {
@@ -53,6 +54,7 @@ class SimpleSettingCard(QFrame):
         setting: SimpleSetting,
         apply_callback: Callable[[SimpleSetting, ResourceChange], None],
         reset_callback: Callable[[SimpleSetting], None],
+        preview_repository: PreviewRepository | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -61,6 +63,7 @@ class SimpleSettingCard(QFrame):
         self.reset_callback = reset_callback
         self.slots: list[ResourceSlot] = []
         self.project: ThemeProject | None = None
+        self.preview_repository = preview_repository
         self.setObjectName("simpleCard")
         self.setProperty("tintRole", _TINT_BY_SECTION.get(setting.section, "lavender"))
         self.setMinimumHeight(236 if setting.kind == "image" else 190)
@@ -87,12 +90,14 @@ class SimpleSettingCard(QFrame):
         self.state.setWordWrap(True)
         layout.addWidget(self.state)
 
-        self.preview = QLabel()
-        self.preview.setFixedHeight(132 if setting.kind == "image" else 44)
+        self.preview = ClickablePreview()
+        self.preview.setFixedHeight(132)
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setObjectName("simplePreview")
         self.preview.setVisible(True)
         self.preview.setText("尚未选择图片" if setting.kind == "image" else "使用默认颜色")
+        self.preview.setToolTip("点击查看原始参考与当前设置预览")
+        self.preview.clicked.connect(self._show_preview)
         layout.addWidget(self.preview)
 
         self.options = QWidget()
@@ -158,27 +163,29 @@ class SimpleSettingCard(QFrame):
             self.state.setText("使用系统默认")
             self.state.setProperty("mixed", False)
             self.preview.setText("尚未选择图片" if self.setting.kind == "image" else "使用默认颜色")
-            self.preview.setStyleSheet("")
+            self._set_scene_preview()
             self._refresh_style()
             return
         signatures = {_signature(change) for change in enabled}
         mixed = len(enabled) != len(slots) or len(signatures) != 1
         self.state.setProperty("mixed", mixed)
         if mixed:
-            self.state.setText(f"含单独调整 · 已修改 {len(enabled)}/{len(slots)} 个")
+            self.state.setText(f"部分兼容资源单独调整 · 已修改 {len(enabled)}/{len(slots)} 个")
             self.preview.setText("存在单独调整")
-            self.preview.setStyleSheet("")
+            self._set_scene_preview()
         else:
             change = enabled[0]
             if change.value:
                 self.state.setText(f"当前颜色：{change.value}")
-                self.preview.setText("")
-                self.preview.setStyleSheet(
-                    f"background: {change.value}; border: 1px solid {Colors.HAIRLINE}; border-radius: 8px;"
-                )
+                self._set_scene_preview(change)
             else:
-                self.state.setText("已选择自定义图片")
-                self._set_image_preview(change)
+                if change.source_kind == "placeholder":
+                    self.state.setText("使用灰白占位图片")
+                elif change.source_file and not Path(change.source_file).is_file():
+                    self.state.setText("图片文件缺失，将显示缺失状态预览")
+                else:
+                    self.state.setText("已选择自定义图片")
+                self._set_scene_preview(change)
                 self._load_image_options(change)
         self._refresh_style()
 
@@ -198,6 +205,44 @@ class SimpleSettingCard(QFrame):
             self.preview.setText("灰白占位图片")
         else:
             self.preview.setText("尚未选择图片")
+
+    def _set_scene_preview(self, change: ResourceChange | None = None):
+        repository = self.preview_repository
+        if repository is None or not repository.available or self.setting.preview is None:
+            if change is None:
+                self.preview.setPixmap(QPixmap())
+            if self.setting.kind == "color" and change and change.value:
+                self.preview.setText("")
+                self.preview.setStyleSheet(
+                    f"background: {change.value}; border: 1px solid {Colors.HAIRLINE}; border-radius: 8px;"
+                )
+            return
+        image = (
+            repository.current_image(self.setting.preview, change)
+            if change is not None
+            else repository.highlighted_image(self.setting.preview)
+        )
+        if image is None:
+            self.preview.setText("暂无真机参考图")
+            return
+        self.preview.setStyleSheet("")
+        self.preview.setText("")
+        self.preview.setPixmap(repository.to_pixmap(image, (420, 124)))
+
+    def _show_preview(self):
+        if self.preview_repository is None or not self.preview_repository.available or self.setting.preview is None:
+            return
+        change = None
+        mixed = False
+        if self.project:
+            changes = [self.project.changes.get(slot.id) for slot in self.slots]
+            enabled = [item for item in changes if item and item.enabled]
+            signatures = {_signature(item) for item in enabled}
+            mixed = bool(enabled) and (len(enabled) != len(self.slots) or len(signatures) != 1)
+            if enabled and not mixed:
+                change = enabled[0]
+        dialog = PreviewDialog(self.preview_repository, self.setting.preview, change, self, mixed=mixed)
+        dialog.exec()
 
     def _load_image_options(self, change: ResourceChange):
         for combo, value in ((self.fit, change.fit), (self.enhance, change.enhance)):
@@ -238,7 +283,7 @@ class SimpleSettingCard(QFrame):
 
 
 class SimpleEditor(QWidget):
-    def __init__(self, apply_callback, reset_callback, parent=None):
+    def __init__(self, apply_callback, reset_callback, preview_repository: PreviewRepository | None = None, parent=None):
         super().__init__(parent)
         self.cards: dict[str, SimpleSettingCard] = {}
         self._section_grids: list[tuple[QGridLayout, list[SimpleSettingCard]]] = []
@@ -260,7 +305,7 @@ class SimpleEditor(QWidget):
             items = [item for item in SIMPLE_SETTINGS if item.section == section]
             section_cards: list[SimpleSettingCard] = []
             for index, setting in enumerate(items):
-                card = SimpleSettingCard(setting, apply_callback, reset_callback)
+                card = SimpleSettingCard(setting, apply_callback, reset_callback, preview_repository)
                 self.cards[setting.id] = card
                 section_cards.append(card)
             root.addWidget(container)

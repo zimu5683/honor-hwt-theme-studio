@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import copy
+import os
 import sys
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSize, Qt, QThread, QTimer
-from PySide6.QtGui import QAction, QColor, QMouseEvent, QPixmap, QUndoStack
+from PySide6.QtCore import QEvent, QSize, Qt, QThread, QTimer, QUrl
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QMouseEvent, QPixmap, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -55,15 +56,21 @@ from .semantic import SIMPLE_SETTINGS, TYPE_LABELS, friendly_resource_label, res
 from .ui.commands import BulkChangeCommand, ChangeCommand
 from .ui.design_system import Colors, apply_design_system, apply_type, set_role, set_state
 from .ui.dialogs import CustomResourceDialog, resolve_missing_assets
+from .ui.i18n import install_qt_translations
 from .ui.phone_dialog import PhoneTransferDialog
 from .ui.resource_models import ResourceFilterModel, ResourceTableModel
 from .ui.simple_editor import SimpleEditor
+from .ui.simple_preview import PreviewRepository
 from .ui.titlebar import WindowTitleBar
-from .ui.workers import ProfileWorker, TransferWorker
+from .ui.workers import ProfileWorker, TransferWorker, UpdateWorker
+from .updater import Release, UpdateCheck, launch_update, release_page_url
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
+        app = QApplication.instance()
+        if app is not None:
+            install_qt_translations(app)
         super().__init__()
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.setWindowTitle(f"{APP_NAME} {__version__}")
@@ -73,6 +80,10 @@ class MainWindow(QMainWindow):
         self.undo_stack = QUndoStack(self)
         self.last_export: Path | None = None
         self.transfer_thread: QThread | None = None
+        self.update_thread: QThread | None = None
+        self.update_worker: UpdateWorker | None = None
+        self.update_info: UpdateCheck | None = None
+        self.update_progress: QProgressDialog | None = None
         cached_profiles = [device.profile for device in PhoneRegistry().load().values() if device.profile]
         self.phone_profile = max(cached_profiles, key=lambda item: item.updated_at, default=None)
         self.installed_packages: set[str] | None = (
@@ -82,6 +93,7 @@ class MainWindow(QMainWindow):
         self._log_lines: list[str] = []
         self._resize_margin = 6
         self.simple_resolved = resolve_all(self.catalog)
+        self.preview_repository = PreviewRepository()
         self._build_ui()
         app = QApplication.instance()
         if app is not None:
@@ -143,6 +155,11 @@ class MainWindow(QMainWindow):
         log_action = QAction("查看运行日志", self)
         log_action.triggered.connect(self.show_log_dialog)
         advanced.addAction(log_action)
+        advanced.addSeparator()
+        update_action = QAction("检查更新", self)
+        update_action.triggered.connect(self.check_for_updates)
+        self.update_action = update_action
+        advanced.addAction(update_action)
         advanced.addSeparator()
         ssh_action = QAction("通过 Termux/SSH 发送到手机", self)
         ssh_action.triggered.connect(self.send_phone_ssh)
@@ -245,7 +262,7 @@ class MainWindow(QMainWindow):
         host.setMaximumWidth(1440)
         host_layout = QVBoxLayout(host)
         host_layout.setContentsMargins(0, 0, 0, 0)
-        self.simple_editor = SimpleEditor(self.apply_simple_setting, self.reset_simple_setting)
+        self.simple_editor = SimpleEditor(self.apply_simple_setting, self.reset_simple_setting, self.preview_repository)
         host_layout.addWidget(self.simple_editor)
         scroll.setWidget(host)
         scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
@@ -527,6 +544,133 @@ class MainWindow(QMainWindow):
         layout.addWidget(close_button)
         dialog.exec()
 
+    def check_for_updates(self, silent: bool = False):
+        if self.update_thread and self.update_thread.isRunning():
+            if not silent:
+                self.statusBar().showMessage("正在检查更新……")
+            return
+        self.statusBar().showMessage("正在检查 GitHub Release 更新……")
+        self.update_thread = QThread(self)
+        worker = UpdateWorker()
+        worker.moveToThread(self.update_thread)
+        self.update_thread.started.connect(worker.run_check)
+        worker.checked.connect(lambda info: self._update_checked(info, silent))
+        worker.failed.connect(lambda detail: self._update_check_failed(detail, silent))
+        worker.checked.connect(self.update_thread.quit)
+        worker.failed.connect(self.update_thread.quit)
+        self.update_thread.finished.connect(worker.deleteLater)
+        self.update_thread.finished.connect(self._update_thread_finished)
+        self.update_worker = worker
+        self.update_thread.start()
+
+    def _update_checked(self, info: UpdateCheck, silent: bool):
+        self.update_info = info
+        latest = info.latest_version or "未知"
+        if hasattr(self, "update_action"):
+            self.update_action.setText(f"检查更新（{latest}）" if info.update_available else "检查更新")
+        if not info.update_available or info.release is None:
+            self.statusBar().showMessage(f"当前已是最新版本（{info.current_version}）。", 5000)
+            if not silent:
+                QMessageBox.information(self, "检查更新", f"当前已是最新版本：{info.current_version}")
+            return
+
+        release = info.release
+        asset_text = release.asset.name if release.asset else "没有可用的 Windows 更新包"
+        self.statusBar().showMessage(f"发现新版本 {release.version}：{asset_text}", 10000)
+        self.log(f"发现 GitHub Release 更新：{info.current_version} → {release.version}。")
+        self._show_update_prompt(release)
+
+    def _update_check_failed(self, detail: str, silent: bool):
+        message = "暂时无法检查更新，请确认网络连接后稍后重试。"
+        self.log(f"检查更新失败：{detail}")
+        self.statusBar().showMessage(message, 8000)
+        if not silent:
+            QMessageBox.warning(self, "检查更新失败", message)
+
+    def _show_update_prompt(self, release: Release):
+        box = QMessageBox(self)
+        box.setWindowTitle("发现新版本")
+        summary = release.body or "该版本包含功能改进和问题修复。"
+        asset_text = release.asset.name if release.asset else "当前没有适用于 Windows 的自动更新包"
+        box.setText(f"发现大雪主题编辑器新版本：{release.version}")
+        box.setInformativeText(f"当前版本：{__version__}\n更新包：{asset_text}\n\n{summary}")
+        update_button = box.addButton("下载并更新", QMessageBox.AcceptRole)
+        release_button = box.addButton("打开发布页", QMessageBox.ActionRole)
+        box.addButton("稍后", QMessageBox.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is update_button:
+            if release.asset is None:
+                QDesktopServices.openUrl(QUrl(release_page_url(release)))
+            else:
+                self._start_update_download(release)
+        elif clicked is release_button:
+            QDesktopServices.openUrl(QUrl(release_page_url(release)))
+
+    def _start_update_download(self, release: Release):
+        if self.update_thread and self.update_thread.isRunning():
+            QMessageBox.information(self, "请稍候", "更新检查或下载任务仍在进行中。")
+            return
+        self.update_progress = QProgressDialog("正在准备下载更新包……", "取消", 0, 1000, self)
+        self.update_progress.setWindowTitle("更新大雪主题编辑器")
+        self.update_progress.setMinimumDuration(0)
+        self.update_progress.setValue(0)
+        self.update_progress.show()
+        self.update_thread = QThread(self)
+        worker = UpdateWorker(release=release)
+        worker.moveToThread(self.update_thread)
+        self.update_thread.started.connect(worker.run_download)
+        worker.progress.connect(self._update_download_progress)
+        worker.downloaded.connect(self._update_downloaded)
+        worker.failed.connect(self._update_download_failed)
+        worker.downloaded.connect(self.update_thread.quit)
+        worker.failed.connect(self.update_thread.quit)
+        self.update_thread.finished.connect(worker.deleteLater)
+        self.update_thread.finished.connect(self._update_thread_finished)
+        self.update_progress.canceled.connect(worker.cancel, Qt.DirectConnection)
+        self.update_worker = worker
+        self.update_thread.start()
+
+    def _update_download_progress(self, received: int, total: int, stage: str):
+        if self.update_progress is None:
+            return
+        self.update_progress.setLabelText(stage)
+        if total > 0:
+            self.update_progress.setRange(0, 1000)
+            self.update_progress.setValue(min(1000, int(received * 1000 / total)))
+        else:
+            self.update_progress.setRange(0, 0)
+
+    def _update_downloaded(self, path: Path):
+        if self.update_progress is not None:
+            self.update_progress.close()
+        self.log(f"更新包已下载并通过 SHA-256 校验：{path}")
+        try:
+            should_exit = launch_update(path)
+        except Exception:
+            self.log(traceback.format_exc())
+            QMessageBox.critical(self, "启动更新失败", f"更新包已保存到：\n{path}\n\n无法自动启动新版本，请手动打开该文件。")
+            return
+        if should_exit:
+            self.statusBar().showMessage("更新程序已启动，编辑器即将退出……")
+            QTimer.singleShot(0, QApplication.instance().quit)
+        else:
+            QMessageBox.information(self, "更新包已准备好", f"更新包已下载：\n{path}\n\n已打开新版本程序。")
+
+    def _update_download_failed(self, detail: str):
+        if self.update_progress is not None:
+            self.update_progress.close()
+        message = "取消" if "取消" in detail else "更新包下载或校验失败，请稍后重试。"
+        self.log(f"下载更新失败：{detail}")
+        if "取消" in message:
+            QMessageBox.information(self, "已取消更新", message)
+        else:
+            QMessageBox.critical(self, "下载更新失败", message)
+
+    def _update_thread_finished(self):
+        self.update_thread = None
+        self.update_worker = None
+
     def connect_phone_profile(self):
         if self.profile_thread and self.profile_thread.isRunning():
             return
@@ -558,7 +702,13 @@ class MainWindow(QMainWindow):
         self.log(f"已识别手机：{profile.manufacturer} {profile.model}，适用应用 {len(profile.installed_packages)} 个。")
 
     def _profile_failed(self, detail: str, code: str):
-        message = detail.splitlines()[-1] if detail else "无法读取手机信息"
+        messages = {
+            "profile_unsupported": "手机助手版本过低，无法读取适配信息，请先更新手机助手。",
+            "no_device": "没有找到可用手机，请确认手机助手已打开并已配对。",
+            "unexpected": "读取手机信息失败，请确认手机和电脑处于同一网络。",
+        }
+        message = messages.get(code, detail if detail and "\n" not in detail else "无法读取手机信息")
+        self.log(f"手机识别原始异常：{detail}")
         self._update_phone_ui(cached=bool(self.phone_profile))
         self.phone_status.setText(message)
         set_state(self.phone_status, "error")
@@ -710,7 +860,12 @@ class MainWindow(QMainWindow):
             self.preview_label.setText("")
             self.preview_label.setPixmap(pixmap.scaled(320, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         except Exception as exc:
-            QMessageBox.critical(self, "预览失败", str(exc))
+            self._show_operation_error(
+                "预览失败",
+                "无法生成图片预览。",
+                "请确认图片文件完整，或重新选择图片后再试。",
+                exc,
+            )
 
     def _detail_change(self) -> ResourceChange:
         slot = self.selected_slot
@@ -766,7 +921,13 @@ class MainWindow(QMainWindow):
                 self.undo_stack.push(ChangeCommand(self, self.selected_slot.id, change, f"修改 {friendly_resource_label(self.selected_slot)}"))
             self.statusBar().showMessage(f"已修改：{friendly_resource_label(self.selected_slot)}", 4000)
         except Exception as exc:
-            QMessageBox.warning(self, "无法应用", str(exc))
+            self._show_operation_error(
+                "无法应用",
+                "无法应用本次修改。",
+                "请检查资源类型和填写的值后重试。",
+                exc,
+                warning=True,
+            )
 
     def reset_detail(self):
         if self.selected_slot and self.selected_slot.id in self.project.changes:
@@ -880,7 +1041,13 @@ class MainWindow(QMainWindow):
             self.select_slot(slot.id)
             self.log(f"已添加高级资源槽位：{slot.module} / {slot.path} / {slot.name}")
         except Exception as exc:
-            QMessageBox.warning(self, "无法添加", str(exc))
+            self._show_operation_error(
+                "无法添加",
+                "无法添加高级资源。",
+                "请检查资源路径、类型和尺寸后重试。",
+                exc,
+                warning=True,
+            )
 
     def new_project(self):
         if not self._confirm_discard():
@@ -906,7 +1073,12 @@ class MainWindow(QMainWindow):
             self._bind_project()
             self.log(f"已打开工程：{filename}")
         except Exception as exc:
-            QMessageBox.critical(self, "打开失败", str(exc))
+            self._show_operation_error(
+                "打开失败",
+                "无法打开主题工程。",
+                "请确认文件未损坏、格式正确，或重新选择工程文件。",
+                exc,
+            )
 
     def save_project(self):
         path = self.project.project_file
@@ -923,7 +1095,12 @@ class MainWindow(QMainWindow):
             self.refresh_views()
             self.log(f"工程已保存：{path}")
         except Exception as exc:
-            QMessageBox.critical(self, "保存失败", str(exc))
+            self._show_operation_error(
+                "保存失败",
+                "无法保存主题工程。",
+                "请确认目标文件夹可写，或更换保存位置后重试。",
+                exc,
+            )
 
     def export_hwt(self):
         slot_map = {slot.id: slot for slot in [*self.catalog.resources, *self.project.custom_resources]}
@@ -971,8 +1148,12 @@ class MainWindow(QMainWindow):
             self.log(f"导出成功：{path}\nSHA-256：{report['sha256']}\n已写入 {report['applied_count']} 个覆盖目标。{warning}")
             QMessageBox.information(self, "导出成功", detail)
         except Exception as exc:
-            self.log(traceback.format_exc())
-            QMessageBox.critical(self, "导出失败", str(exc))
+            self._show_operation_error(
+                "导出失败",
+                "无法导出 HWT。",
+                "请处理导出预检问题，并确认目标位置可写后重试。",
+                exc,
+            )
 
     def send_phone(self):
         path = self.last_export
@@ -1061,7 +1242,12 @@ class MainWindow(QMainWindow):
     def _transfer_failed(self, detail: str, code: str = "unexpected"):
         self.progress.close()
         self.log(detail)
-        message = detail.splitlines()[-1] if detail else "未知错误"
+        messages = {
+            "cancelled": "发送已取消。",
+            "no_device": "没有选择手机，请先连接并识别手机。",
+            "unexpected": "发送失败，请检查手机助手、网络连接和主题文件。",
+        }
+        message = messages.get(code, "发送失败，请检查手机助手、网络连接和主题文件。")
         if code == "cancelled":
             QMessageBox.information(self, "已取消", message)
         else:
@@ -1077,7 +1263,12 @@ class MainWindow(QMainWindow):
             self.bind_catalog(catalog)
             self.log(f"扫描完成：{filename}，资源槽位 {len(catalog.resources)}。")
         except Exception as exc:
-            QMessageBox.critical(self, "扫描失败", str(exc))
+            self._show_operation_error(
+                "扫描失败",
+                "无法扫描主题。",
+                "请确认选中的 HWT 文件完整且未被占用后重试。",
+                exc,
+            )
 
     def _confirm_discard(self) -> bool:
         if not self.project.dirty:
@@ -1165,8 +1356,28 @@ class MainWindow(QMainWindow):
         if hasattr(self, "log_text"):
             self.log_text.appendPlainText(message.rstrip() + "\n")
 
+    def _show_operation_error(
+        self,
+        title: str,
+        reason: str,
+        suggestion: str,
+        exc: Exception,
+        *,
+        warning: bool = False,
+    ) -> None:
+        self.log(f"{title}（原始错误）：{exc}")
+        trace = traceback.format_exc().strip()
+        if trace and trace != "NoneType: None":
+            self.log(trace)
+        message = f"{reason}\n\n处理建议：{suggestion}"
+        if warning:
+            QMessageBox.warning(self, title, message)
+        else:
+            QMessageBox.critical(self, title, message)
+
 
 def apply_style(app: QApplication):
+    install_qt_translations(app)
     apply_design_system(app)
 
 
@@ -1178,7 +1389,10 @@ def main() -> int:
     try:
         window = MainWindow()
     except Exception:
-        QMessageBox.critical(None, "启动失败", traceback.format_exc())
+        traceback.print_exc()
+        QMessageBox.critical(None, "启动失败", "程序启动失败，请查看运行日志并确认安装目录完整。")
         return 1
     window.show()
+    if os.environ.get("HWT_DISABLE_UPDATE_CHECK") != "1":
+        QTimer.singleShot(1800, window.check_for_updates)
     return app.exec()

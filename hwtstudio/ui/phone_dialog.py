@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PySide6.QtWidgets import (
@@ -17,6 +19,9 @@ from PySide6.QtWidgets import (
 
 from ..phone_transfer import HTTP_PORT, PhoneDevice, PhoneRegistry, discover_phones
 from .design_system import set_role, set_state
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class DiscoveryWorker(QObject):
@@ -37,8 +42,9 @@ class DiscoveryWorker(QObject):
                     if not broadcast.isNull() and broadcast.protocol() == QAbstractSocket.IPv4Protocol:
                         targets.append(broadcast.toString())
             self.found.emit(discover_phones(registry=self.registry, targets=targets))
-        except Exception as exc:
-            self.failed.emit(str(exc))
+        except Exception:
+            LOGGER.exception("搜索手机失败")
+            self.failed.emit("搜索失败")
         finally:
             self.finished.emit()
 
@@ -154,8 +160,9 @@ class PhoneTransferDialog(QDialog):
             self.status.setText("没有发现手机。请确认 APK 已开始接收，或填写手动地址。")
             set_state(self.status, "warning")
 
-    def _discovery_failed(self, message: str):
-        self.status.setText(f"搜索失败：{message}")
+    def _discovery_failed(self, _message: str):
+        self.status.setText("搜索失败，请检查网络连接后重试。")
+        self.status.setToolTip("")
         set_state(self.status, "error")
 
     def _discovery_finished(self):

@@ -7,6 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 from ..ssh_transfer import transfer_to_phone
+from ..updater import Release, check_for_update, download_asset
 from ..phone_transfer import (
     PhoneDevice,
     PhoneRegistry,
@@ -85,3 +86,40 @@ class TransferWorker(QObject):
             self.failed.emit(str(exc), exc.code)
         except Exception:
             self.failed.emit(traceback.format_exc(), "unexpected")
+
+
+class UpdateWorker(QObject):
+    """Run network and checksum work away from the Qt GUI thread."""
+
+    checked = Signal(object)
+    downloaded = Signal(object)
+    failed = Signal(str)
+    progress = Signal(int, int, str)
+
+    def __init__(self, *, release: Release | None = None):
+        super().__init__()
+        self.release = release
+        self.cancelled = threading.Event()
+
+    def cancel(self):
+        self.cancelled.set()
+
+    def run_check(self):
+        try:
+            self.checked.emit(check_for_update())
+        except Exception:
+            self.failed.emit(traceback.format_exc())
+
+    def run_download(self):
+        try:
+            if self.release is None:
+                raise ValueError("请先检查更新")
+
+            def report(received: int, total: int, stage: str):
+                if self.cancelled.is_set():
+                    raise RuntimeError("更新下载已取消")
+                self.progress.emit(received, total, stage)
+
+            self.downloaded.emit(download_asset(self.release, progress=report))
+        except Exception:
+            self.failed.emit(traceback.format_exc())

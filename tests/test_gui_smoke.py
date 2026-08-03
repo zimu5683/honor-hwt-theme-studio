@@ -57,6 +57,20 @@ class GuiSmokeTests(unittest.TestCase):
         window.project.dirty = False
         window.close()
 
+    def test_operation_error_keeps_raw_exception_out_of_message_box(self):
+        window = MainWindow()
+        with patch("hwtstudio.app.QMessageBox.critical") as critical:
+            try:
+                raise RuntimeError("broken image header")
+            except RuntimeError as exc:
+                window._show_operation_error("预览失败", "无法生成图片预览。", "请重新选择图片后重试。", exc)
+        message = critical.call_args.args[2]
+        self.assertIn("无法生成图片预览", message)
+        self.assertIn("处理建议", message)
+        self.assertNotIn("broken image header", message)
+        self.assertIn("broken image header", "\n".join(window._log_lines))
+        window.close()
+
     def test_studio_tokens_titlebar_and_responsive_layout(self):
         self.assertEqual(Colors.PRIMARY, "#5645D4")
         self.assertEqual(Colors.CANVAS, "#F6F5F4")

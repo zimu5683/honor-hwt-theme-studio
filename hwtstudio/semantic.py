@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable
 
 from .models import ResourceSlot, ThemeCatalog
@@ -27,6 +27,13 @@ SPECIAL_MODULES = {
 
 
 @dataclass(frozen=True, slots=True)
+class PreviewSpec:
+    scene: str
+    target: str
+    caption: str
+
+
+@dataclass(frozen=True, slots=True)
 class SimpleSetting:
     id: str
     section: str
@@ -38,6 +45,7 @@ class SimpleSetting:
     slot_ids: tuple[str, ...] = ()
     required_packages: tuple[str, ...] = ()
     scope: str = "exact"
+    preview: PreviewSpec | None = None
 
 
 def _setting(
@@ -155,6 +163,45 @@ SIMPLE_SETTINGS = (
              names=("FG_1", "FG_2"), modules=("com.tencent.mm",), required_packages=("com.tencent.mm",)),
     _setting("wechat_brand", "常用应用", "微信品牌强调色", "微信选中项、链接和主要操作按钮的颜色。", "color",
              names=("Brand_100", "Brand_100_CARE"), modules=("com.tencent.mm",), required_packages=("com.tencent.mm",)),
+)
+
+
+_PREVIEW_SPECS = {
+    "desktop_wallpaper": PreviewSpec("launcher_home", "wallpaper", "桌面整张壁纸位置"),
+    "lock_wallpaper": PreviewSpec("lock_screen", "wallpaper", "锁屏整张壁纸位置"),
+    "theme_cover": PreviewSpec("theme_gallery", "cover", "主题列表封面区域"),
+    "page_background": PreviewSpec("settings_detail", "page", "设置内容背景区域"),
+    "surface_background": PreviewSpec("settings_detail", "surface", "设置列表表面区域"),
+    "top_bar": PreviewSpec("settings_detail", "topbar", "设置顶部栏区域"),
+    "bottom_bar": PreviewSpec("wechat_settings", "bottom", "应用底部导航区域"),
+    "primary_text": PreviewSpec("settings_detail", "primary", "设置主要文字区域"),
+    "secondary_text": PreviewSpec("messages", "secondary", "短信次要文字区域"),
+    "accent": PreviewSpec("theme_gallery", "accent", "主题选中与强调区域"),
+    "controls": PreviewSpec("settings_detail", "controls", "设置控件区域"),
+    "divider": PreviewSpec("settings_detail", "divider", "设置分隔线区域"),
+    "notification_background": PreviewSpec("notification_shade", "panel", "通知面板背景区域"),
+    "notification_icon": PreviewSpec("notification_shade", "icon", "通知图标位置"),
+    "system_accent": PreviewSpec("quick_settings", "accent", "控制中心选中区域"),
+    "brightness": PreviewSpec("quick_settings", "brightness", "亮度滑块区域"),
+    "volume_background": PreviewSpec("volume_overlay", "panel", "音量面板表面区域"),
+    "volume_slider": PreviewSpec("volume_overlay", "slider", "音量滑块区域"),
+    "folder_background": PreviewSpec("launcher_folder", "folder", "桌面文件夹展开区域"),
+    "launcher_label": PreviewSpec("launcher_home", "labels", "桌面图标名称区域"),
+    "widget_text": PreviewSpec("launcher_home", "widget", "桌面小组件文字区域"),
+    "recent_tasks": PreviewSpec("recent_tasks", "cards", "最近任务卡片区域"),
+    "settings_background": PreviewSpec("settings_detail", "content", "设置应用内容背景"),
+    "messages_background": PreviewSpec("messages", "content", "短信应用内容背景"),
+    "phone_background": PreviewSpec("dialer", "content", "电话应用内容背景"),
+    "contacts_background": PreviewSpec("contacts_list", "content", "联系人应用内容背景"),
+    "wechat_background": PreviewSpec("wechat_settings", "content", "微信内容背景"),
+    "wechat_primary_text": PreviewSpec("wechat_settings", "text", "微信主要文字"),
+    "wechat_secondary_text": PreviewSpec("wechat_settings", "secondary", "微信次要文字"),
+    "wechat_brand": PreviewSpec("wechat_settings", "brand", "微信品牌强调区域"),
+}
+
+SIMPLE_SETTINGS = tuple(
+    replace(setting, preview=_PREVIEW_SPECS[setting.id])
+    for setting in SIMPLE_SETTINGS
 )
 
 

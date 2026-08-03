@@ -5,6 +5,8 @@ build/
 dist/
 *.spec
 *.tmp
+phone-preview-raw/
+work/phone-preview-raw/
 build_ui_preview.png
 android/.gradle/
 android/.kotlin/
