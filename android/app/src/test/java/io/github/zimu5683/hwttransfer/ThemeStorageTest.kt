@@ -11,6 +11,21 @@ import org.junit.Test
 
 class ThemeStorageTest {
     @Test
+    fun backupSelectionIsDeterministicWhenModificationTimesTie() {
+        data class Candidate(val name: String, val modified: Long)
+
+        val first = Candidate("theme.hwt.backup-100", 10L)
+        val second = Candidate("theme.hwt.backup-200", 10L)
+        val selected = selectLatestBackup(
+            listOf(second, first),
+            lastModified = { it.modified },
+            name = { it.name },
+        )
+
+        assertEquals(second, selected)
+    }
+
+    @Test
     fun safRenameStateFailsClosedForAmbiguousProviderResults() {
         assertEquals(SafRenameState.MOVED, classifySafRenameState(sourceExists = false, targetExists = true))
         assertEquals(SafRenameState.NOT_MOVED, classifySafRenameState(sourceExists = true, targetExists = false))

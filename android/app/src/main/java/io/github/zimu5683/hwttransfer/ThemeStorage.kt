@@ -35,6 +35,12 @@ internal fun classifySafRenameState(sourceExists: Boolean, targetExists: Boolean
     else -> SafRenameState.AMBIGUOUS
 }
 
+internal fun <T> selectLatestBackup(
+    backups: Iterable<T>,
+    lastModified: (T) -> Long,
+    name: (T) -> String?,
+): T? = backups.maxWithOrNull(compareBy<T> { lastModified(it) }.thenBy { name(it) ?: "" })
+
 internal fun isReplaceableDirectThemeTarget(target: File): Boolean {
     val path = target.toPath()
     return !Files.exists(path, LinkOption.NOFOLLOW_LINKS) ||
@@ -436,7 +442,7 @@ class ThemeStorage(private val context: Context) {
         backups.forEach { requireSafRegularFile(it, "主题备份不是普通文件") }
         var restoredCandidate: DocumentFile? = null
         if (current == null && backups.isNotEmpty()) {
-            val candidate = backups.maxByOrNull { it.lastModified() }!!
+            val candidate = selectLatestBackup(backups, DocumentFile::lastModified) { it.name }!!
             val backupName = candidate.name ?: ""
             val restored = renameSafOrReconcile(directory, candidate, backupName, name)
             if (restored == null || !isRegularSafFile(restored)) {
