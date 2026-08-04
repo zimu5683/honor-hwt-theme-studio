@@ -63,7 +63,7 @@ from .ui.simple_editor import SimpleEditor
 from .ui.simple_preview import PreviewRepository
 from .ui.titlebar import WindowTitleBar
 from .ui.workers import ProfileWorker, TransferWorker, UpdateWorker
-from .updater import Release, UpdateCheck, launch_update, release_page_url
+from .updater import Release, UpdateCheck, VerifiedDownload, launch_update, release_page_url
 
 
 def _compact_error_detail(detail: str, fallback: str, *, limit: int = 240) -> str:
@@ -728,7 +728,7 @@ class MainWindow(QMainWindow):
         else:
             self.update_progress.setRange(0, 0)
 
-    def _update_downloaded(self, path: Path, generation: int | None = None):
+    def _update_downloaded(self, download: VerifiedDownload, generation: int | None = None):
         if generation is not None and generation != self._update_generation:
             return
         if self._closing:
@@ -737,9 +737,10 @@ class MainWindow(QMainWindow):
         self.update_progress = None
         if progress is not None:
             progress.close()
+        path = download.path
         self.log(f"更新包已下载并通过 SHA-256 校验：{path}")
         try:
-            should_exit = launch_update(path)
+            should_exit = launch_update(download)
         except Exception:
             self.log(traceback.format_exc())
             QMessageBox.critical(self, "启动更新失败", f"更新包已保存到：\n{path}\n\n无法自动启动新版本，请手动打开该文件。")

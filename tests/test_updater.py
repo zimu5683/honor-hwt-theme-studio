@@ -11,8 +11,10 @@ from hwtstudio.updater import (
     _sha256,
     _fetch_json,
     ReleaseAsset,
+    VerifiedDownload,
     download_asset,
     is_newer_version,
+    launch_update,
     release_from_payload,
     safe_asset_name,
     select_update_asset,
@@ -190,9 +192,47 @@ class UpdaterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch(
             "hwtstudio.updater.urllib.request.urlopen", return_value=_FakeResponse(payload)
         ):
-            path = download_asset(release, download_dir=Path(directory))
-            self.assertEqual(path.read_bytes(), payload)
+            download = download_asset(release, download_dir=Path(directory))
+            self.assertIsInstance(download, VerifiedDownload)
+            self.assertEqual(download.path.read_bytes(), payload)
+            self.assertEqual(download.sha256, checksum)
             self.assertEqual(list(Path(directory).glob(".*.part")), [])
+
+    def test_cached_download_preserves_verified_sha256(self):
+        payload = b"cached verified update payload"
+        checksum = hashlib.sha256(payload).hexdigest()
+        release = release_from_payload(
+            {
+                "version": "v0.2.0",
+                "assets": [
+                    {
+                        "name": "HwtThemeStudio-v0.2.0-win64.exe",
+                        "url": "https://example.test/studio.exe",
+                        "sha256": checksum,
+                    }
+                ],
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "hwtstudio.updater.urllib.request.urlopen"
+        ) as urlopen:
+            target = Path(directory) / release.asset.name
+            target.write_bytes(payload)
+            download = download_asset(release, download_dir=Path(directory))
+            self.assertEqual(download, VerifiedDownload(path=target, sha256=checksum))
+            urlopen.assert_not_called()
+
+    def test_launch_update_rejects_file_changed_after_download(self):
+        payload = b"verified update payload"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "hwtstudio-test-update.exe"
+            path.write_bytes(payload)
+            download = VerifiedDownload(path=path, sha256=hashlib.sha256(payload).hexdigest())
+            path.write_bytes(b"tampered update payload")
+            with patch("hwtstudio.updater.subprocess.Popen") as popen:
+                with self.assertRaisesRegex(ValueError, "启动前.*SHA-256"):
+                    launch_update(download)
+            popen.assert_not_called()
 
     def test_download_asset_rejects_truncated_declared_response(self):
         payload = b"truncated update payload"

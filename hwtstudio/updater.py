@@ -59,6 +59,12 @@ class UpdateCheck:
     update_available: bool
 
 
+@dataclass(frozen=True)
+class VerifiedDownload:
+    path: Path
+    sha256: str
+
+
 def parse_version_tag(value: str) -> tuple[int, ...]:
     normalized = value.strip().lstrip("vV")
     match = re.match(r"^(\d+(?:\.\d+)*)(?:[-+].*)?$", normalized)
@@ -273,7 +279,7 @@ def download_asset(
     *,
     progress: ProgressCallback | None = None,
     cancelled: threading.Event | None = None,
-) -> Path:
+) -> VerifiedDownload:
     asset = release.asset
     if asset is None:
         raise ValueError("该 Release 没有适用于 Windows 的桌面安装包")
@@ -288,7 +294,7 @@ def download_asset(
     if target.is_file() and _sha256(target, cancelled=cancelled) == expected:
         if progress:
             progress(target.stat().st_size, target.stat().st_size, "已复用已校验的更新包")
-        return target
+        return VerifiedDownload(path=target, sha256=expected)
 
     partial = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.part")
     partial.unlink(missing_ok=True)
@@ -334,18 +340,24 @@ def download_asset(
         raise
     if progress:
         progress(received, total or received, "更新包校验完成")
-    return target
+    return VerifiedDownload(path=target, sha256=expected)
 
 
 def release_page_url(release: Release) -> str:
     return release.url or f"https://github.com/{DEFAULT_REPOSITORY}/releases/tag/{release.version}"
 
 
-def launch_update(downloaded_path: Path) -> bool:
+def launch_update(download: VerifiedDownload) -> bool:
     """Start a verified update; return True when the current process should exit."""
-    downloaded_path = downloaded_path.resolve()
+    expected = _valid_sha256(download.sha256)
+    if not expected:
+        raise ValueError("更新包缺少有效 SHA-256 校验值，已拒绝启动")
+    downloaded_path = download.path.resolve()
     if not downloaded_path.is_file():
         raise FileNotFoundError(downloaded_path)
+    actual = _sha256(downloaded_path)
+    if actual != expected:
+        raise ValueError(f"启动前更新包 SHA-256 校验失败：期望 {expected}，实际 {actual}")
     if os.name != "nt" or not getattr(sys, "frozen", False):
         subprocess.Popen([str(downloaded_path)])
         return False
@@ -357,23 +369,35 @@ def launch_update(downloaded_path: Path) -> bool:
 $processId = {os.getpid()}
 $source = '{str(downloaded_path).replace("'", "''")}'
 $target = '{str(target).replace("'", "''")}'
+$expected = '{expected}'
+$staged = Join-Path ([System.IO.Path]::GetTempPath()) ("hwt-update-" + $processId + ".tmp")
 $backup = $target + '.previous'
 $deadline = (Get-Date).AddSeconds(30)
+function Get-Sha256([string] $path) {{
+    return (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+}}
 while ((Get-Date) -lt $deadline -and (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {{
     Start-Sleep -Milliseconds 200
 }}
 if (Get-Process -Id $processId -ErrorAction SilentlyContinue) {{ exit 2 }}
 try {{
+    Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+    if ((Get-Sha256 $source) -ne $expected) {{ throw 'source checksum mismatch' }}
+    Copy-Item -LiteralPath $source -Destination $staged -Force
+    if ((Get-Sha256 $staged) -ne $expected) {{ throw 'staged checksum mismatch' }}
     Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
     Copy-Item -LiteralPath $target -Destination $backup -Force
-    Copy-Item -LiteralPath $source -Destination $target -Force
+    Copy-Item -LiteralPath $staged -Destination $target -Force
+    if ((Get-Sha256 $target) -ne $expected) {{ throw 'target checksum mismatch' }}
     Start-Process -FilePath $target
     Remove-Item -LiteralPath $source -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
 }} catch {{
     if (Test-Path -LiteralPath $backup) {{
         Copy-Item -LiteralPath $backup -Destination $target -Force
     }}
+    Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
     exit 3
 }}
 """
