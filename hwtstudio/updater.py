@@ -291,12 +291,20 @@ def download_asset(
     _check_cancelled(cancelled)
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / safe_asset_name(asset.name)
+    if target.is_symlink():
+        raise ValueError("更新包缓存不能是符号链接")
+    if target.exists() and not target.is_file():
+        raise ValueError("更新包缓存不是普通文件")
     if target.is_file() and _sha256(target, cancelled=cancelled) == expected:
         if progress:
             progress(target.stat().st_size, target.stat().st_size, "已复用已校验的更新包")
         return VerifiedDownload(path=target, sha256=expected)
 
     partial = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.part")
+    if partial.is_symlink():
+        raise ValueError("更新包临时文件不能是符号链接")
+    if partial.exists() and not partial.is_file():
+        raise ValueError("更新包临时文件不是普通文件")
     partial.unlink(missing_ok=True)
     digest = hashlib.sha256()
     received = 0
@@ -334,6 +342,8 @@ def download_asset(
         _check_cancelled(cancelled)
         if actual != expected:
             raise ValueError(f"更新包 SHA-256 校验失败：期望 {expected}，实际 {actual}")
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            raise ValueError("更新包缓存目标已变为非普通文件")
         os.replace(partial, target)
     except Exception:
         partial.unlink(missing_ok=True)
@@ -352,9 +362,12 @@ def launch_update(download: VerifiedDownload) -> bool:
     expected = _valid_sha256(download.sha256)
     if not expected:
         raise ValueError("更新包缺少有效 SHA-256 校验值，已拒绝启动")
-    downloaded_path = download.path.resolve()
+    downloaded_path = Path(download.path)
+    if downloaded_path.is_symlink():
+        raise ValueError("更新包不能是符号链接")
     if not downloaded_path.is_file():
         raise FileNotFoundError(downloaded_path)
+    downloaded_path = downloaded_path.absolute()
     actual = _sha256(downloaded_path)
     if actual != expected:
         raise ValueError(f"启动前更新包 SHA-256 校验失败：期望 {expected}，实际 {actual}")

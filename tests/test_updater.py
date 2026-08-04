@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import tempfile
 import threading
 import unittest
@@ -222,6 +223,35 @@ class UpdaterTests(unittest.TestCase):
             self.assertEqual(download, VerifiedDownload(path=target, sha256=checksum))
             urlopen.assert_not_called()
 
+    def test_download_rejects_symlinked_cached_target(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        payload = b"cached target"
+        checksum = hashlib.sha256(payload).hexdigest()
+        release = release_from_payload(
+            {
+                "version": "v0.2.0",
+                "assets": [{
+                    "name": "HwtThemeStudio-v0.2.0-win64.exe",
+                    "url": "https://example.test/studio.exe",
+                    "sha256": checksum,
+                }],
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside.exe"
+            outside.write_bytes(payload)
+            target = root / release.asset.name
+            try:
+                os.symlink(outside, target)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建符号链接：{exc}")
+            with patch("hwtstudio.updater.urllib.request.urlopen") as urlopen:
+                with self.assertRaisesRegex(ValueError, "符号链接"):
+                    download_asset(release, download_dir=root)
+            urlopen.assert_not_called()
+
     def test_launch_update_rejects_file_changed_after_download(self):
         payload = b"verified update payload"
         with tempfile.TemporaryDirectory() as directory:
@@ -231,6 +261,25 @@ class UpdaterTests(unittest.TestCase):
             path.write_bytes(b"tampered update payload")
             with patch("hwtstudio.updater.subprocess.Popen") as popen:
                 with self.assertRaisesRegex(ValueError, "启动前.*SHA-256"):
+                    launch_update(download)
+            popen.assert_not_called()
+
+    def test_launch_update_rejects_symlinked_download(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        payload = b"verified update payload"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside.exe"
+            outside.write_bytes(payload)
+            path = root / "hwtstudio-test-update.exe"
+            try:
+                os.symlink(outside, path)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建符号链接：{exc}")
+            download = VerifiedDownload(path=path, sha256=hashlib.sha256(payload).hexdigest())
+            with patch("hwtstudio.updater.subprocess.Popen") as popen:
+                with self.assertRaisesRegex(ValueError, "符号链接"):
                     launch_update(download)
             popen.assert_not_called()
 
