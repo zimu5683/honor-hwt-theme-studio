@@ -33,6 +33,19 @@ MODULE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 RESERVED_ROOT_MODULES = {"description.xml", "unlock", "wallpaper", "preview"}
 VALUE_TYPES = {"color", "bool", "integer", "dimen", "string"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+IMAGE_TYPES = {"image", "icon", "wallpaper", "preview"}
+CUSTOM_RESOURCE_TYPES = VALUE_TYPES | IMAGE_TYPES
+_RESOURCE_TEXT_FIELDS = (
+    "id",
+    "module",
+    "container",
+    "resource_type",
+    "name",
+    "path",
+    "category",
+    "label",
+)
+_RESOURCE_OPTIONAL_TEXT_FIELDS = ("status", "risk", "mode", "actual_format", "extension")
 
 
 def normalize_color(value: str) -> str:
@@ -62,19 +75,60 @@ def validate_change_value(resource_type: str, value: str) -> str:
 
 
 def validate_custom_slot(slot: ResourceSlot) -> None:
+    if not isinstance(slot, ResourceSlot):
+        raise ValueError("自定义资源记录格式无效")
+    for field in _RESOURCE_TEXT_FIELDS:
+        if not isinstance(getattr(slot, field), str):
+            raise ValueError(f"自定义资源的 {field} 字段类型无效")
+    for field in _RESOURCE_OPTIONAL_TEXT_FIELDS:
+        value = getattr(slot, field)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"自定义资源的 {field} 字段类型无效")
+    for field in ("ninepatch", "synthetic"):
+        if not isinstance(getattr(slot, field), bool):
+            raise ValueError(f"自定义资源的 {field} 字段类型无效")
+    for field in ("width", "height"):
+        value = getattr(slot, field)
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 16384
+        ):
+            raise ValueError(f"自定义资源的 {field} 字段必须是 1 到 16384 之间的整数")
+    if isinstance(slot.occurrences, bool) or not isinstance(slot.occurrences, int) or slot.occurrences < 1:
+        raise ValueError("自定义资源的 occurrences 字段必须是正整数")
+    if not isinstance(slot.png_chunks, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str) for key, value in slot.png_chunks.items()
+    ):
+        raise ValueError("自定义资源的 png_chunks 字段类型无效")
+    if not isinstance(slot.targets, list) or any(
+        not isinstance(target, dict)
+        or not isinstance(target.get("module"), str)
+        or not isinstance(target.get("path"), str)
+        for target in slot.targets
+    ):
+        raise ValueError("自定义资源的 targets 字段类型无效")
+    if not slot.id.strip():
+        raise ValueError("自定义资源 ID 不能为空")
     if not MODULE_RE.fullmatch(slot.module) or ".." in slot.module or slot.module in RESERVED_ROOT_MODULES:
         raise ValueError("模块名只能包含字母、数字、点、下划线和连字符，且不能与主题根条目冲突")
+    if slot.resource_type not in CUSTOM_RESOURCE_TYPES:
+        raise ValueError("自定义资源类型不支持")
     if not slot.name.strip():
         raise ValueError("资源名不能为空")
+    if slot.container and not is_safe_archive_path(slot.container):
+        raise ValueError("资源容器路径必须是安全的 ZIP 相对路径")
     if not is_safe_archive_path(slot.path):
         raise ValueError("资源路径必须是安全的 ZIP 相对路径，不能包含反斜杠、绝对路径或 ..")
     if slot.resource_type in VALUE_TYPES and Path(slot.path).suffix.lower() != ".xml":
         raise ValueError("颜色、布尔、整数、尺寸和文字资源必须写入 .xml 文件")
-    if slot.resource_type in {"image", "icon", "wallpaper", "preview"} and Path(slot.path).suffix.lower() not in IMAGE_SUFFIXES:
+    if slot.resource_type in IMAGE_TYPES and Path(slot.path).suffix.lower() not in IMAGE_SUFFIXES:
         raise ValueError("图片路径必须以 .png、.jpg、.jpeg 或 .webp 结尾")
-    for label, value in (("宽度", slot.width), ("高度", slot.height)):
-        if value is not None and not 1 <= value <= 16384:
-            raise ValueError(f"{label}必须在 1 到 16384 之间")
+    for target in slot.targets:
+        target_module = target["module"]
+        target_path = target["path"]
+        if not MODULE_RE.fullmatch(target_module) or target_module in RESERVED_ROOT_MODULES:
+            raise ValueError("自定义资源目标模块名不安全")
+        if not is_safe_archive_path(target_path):
+            raise ValueError("自定义资源目标路径不安全")
 
 
 def _validate_resource_xml(raw: bytes, *, module: str, path: str, errors: list[dict]) -> None:

@@ -6,15 +6,17 @@ import shutil
 from pathlib import Path
 
 from .common import MAX_PROJECT_BYTES
-from .models import ThemeProject
+from .models import ResourceSlot, ThemeProject
 from .paths import unique_temp_path
 from .services.project_assets import collect_project_assets, missing_project_assets, project_assets_dir, resolve_source
+from .validation import validate_custom_slot
 
 __all__ = ["load_project", "missing_project_assets", "project_assets_dir", "save_project"]
 
 _PROJECT_TEXT_FIELDS = ("name", "title", "author", "designer", "version", "screen")
 _CHANGE_TEXT_FIELDS = ("source_kind", "fit", "enhance")
 _CUSTOM_RESOURCE_FIELDS = ("id", "module", "container", "resource_type", "name", "path", "category", "label")
+_CUSTOM_RESOURCE_OPTIONAL_TEXT_FIELDS = ("status", "risk", "mode", "actual_format", "extension")
 
 
 def _remove_path(path: Path) -> None:
@@ -68,9 +70,52 @@ def _validate_project_payload(raw: object) -> dict:
     custom_resources = raw.get("custom_resources", [])
     if not isinstance(custom_resources, list) or any(not isinstance(item, dict) for item in custom_resources):
         raise ValueError("工程字段 custom_resources 必须是对象列表")
-    for resource in custom_resources:
+    custom_ids: set[str] = set()
+    for index, resource in enumerate(custom_resources, start=1):
         if any(field not in resource for field in _CUSTOM_RESOURCE_FIELDS):
             raise ValueError("工程自定义资源缺少必需字段")
+        for field in _CUSTOM_RESOURCE_FIELDS:
+            if not isinstance(resource[field], str):
+                raise ValueError(f"工程自定义资源第 {index} 条记录的 {field} 字段类型无效")
+        for field in _CUSTOM_RESOURCE_OPTIONAL_TEXT_FIELDS:
+            if field in resource and resource[field] is not None and not isinstance(resource[field], str):
+                raise ValueError(f"工程自定义资源第 {index} 条记录的 {field} 字段类型无效")
+        for field in ("ninepatch", "synthetic"):
+            if field in resource and not isinstance(resource[field], bool):
+                raise ValueError(f"工程自定义资源第 {index} 条记录的 {field} 字段类型无效")
+        for field in ("width", "height"):
+            if field in resource and resource[field] is not None and (
+                isinstance(resource[field], bool) or not isinstance(resource[field], int)
+            ):
+                raise ValueError(f"工程自定义资源第 {index} 条记录的 {field} 字段类型无效")
+        if "occurrences" in resource and (
+            isinstance(resource["occurrences"], bool)
+            or not isinstance(resource["occurrences"], int)
+        ):
+            raise ValueError(f"工程自定义资源第 {index} 条记录的 occurrences 字段类型无效")
+        if "png_chunks" in resource and (
+            not isinstance(resource["png_chunks"], dict)
+            or any(
+                not isinstance(key, str) or not isinstance(value, str)
+                for key, value in resource["png_chunks"].items()
+            )
+        ):
+            raise ValueError(f"工程自定义资源第 {index} 条记录的 png_chunks 字段类型无效")
+        targets = resource.get("targets", [])
+        if not isinstance(targets, list) or any(
+            not isinstance(target, dict)
+            or not isinstance(target.get("module"), str)
+            or not isinstance(target.get("path"), str)
+            for target in targets
+        ):
+            raise ValueError(f"工程自定义资源第 {index} 条记录的 targets 字段类型无效")
+        if resource["id"] in custom_ids:
+            raise ValueError(f"工程自定义资源 ID 重复：{resource['id']}")
+        custom_ids.add(resource["id"])
+        try:
+            validate_custom_slot(ResourceSlot.from_dict(resource))
+        except ValueError as exc:
+            raise ValueError(f"工程自定义资源第 {index} 条记录无效：{exc}") from exc
     return raw
 
 

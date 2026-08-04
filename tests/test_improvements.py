@@ -154,6 +154,28 @@ class ImprovementTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "changes"):
                 load_project(malformed)
 
+            custom = ResourceSlot(
+                id="__custom__::loader",
+                module="com.example.app",
+                container="theme.xml",
+                resource_type="color",
+                name="accent",
+                path="theme.xml",
+                category="高级自定义",
+                label="自定义颜色",
+            ).to_dict()
+            for field, invalid in (("id", []), ("module", {"name": "bad"}), ("width", "wide")):
+                payload = {"schema": 2, "custom_resources": [copy.deepcopy(custom)]}
+                payload["custom_resources"][0][field] = invalid
+                malformed.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, field):
+                    load_project(malformed)
+
+            duplicate = {"schema": 2, "custom_resources": [copy.deepcopy(custom), copy.deepcopy(custom)]}
+            malformed.write_text(json.dumps(duplicate, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "ID 重复"):
+                load_project(malformed)
+
     def test_project_save_rejects_oversized_json_before_commit(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
