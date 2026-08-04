@@ -334,30 +334,55 @@ class ThemeStorage(private val context: Context) {
             if (existing != null) {
                 requireSafRegularFile(existing, "同名目标不是普通主题文件")
                 val backupName = "$name.backup-${System.nanoTime()}"
-                if (!existing.renameTo(backupName)) {
+                val renamed = existing.renameTo(backupName)
+                if (renamed) {
+                    // DocumentFile updates its URI after a successful rename.
+                    // Keep that object available if the provider query below is transiently stale.
+                    backup = existing
+                }
+                val moved = if (renamed) {
+                    directory.findFile(backupName)
+                } else {
+                    resolveSafRenameAfterFailure(directory, name, backupName)
+                }
+                if (moved == null) {
                     throw TransferException(503, "replace_failed", "无法安全备份同名主题文件")
                 }
-                backup = existing
+                requireSafRegularFile(moved, "主题备份不是普通文件")
+                backup = moved
             }
-            if (temporary.renameTo(name)) {
+            val renamed = temporary.renameTo(name)
+            if (renamed) {
+                // The temporary object now points at the published URI.
                 temporaryRenamed = true
                 published = temporary
+                val moved = directory.findFile(name)
+                    ?: throw TransferException(503, "rename_failed", "无法确认最终主题文件")
+                requireSafRegularFile(moved, "最终主题文件不是普通文件")
+                published = moved
             } else {
-                if (!temporary.delete()) {
-                    throw TransferException(503, "rename_failed", "无法清理主题临时文件")
-                }
-                temporaryDeleted = true
-                val finalFile = directory.createFile("application/octet-stream", name)
-                    ?: throw TransferException(503, "rename_failed", "无法生成最终主题文件")
-                published = finalFile
-                FileInputStream(source).use { input ->
-                    context.contentResolver.openOutputStream(finalFile.uri, "w")?.use { output -> copyLimited(input, output) }
-                        ?: throw TransferException(503, "rename_failed", "无法写入最终主题文件")
-                }
-                val finalDigest = context.contentResolver.openInputStream(finalFile.uri)?.use(::sha256Stream)
-                if (!finalDigest.equals(digest, ignoreCase = true)) {
-                    finalFile.delete()
-                    throw TransferException(422, "hash_mismatch", "最终主题文件 SHA-256 不一致")
+                val moved = resolveSafRenameAfterFailure(directory, uploadName, name)
+                if (moved != null) {
+                    requireSafRegularFile(moved, "最终主题文件不是普通文件")
+                    temporaryRenamed = true
+                    published = moved
+                } else {
+                    if (!temporary.delete()) {
+                        throw TransferException(503, "rename_failed", "无法清理主题临时文件")
+                    }
+                    temporaryDeleted = true
+                    val finalFile = directory.createFile("application/octet-stream", name)
+                        ?: throw TransferException(503, "rename_failed", "无法生成最终主题文件")
+                    published = finalFile
+                    FileInputStream(source).use { input ->
+                        context.contentResolver.openOutputStream(finalFile.uri, "w")?.use { output -> copyLimited(input, output) }
+                            ?: throw TransferException(503, "rename_failed", "无法写入最终主题文件")
+                    }
+                    val finalDigest = context.contentResolver.openInputStream(finalFile.uri)?.use(::sha256Stream)
+                    if (!finalDigest.equals(digest, ignoreCase = true)) {
+                        finalFile.delete()
+                        throw TransferException(422, "hash_mismatch", "最终主题文件 SHA-256 不一致")
+                    }
                 }
             }
             val finalFile = directory.findFile(name)
@@ -417,21 +442,25 @@ class ThemeStorage(private val context: Context) {
         val current = children.firstOrNull { it.name == name }
         current?.let { requireSafRegularFile(it, "同名目标不是普通主题文件") }
         backups.forEach { requireSafRegularFile(it, "主题备份不是普通文件") }
-        var restoredUri: Uri? = null
+        var restoredCandidate: DocumentFile? = null
         if (current == null && backups.isNotEmpty()) {
             val candidate = backups.maxByOrNull { it.lastModified() }!!
             val backupName = candidate.name ?: ""
-            if (!candidate.renameTo(name)) {
-                throw TransferException(503, "replace_failed", "无法恢复上次未完成的主题替换")
+            val renamed = candidate.renameTo(name)
+            val restored = if (renamed) {
+                directory.findFile(name) ?: candidate
+            } else {
+                runCatching { resolveSafRenameAfterFailure(directory, backupName, name) }.getOrNull()
             }
-            val restored = directory.findFile(name)
             if (restored == null || !isRegularSafFile(restored)) {
-                if (backupName.isNotBlank()) runCatching { candidate.renameTo(backupName) }
+                if (backupName.isNotBlank()) {
+                    runCatching { (restored ?: candidate).renameTo(backupName) }
+                }
                 throw TransferException(503, "replace_failed", "无法确认已恢复的主题文件")
             }
-            restoredUri = candidate.uri
+            restoredCandidate = candidate
         }
-        backups.filter { it.uri != restoredUri }.forEach { backup ->
+        backups.filter { it !== restoredCandidate }.forEach { backup ->
             if (!backup.delete()) {
                 throw TransferException(503, "replace_failed", "无法清理残留主题备份")
             }
@@ -458,9 +487,28 @@ class ThemeStorage(private val context: Context) {
     private fun isRegularSafFile(file: DocumentFile): Boolean =
         file.exists() && file.isFile && !file.isDirectory
 
+    private fun resolveSafRenameAfterFailure(
+        directory: DocumentFile,
+        sourceName: String,
+        targetName: String,
+    ): DocumentFile? {
+        val source = directory.findFile(sourceName)
+        val target = directory.findFile(targetName)
+        return when {
+            target != null && source == null -> target
+            target == null && source != null -> null
+            else -> throw TransferException(503, "rename_failed", "无法确认主题文件改名状态")
+        }
+    }
+
     private fun restoreSafBackup(directory: DocumentFile, backup: DocumentFile, name: String): Boolean {
-        if (!backup.renameTo(name)) return false
-        val restored = directory.findFile(name) ?: return false
+        val backupName = backup.name ?: return false
+        val renamed = backup.renameTo(name)
+        val restored = if (renamed) {
+            directory.findFile(name) ?: backup
+        } else {
+            runCatching { resolveSafRenameAfterFailure(directory, backupName, name) }.getOrNull()
+        } ?: return false
         return isRegularSafFile(restored)
     }
 
