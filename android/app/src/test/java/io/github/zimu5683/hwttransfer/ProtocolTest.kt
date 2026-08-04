@@ -231,6 +231,28 @@ class ProtocolTest {
     }
 
     @Test
+    fun validateHwtRejectsFileDirectoryPathOverlap() {
+        val file = File.createTempFile("overlap", ".hwt")
+        try {
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons"))
+                zip.write(byteArrayOf(1))
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons/theme.png"))
+                zip.write(byteArrayOf(2))
+                zip.closeEntry()
+            }
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun validateHwtRejectsHighCompressionRatioBeforeReadingEntry() {
         val file = File.createTempFile("bomb", ".hwt")
         try {

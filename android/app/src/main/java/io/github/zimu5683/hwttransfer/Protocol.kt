@@ -134,6 +134,8 @@ object Protocol {
                     throw TransferException(422, "invalid_hwt", "HWT 中缺少 description.xml")
                 }
                 val normalizedNames = HashSet<String>()
+                val filePaths = HashSet<String>()
+                val directoryPaths = HashSet<String>()
                 val sizes = buildList {
                     val entries = archive.entries()
                     var entryCount = 0
@@ -147,6 +149,18 @@ object Protocol {
                         }
                         if (!normalizedNames.add(normalizedName)) {
                             throw TransferException(422, "invalid_hwt", "HWT ZIP 存在规范化后的重复路径")
+                        }
+                        val topologyName = normalizedName.removeSuffix("/")
+                        if (entry.isDirectory) {
+                            if (topologyName in filePaths) {
+                                throw TransferException(422, "invalid_hwt", "HWT ZIP 存在文件/目录路径重叠")
+                            }
+                            directoryPaths.add(topologyName)
+                        } else {
+                            if (topologyName in directoryPaths || hasFilePathParent(topologyName, filePaths)) {
+                                throw TransferException(422, "invalid_hwt", "HWT ZIP 存在文件/目录路径重叠")
+                            }
+                            filePaths.add(topologyName)
                         }
                         if (!entry.isDirectory) {
                             validateArchiveCompression(entry.size, entry.compressedSize)
@@ -165,6 +179,15 @@ object Protocol {
 
     internal fun normalizeArchivePath(value: String): String =
         Normalizer.normalize(value, Normalizer.Form.NFC)
+
+    private fun hasFilePathParent(path: String, filePaths: Set<String>): Boolean {
+        var separator = path.indexOf('/')
+        while (separator > 0) {
+            if (path.substring(0, separator) in filePaths) return true
+            separator = path.indexOf('/', separator + 1)
+        }
+        return false
+    }
 
     internal fun isSafeArchivePath(value: String): Boolean {
         if (value.isEmpty() || value.contains('\\') || value.contains(':') ||
