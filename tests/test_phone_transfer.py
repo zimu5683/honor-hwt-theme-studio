@@ -20,6 +20,7 @@ from hwtstudio.phone_transfer import (
     FEATURE_TRANSFER_PREPARE,
     MAX_FILENAME_BYTES,
     MAX_REMOTE_ERROR_CHARS,
+    MAX_REMOTE_TEXT_CHARS,
     MAX_REGISTRY_BYTES,
     MAX_RESPONSE_BYTES,
     PhoneDevice,
@@ -980,6 +981,33 @@ class PhoneTransferTests(unittest.TestCase):
             with self.assertRaisesRegex(PhoneTransferError, "token") as raised:
                 pair_phone(device, "123456")
         self.assertEqual(raised.exception.code, "bad_response")
+
+    def test_pair_rejects_unbounded_remote_device_id(self):
+        device = PhoneDevice("phone-1", "测试手机", "127.0.0.1")
+        FakeHttpConnection.response_payload = {
+            "protocol": 1,
+            "token": "token",
+            "device_id": "x" * (MAX_REMOTE_TEXT_CHARS + 1),
+        }
+        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
+            with self.assertRaisesRegex(PhoneTransferError, "配对响应device_id.*过长") as raised:
+                pair_phone(device, "123456")
+        self.assertEqual(raised.exception.code, "bad_response")
+
+    def test_pair_compacts_remote_error_message(self):
+        device = PhoneDevice("phone-1", "测试手机", "127.0.0.1")
+        FakeHttpConnection.response_status = 400
+        FakeHttpConnection.response_payload = {"message": "x" * 600 + "\n第二行\x00"}
+        try:
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
+                with self.assertRaises(PhoneTransferError) as raised:
+                    pair_phone(device, "123456")
+            self.assertEqual(raised.exception.code, "pair_failed")
+            self.assertNotIn("\n", str(raised.exception))
+            self.assertNotIn("\x00", str(raised.exception))
+            self.assertLessEqual(len(str(raised.exception)), MAX_REMOTE_ERROR_CHARS + 3)
+        finally:
+            FakeHttpConnection.response_status = 200
 
     def test_upload_rejects_mismatched_remote_size(self):
         with tempfile.TemporaryDirectory() as directory:

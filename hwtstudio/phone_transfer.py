@@ -504,17 +504,17 @@ def pair_phone(device: PhoneDevice, code: str, *, client_name: str = "大雪主�
     if cancelled and cancelled.is_set():
         raise TransferCancelled()
     if response.status != 200:
-        raise PhoneTransferError(str(payload.get("message") or "配对失败"), code="pair_failed")
+        raise PhoneTransferError(_compact_remote_error(payload.get("message"), "配对失败"), code="pair_failed")
     if _payload_protocol(payload, "配对") != PROTOCOL_VERSION:
         raise PhoneTransferError("手机与电脑协议版本不兼容", code="protocol_mismatch")
     token = _payload_text(payload, "token", "配对响应", required=True)
     if not token:
         raise PhoneTransferError("手机没有返回配对令牌", code="bad_response")
     remote_device_id = payload.get("device_id")
-    if remote_device_id is not None and (not isinstance(remote_device_id, str) or not remote_device_id.strip()):
-        raise PhoneTransferError("手机返回了无效的配对设备标识", code="bad_response")
+    if remote_device_id is not None:
+        remote_device_id = _payload_text(payload, "device_id", "配对响应", required=True)
     paired = PhoneDevice(
-        device_id=(remote_device_id.strip() if isinstance(remote_device_id, str) else device.device_id),
+        device_id=remote_device_id or device.device_id,
         name=_payload_text(payload, "name", "配对响应", default=device.name) or device.name,
         host=device.host,
         port=device.port,
