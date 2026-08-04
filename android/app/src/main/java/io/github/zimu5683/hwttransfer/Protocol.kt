@@ -135,7 +135,7 @@ object Protocol {
                 }
                 val normalizedNames = HashSet<String>()
                 val filePaths = HashSet<String>()
-                val filePathAncestors = HashSet<String>()
+                val pathAncestors = HashSet<String>()
                 val directoryPaths = HashSet<String>()
                 val sizes = buildList {
                     val entries = archive.entries()
@@ -153,20 +153,20 @@ object Protocol {
                         }
                         val topologyName = normalizedName.removeSuffix("/")
                         if (entry.isDirectory) {
-                            if (topologyName in filePaths) {
+                            if (topologyName in filePaths || hasFilePathParent(topologyName, filePaths)) {
                                 throw TransferException(422, "invalid_hwt", "HWT ZIP 存在文件/目录路径重叠")
                             }
                             directoryPaths.add(topologyName)
                         } else {
                             if (topologyName in directoryPaths ||
-                                topologyName in filePathAncestors ||
+                                topologyName in pathAncestors ||
                                 hasFilePathParent(topologyName, filePaths)
                             ) {
                                 throw TransferException(422, "invalid_hwt", "HWT ZIP 存在文件/目录路径重叠")
                             }
                             filePaths.add(topologyName)
-                            addFilePathAncestors(topologyName, filePathAncestors)
                         }
+                        addPathAncestors(topologyName, pathAncestors)
                         if (!entry.isDirectory) {
                             validateArchiveCompression(entry.size, entry.compressedSize)
                             add(entry.size)
@@ -194,7 +194,7 @@ object Protocol {
         return false
     }
 
-    private fun addFilePathAncestors(path: String, ancestors: MutableSet<String>) {
+    private fun addPathAncestors(path: String, ancestors: MutableSet<String>) {
         var separator = path.indexOf('/')
         while (separator > 0) {
             ancestors.add(path.substring(0, separator))

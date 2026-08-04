@@ -38,7 +38,7 @@ def archive_path_overlaps(infos) -> list[tuple[str, str]]:
         if has_file:
             file_paths.add(canonical)
 
-    for path in sorted(file_paths):
+    for path in sorted(entries):
         parts = path.split("/")
         for index in range(1, len(parts)):
             parent = "/".join(parts[:index])

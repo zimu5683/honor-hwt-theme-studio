@@ -463,6 +463,7 @@ class ImprovementTests(unittest.TestCase):
             with ZipFile(nested_data, "w", ZIP_DEFLATED) as nested:
                 nested.writestr("theme.xml", b"<resources><color name='safe'>#FFFFFFFF</color></resources>")
                 nested.writestr("theme.xml/extra.png", b"not an image")
+                nested.writestr("theme.xml/assets/", b"")
             with ZipFile(output, "a", ZIP_DEFLATED) as outer:
                 outer.writestr("com.example", nested_data.getvalue())
                 outer.writestr("icons/theme.png", b"not an image")
