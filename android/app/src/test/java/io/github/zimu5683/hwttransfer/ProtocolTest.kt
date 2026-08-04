@@ -238,11 +238,11 @@ class ProtocolTest {
                 zip.putNextEntry(ZipEntry("description.xml"))
                 zip.write("<HwTheme/>".toByteArray())
                 zip.closeEntry()
-                zip.putNextEntry(ZipEntry("icons"))
-                zip.write(byteArrayOf(1))
-                zip.closeEntry()
                 zip.putNextEntry(ZipEntry("icons/theme.png"))
                 zip.write(byteArrayOf(2))
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons"))
+                zip.write(byteArrayOf(1))
                 zip.closeEntry()
             }
             val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }

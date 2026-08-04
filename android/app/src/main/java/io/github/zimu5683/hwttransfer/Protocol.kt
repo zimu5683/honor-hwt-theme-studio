@@ -135,6 +135,7 @@ object Protocol {
                 }
                 val normalizedNames = HashSet<String>()
                 val filePaths = HashSet<String>()
+                val filePathAncestors = HashSet<String>()
                 val directoryPaths = HashSet<String>()
                 val sizes = buildList {
                     val entries = archive.entries()
@@ -157,10 +158,14 @@ object Protocol {
                             }
                             directoryPaths.add(topologyName)
                         } else {
-                            if (topologyName in directoryPaths || hasFilePathParent(topologyName, filePaths)) {
+                            if (topologyName in directoryPaths ||
+                                topologyName in filePathAncestors ||
+                                hasFilePathParent(topologyName, filePaths)
+                            ) {
                                 throw TransferException(422, "invalid_hwt", "HWT ZIP 存在文件/目录路径重叠")
                             }
                             filePaths.add(topologyName)
+                            addFilePathAncestors(topologyName, filePathAncestors)
                         }
                         if (!entry.isDirectory) {
                             validateArchiveCompression(entry.size, entry.compressedSize)
@@ -187,6 +192,14 @@ object Protocol {
             separator = path.indexOf('/', separator + 1)
         }
         return false
+    }
+
+    private fun addFilePathAncestors(path: String, ancestors: MutableSet<String>) {
+        var separator = path.indexOf('/')
+        while (separator > 0) {
+            ancestors.add(path.substring(0, separator))
+            separator = path.indexOf('/', separator + 1)
+        }
     }
 
     internal fun isSafeArchivePath(value: String): Boolean {
