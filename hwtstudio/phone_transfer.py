@@ -594,6 +594,22 @@ def _ensure_file_signature(path: Path, expected: tuple[int, int, int, int], stag
         raise PhoneTransferError(f"主题文件在{stage}时发生变化，请重新选择文件", code="file_changed")
 
 
+def _ensure_file_integrity(
+    path: Path,
+    expected_signature: tuple[int, int, int, int],
+    expected_digest: str,
+    stage: str,
+) -> None:
+    """Confirm both filesystem identity and bytes before accepting a result."""
+    _ensure_file_signature(path, expected_signature, stage)
+    try:
+        current_digest = sha256_file(path)
+    except OSError as exc:
+        raise PhoneTransferError(f"主题文件在{stage}时不可用，请重新选择文件", code="file_changed") from exc
+    if current_digest.lower() != expected_digest.lower():
+        raise PhoneTransferError(f"主题文件在{stage}时发生变化，请重新选择文件", code="file_changed")
+
+
 def _snapshot_upload_file(
     path: Path,
     *,
@@ -902,7 +918,7 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                     device, transfer_id, timeout=min(timeout, 5.0), require_transfer_id=True,
                 )
                 if status_payload and status_payload.get("state") == "completed":
-                    _ensure_file_signature(path, initial_signature, "状态确认后")
+                    _ensure_file_integrity(path, initial_signature, digest, "状态确认后")
                     return _upload_result_from_payload(
                         status_payload,
                         path=path,
@@ -920,7 +936,7 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                         require_transfer_id=True,
                     )
                     if status_payload and status_payload.get("state") == "completed":
-                        _ensure_file_signature(path, initial_signature, "状态确认后")
+                        _ensure_file_integrity(path, initial_signature, digest, "状态确认后")
                         return _upload_result_from_payload(
                             status_payload,
                             path=path,
@@ -940,7 +956,7 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                 continue
             state = _payload_text(payload, "state", "分块上传", required=True)
             if state == "completed":
-                _ensure_file_signature(path, initial_signature, "状态确认后")
+                _ensure_file_integrity(path, initial_signature, digest, "状态确认后")
                 return _upload_result_from_payload(
                     payload,
                     path=path,
@@ -978,7 +994,7 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                 device, transfer_id, timeout=min(timeout, 5.0), require_transfer_id=True,
             )
             if status_payload and status_payload.get("state") == "completed":
-                _ensure_file_signature(path, initial_signature, "状态确认后")
+                _ensure_file_integrity(path, initial_signature, digest, "状态确认后")
                 return _upload_result_from_payload(
                     status_payload,
                     path=path,
@@ -996,7 +1012,7 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                     require_transfer_id=True,
                 )
                 if status_payload and status_payload.get("state") == "completed":
-                    _ensure_file_signature(path, initial_signature, "状态确认后")
+                    _ensure_file_integrity(path, initial_signature, digest, "状态确认后")
                     return _upload_result_from_payload(
                         status_payload,
                         path=path,
@@ -1013,7 +1029,7 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                 continue
             offset = 0
             continue
-        _ensure_file_signature(path, initial_signature, "提交响应后")
+        _ensure_file_integrity(path, initial_signature, digest, "提交响应后")
         return _upload_result_from_payload(
             payload,
             path=path,
@@ -1092,7 +1108,7 @@ def _upload_theme_once(path: Path, device: PhoneDevice, *, transfer_id: str,
         connection.close()
     if response.status not in (200, 201):
         raise _error_from_response(response.status, payload)
-    _ensure_file_signature(path, initial_signature, "响应确认后")
+    _ensure_file_integrity(path, initial_signature, digest, "响应确认后")
     _payload_transfer_id(payload, transfer_id, "上传响应", required=False)
     return _upload_result_from_payload(
         payload,
@@ -1154,7 +1170,7 @@ def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event 
                     device, transfer_id, cancelled=cancelled, timeout=min(timeout, 5.0),
                 )
             if status_payload and status_payload.get("state") == "completed":
-                _ensure_file_signature(path, initial_signature, "状态确认后")
+                _ensure_file_integrity(path, initial_signature, digest, "状态确认后")
                 callback(initial_signature[2], initial_signature[2], "手机已完成上传，正在确认结果")
                 return _upload_result_from_payload(
                     status_payload,

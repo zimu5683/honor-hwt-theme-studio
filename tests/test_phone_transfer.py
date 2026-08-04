@@ -1411,6 +1411,7 @@ class PhoneTransferTests(unittest.TestCase):
                 if self.fail:
                     raise OSError("连接在响应前断开")
                 theme.write_bytes(b"changed")
+                os.utime(theme, ns=(theme.stat().st_atime_ns, initial_mtime_ns))
                 payload = b"payload"
                 return FakeHttpResponse(
                     {
@@ -1427,6 +1428,7 @@ class PhoneTransferTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             theme = Path(directory) / "already-done-changed.hwt"
             theme.write_bytes(b"payload")
+            initial_mtime_ns = theme.stat().st_mtime_ns
             with patch(
                 "hwtstudio.phone_transfer.http.client.HTTPConnection",
                 side_effect=[MutatingStatusConnection(fail=True), MutatingStatusConnection()],
