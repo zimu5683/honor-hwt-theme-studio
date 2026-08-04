@@ -441,6 +441,21 @@ class ProtocolTest {
     }
 
     @Test
+    fun archiveExpansionBudgetIncludesNestedBytesInOuterTotal() {
+        Protocol.validateArchiveExpansionBudget(
+            Protocol.MAX_ARCHIVE_UNCOMPRESSED_BYTES - 128L,
+            128L,
+        )
+        val error = assertThrows(TransferException::class.java) {
+            Protocol.validateArchiveExpansionBudget(
+                Protocol.MAX_ARCHIVE_UNCOMPRESSED_BYTES - 128L,
+                129L,
+            )
+        }
+        assertEquals("invalid_hwt", error.code)
+    }
+
+    @Test
     fun archiveEntryCountRejectsExcessiveCentralDirectory() {
         val error = assertThrows(TransferException::class.java) {
             Protocol.validateArchiveEntryCount(Protocol.MAX_ARCHIVE_ENTRIES + 1)
