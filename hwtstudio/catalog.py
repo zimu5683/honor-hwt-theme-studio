@@ -29,7 +29,12 @@ from .common import (
     MAX_ARCHIVE_ENTRY_BYTES,
     MAX_ARCHIVE_UNCOMPRESSED_BYTES,
     MAX_CATALOG_BYTES,
+    MAX_SOURCE_CONVERSION_SAMPLES,
     friendly_label,
+    honor_module_name,
+    honor_resource_name,
+    honor_resource_path,
+    honor_resource_paths,
     is_safe_archive_path,
     module_category,
     normalize_archive_path,
@@ -457,6 +462,76 @@ SOURCE_COMPATIBILITY_WARNING_KINDS = frozenset({
 })
 
 
+def _source_conversion_item(slot: ResourceSlot) -> dict | None:
+    if slot.synthetic:
+        return None
+    if slot.resource_type in {"color", "bool", "integer", "dimen", "string"}:
+        source = {
+            "module": slot.module,
+            "path": slot.container,
+            "resource_type": slot.resource_type,
+            "name": slot.name,
+        }
+        target = {
+            "module": honor_module_name(slot.module),
+            "path": honor_resource_path(slot.container),
+            "resource_type": slot.resource_type,
+            "name": honor_resource_name(slot.name),
+        }
+        targets = [target]
+        changed = target != source
+    elif slot.resource_type in {"image", "icon", "wallpaper", "preview"}:
+        source = {"module": slot.module, "path": slot.path}
+        target_module = honor_module_name(slot.module)
+        target_paths = honor_resource_paths(slot.module, slot.path)
+        targets = [{"module": target_module, "path": path} for path in target_paths]
+        changed = target_module != slot.module or target_paths != (slot.path,)
+    else:
+        return None
+    if not changed:
+        return None
+    return {
+        "slot_id": slot.id,
+        "resource_type": slot.resource_type,
+        "kind": "fanout" if len(targets) > 1 else "mapped",
+        "source": source,
+        "targets": targets,
+    }
+
+
+def source_conversion_report(catalog: ThemeCatalog) -> dict:
+    """Report bounded samples of the Honor targets derived from source slots."""
+    scanned_slots = sorted(
+        (slot for slot in catalog.resources if not slot.synthetic),
+        key=lambda slot: slot.id,
+    )
+    items: list[dict] = []
+    mapped_slots = fanout_slots = mapped_targets = 0
+    for slot in scanned_slots:
+        item = _source_conversion_item(slot)
+        if item is None:
+            continue
+        mapped_slots += 1
+        mapped_targets += len(item["targets"])
+        if item["kind"] == "fanout":
+            fanout_slots += 1
+        if len(items) < MAX_SOURCE_CONVERSION_SAMPLES:
+            items.append(item)
+    return {
+        "summary": {
+            "scanned_slots": len(scanned_slots),
+            "mapped_slots": mapped_slots,
+            "fanout_slots": fanout_slots,
+            "mapped_targets": mapped_targets,
+            "sampled_items": len(items),
+            "sample_limit": MAX_SOURCE_CONVERSION_SAMPLES,
+            "items_truncated": mapped_slots > len(items),
+        },
+        "policy": "仅统计已扫描的源资源；合成资源由其显式 targets 控制。",
+        "items": items,
+    }
+
+
 def source_compatibility_report(catalog: ThemeCatalog) -> dict:
     """Summarize recoverable source issues without treating them as export failures."""
     warning_items = [dict(item) for item in catalog.warnings if isinstance(item, dict)]
@@ -496,6 +571,7 @@ def source_compatibility_report(catalog: ThemeCatalog) -> dict:
         "scan_integrity": {
             "items": scan_integrity_items,
         },
+        "honor_conversion": source_conversion_report(catalog),
         "strict_export_validation": {
             "performed": False,
             "note": "此报告只描述源主题的只读扫描结果；最终导出文件仍需单独通过严格验证。",

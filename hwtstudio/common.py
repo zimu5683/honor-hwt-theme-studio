@@ -14,6 +14,7 @@ MAX_ARCHIVE_ENTRIES = 20_000
 MAX_ARCHIVE_COMPRESSION_RATIO = 500.0
 MAX_CATALOG_BYTES = 32 * 1024 * 1024
 MAX_PROJECT_BYTES = 16 * 1024 * 1024
+MAX_SOURCE_CONVERSION_SAMPLES = 256
 
 
 # Mappings confirmed by the Huawei-to-Honor converter reference project. They

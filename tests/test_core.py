@@ -22,7 +22,7 @@ from hwtstudio.catalog import (
 )
 from hwtstudio.exporter import export_theme
 from hwtstudio.imageops import MAX_IMAGE_DIMENSION, load_image, render_image
-from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
+from hwtstudio.models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
 from hwtstudio.projectio import load_project, save_project
 from hwtstudio.paths import bundled_catalog, default_source_theme
 from hwtstudio.validation import validate_theme
@@ -64,6 +64,90 @@ class CoreTests(unittest.TestCase):
             saved = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertEqual(saved["summary"], summary)
             self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
+
+    def test_source_compatibility_report_audits_bounded_honor_mapping_targets(self):
+        source_color = ResourceSlot(
+            id="source-color",
+            module="com.huawei.android.launcher",
+            container="framework-res-hwext/theme.xml",
+            resource_type="color",
+            name="emui_color_bg",
+            path="framework-res-hwext/theme.xml",
+            category="桌面",
+            label="华为背景",
+        )
+        source_icon = ResourceSlot(
+            id="source-icon",
+            module="icons",
+            container="",
+            resource_type="icon",
+            name="com.vmall.client.png",
+            path="com.vmall.client.png",
+            category="桌面图标",
+            label="华为商城",
+        )
+        synthetic = ResourceSlot(
+            id="synthetic",
+            module="com.android.settings",
+            container="",
+            resource_type="image",
+            name="设置背景",
+            path="",
+            category="设置",
+            label="设置背景",
+            synthetic=True,
+            targets=[{"module": "com.android.settings", "path": "background.png"}],
+        )
+        catalog = ThemeCatalog("source.hwt", "a" * 64, "now", {}, [], [source_color, source_icon, synthetic])
+
+        conversion = source_compatibility_report(catalog)["honor_conversion"]
+
+        self.assertEqual(conversion["summary"]["scanned_slots"], 2)
+        self.assertEqual(conversion["summary"]["mapped_slots"], 2)
+        self.assertEqual(conversion["summary"]["fanout_slots"], 1)
+        self.assertEqual(conversion["summary"]["mapped_targets"], 3)
+        self.assertFalse(conversion["summary"]["items_truncated"])
+        by_id = {item["slot_id"]: item for item in conversion["items"]}
+        self.assertEqual(
+            by_id["source-color"]["targets"],
+            [{
+                "module": "com.hihonor.android.launcher",
+                "path": "framework-res-hnext/theme.xml",
+                "resource_type": "color",
+                "name": "magic_color_bg",
+            }],
+        )
+        self.assertEqual(
+            by_id["source-icon"]["targets"],
+            [
+                {"module": "icons", "path": "com.hihonor.hstore.global.png"},
+                {"module": "icons", "path": "com.hihonor.appmarket.png"},
+            ],
+        )
+
+    def test_source_compatibility_report_caps_mapping_samples(self):
+        resources = [
+            ResourceSlot(
+                id=f"source-{index:03d}",
+                module="com.huawei.android.launcher",
+                container="theme.xml",
+                resource_type="color",
+                name=f"emui_color_{index:03d}",
+                path="theme.xml",
+                category="桌面",
+                label="华为颜色",
+            )
+            for index in range(257)
+        ]
+        conversion = source_compatibility_report(
+            ThemeCatalog("source.hwt", "a" * 64, "now", {}, [], resources),
+        )["honor_conversion"]
+        summary = conversion["summary"]
+
+        self.assertEqual(summary["mapped_slots"], 257)
+        self.assertEqual(summary["sampled_items"], summary["sample_limit"])
+        self.assertTrue(summary["items_truncated"])
+        self.assertEqual(len(conversion["items"]), summary["sample_limit"])
 
     def test_blank_theme_minimal_and_valid(self):
         with tempfile.TemporaryDirectory() as directory:
