@@ -3,12 +3,21 @@ package io.github.zimu5683.hwttransfer
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ThemeStorageTest {
+    @Test
+    fun safRenameStateFailsClosedForAmbiguousProviderResults() {
+        assertEquals(SafRenameState.MOVED, classifySafRenameState(sourceExists = false, targetExists = true))
+        assertEquals(SafRenameState.NOT_MOVED, classifySafRenameState(sourceExists = true, targetExists = false))
+        assertEquals(SafRenameState.AMBIGUOUS, classifySafRenameState(sourceExists = true, targetExists = true))
+        assertEquals(SafRenameState.AMBIGUOUS, classifySafRenameState(sourceExists = false, targetExists = false))
+    }
+
     @Test
     fun directBackupPrefixIsStableAndThemeSpecific() {
         val first = directThemeBackupPrefix("主题一.hwt")
