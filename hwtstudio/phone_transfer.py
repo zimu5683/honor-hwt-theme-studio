@@ -972,6 +972,9 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                 raise PhoneTransferError("手机返回的分块偏移量不一致", code="bad_response")
             offset = next_offset
             callback(offset, size, "正在分块发送到手机")
+        if cancelled and cancelled.is_set():
+            _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
+            raise TransferCancelled()
         _ensure_file_signature(path, initial_signature, "提交前")
         try:
             payload = _commit_chunk(device, transfer_id, timeout=timeout)

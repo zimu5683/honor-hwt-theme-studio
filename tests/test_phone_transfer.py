@@ -510,6 +510,38 @@ class PhoneTransferTests(unittest.TestCase):
             )
             self.assertEqual(sum(request.method == "PUT" for request in ChunkedConnection.instances), 2)
 
+    def test_chunked_upload_cancels_before_commit_when_signal_arrives_after_last_chunk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "提交前取消主题.hwt"
+            path.write_bytes(b"payload")
+            cancelled = threading.Event()
+
+            class CancelAfterChunkConnection(ChunkedConnection):
+                def getresponse(self):
+                    response = super().getresponse()
+                    if self.method == "PUT":
+                        cancelled.set()
+                    return response
+
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (202, {
+                    "state": "receiving", "transfer_id": "session", "received": 7,
+                    "total": 7, "next_offset": 7,
+                }),
+                (202, {"code": "cancel_requested", "transfer_id": "session"}),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", CancelAfterChunkConnection):
+                with self.assertRaisesRegex(TransferCancelled, "发送已取消"):
+                    upload_theme(path, device, cancelled=cancelled)
+
+            self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "DELETE"])
+
     def test_legacy_upload_waits_for_commit_after_response_is_lost(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "完整提交主题.hwt"
