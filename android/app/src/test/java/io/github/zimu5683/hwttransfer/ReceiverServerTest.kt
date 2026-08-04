@@ -10,6 +10,15 @@ import org.junit.Test
 
 class ReceiverServerTest {
     @Test
+    fun chunkCommitRequiresAnEmptyRequestBody() {
+        validateEmptyRequestLength(0L)
+        val error = org.junit.Assert.assertThrows(TransferException::class.java) {
+            validateEmptyRequestLength(1L)
+        }
+        assertEquals("invalid_body", error.code)
+    }
+
+    @Test
     fun parsedUploadCleanupDeletesOnlyTheParsedFile() {
         val root = Files.createTempDirectory("hwt-parsed-upload-cleanup-test")
         try {

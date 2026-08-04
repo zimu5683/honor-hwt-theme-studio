@@ -164,7 +164,8 @@ APK 只接受包含根目录 `description.xml` 文件的有效 ZIP，并在读�
 
 #### `POST /api/v1/transfers/{id}/complete`
 
-所有分块成功后，桌面端发送带 Bearer Token 的空请求体。手机再次校验整个临时文件的大小和 SHA-256，
+所有分块成功后，桌面端发送带 Bearer Token 且 `Content-Length: 0` 的空请求体。手机拒绝非空提交请求，
+再校验整个临时文件的大小和 SHA-256，
 然后复用完整上传路径的 HWT 校验、存储空间检查及原子安装逻辑。提交期间状态为 `committing`；
 安装完成后返回与完整 `PUT` 相同的 `stored_name`、`destination`、`size`、`sha256`、`overwritten` 和
 `theme_app_opened` 字段，并带有当前 `transfer_id`。提交响应丢失时，桌面端查询状态并等待 `completed`，不会重新追加最后一个分块。

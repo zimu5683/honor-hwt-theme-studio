@@ -31,6 +31,12 @@ internal fun deleteParsedUploadFile(file: File): Boolean {
         (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && file.delete())
 }
 
+internal fun validateEmptyRequestLength(declaredSize: Long) {
+    if (declaredSize != 0L) {
+        throw TransferException(400, "invalid_body", "分块提交请求必须为空")
+    }
+}
+
 class ReceiverServer(
     context: Context,
     private val pairing: PairingManager,
@@ -397,6 +403,7 @@ class ReceiverServer(
     private fun completeChunk(session: IHTTPSession): Response {
         requireAuthorized(session)
         val id = chunkCommitId(session.uri)
+        validateEmptyRequestLength(requiredLong(session, "content-length"))
         val cached = cachedTransfer(id)
         if (cached != null) return installResponse(cached, transferId = id)
         val state = synchronized(transferLock) {
