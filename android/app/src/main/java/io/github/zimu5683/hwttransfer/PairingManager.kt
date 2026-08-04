@@ -113,17 +113,19 @@ class PairingManager(context: Context, private val clock: () -> Long = System::c
                     val rawName = item.opt("name")
                     val rawTokenHash = item.opt("token_hash")
                     val rawPairedAt = item.opt("paired_at")
-                    if (rawName !is String || rawTokenHash !is String || rawPairedAt !is Number) continue
+                    if (rawName !is String || rawTokenHash !is String) continue
                     val name = rawName.trim()
                     val tokenHash = rawTokenHash.lowercase()
-                    val pairedAt = rawPairedAt.toLong()
+                    val pairedAt = when (rawPairedAt) {
+                        is Int -> rawPairedAt.toLong()
+                        is Long -> rawPairedAt
+                        else -> continue
+                    }
                     if (
                         name.isBlank() ||
                         name != normalizeClientName(name) ||
                         !TOKEN_HASH_PATTERN.matches(tokenHash) ||
-                        pairedAt < 0L ||
-                        rawPairedAt is Double && (!rawPairedAt.isFinite() || rawPairedAt != pairedAt.toDouble()) ||
-                        rawPairedAt is Float && (!rawPairedAt.isFinite() || rawPairedAt != pairedAt.toFloat())
+                        pairedAt < 0L
                     ) continue
                     add(PairedClient(name, tokenHash, pairedAt))
                 }
