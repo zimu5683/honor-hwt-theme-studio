@@ -372,12 +372,29 @@ class ThemeStorage(private val context: Context) {
             return InstallResult(name, "Honor/Themes/$name", source.length(), digest, overwritten)
         } catch (exc: Exception) {
             if (!committed) {
-                published?.delete()
-                val restored = backup?.renameTo(name) ?: true
+                val publishedFile = published
+                var publicationCleanupFailure: TransferException? = null
+                if (publishedFile != null) {
+                    val publicationExists = runCatching { publishedFile.exists() }.getOrDefault(true)
+                    if (publicationExists && !publishedFile.delete()) {
+                        publicationCleanupFailure = TransferException(
+                            503,
+                            "replace_failed",
+                            "无法清理失败的主题文件",
+                        )
+                    }
+                }
+                val backupFile = backup
+                val restored = backupFile?.let { restoreSafBackup(directory, it, name) } ?: true
                 if (!restored) {
                     val restoreFailure = TransferException(503, "replace_failed", "无法恢复原主题文件")
                     restoreFailure.addSuppressed(exc)
+                    publicationCleanupFailure?.let(restoreFailure::addSuppressed)
                     throw restoreFailure
+                }
+                publicationCleanupFailure?.let {
+                    it.addSuppressed(exc)
+                    throw it
                 }
             }
             throw exc
@@ -440,6 +457,12 @@ class ThemeStorage(private val context: Context) {
 
     private fun isRegularSafFile(file: DocumentFile): Boolean =
         file.exists() && file.isFile && !file.isDirectory
+
+    private fun restoreSafBackup(directory: DocumentFile, backup: DocumentFile, name: String): Boolean {
+        if (!backup.renameTo(name)) return false
+        val restored = directory.findFile(name) ?: return false
+        return isRegularSafFile(restored)
+    }
 
     private fun requireSafRegularFile(file: DocumentFile, message: String) {
         if (!isRegularSafFile(file)) {
