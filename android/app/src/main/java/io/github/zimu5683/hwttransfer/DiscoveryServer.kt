@@ -78,11 +78,7 @@ class DiscoveryServer(private val pairing: PairingManager) {
                     .put("name", Build.MODEL)
                     .put("http_port", Protocol.HTTP_PORT)
                     .put("app_version", BuildConfig.VERSION_NAME)
-                    .put("features", JSONArray(listOf(
-                        "device_profile",
-                        Protocol.FEATURE_TRANSFER_CANCEL,
-                        Protocol.FEATURE_TRANSFER_CHUNKED,
-                    )))
+                    .put("features", JSONArray(Protocol.ADVERTISED_FEATURES))
                     .toString().toByteArray(Charsets.UTF_8)
                 boundServer.send(DatagramPacket(response, response.size, request.address, request.port))
             }
