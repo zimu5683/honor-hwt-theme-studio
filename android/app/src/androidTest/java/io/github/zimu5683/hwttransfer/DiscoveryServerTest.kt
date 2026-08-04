@@ -36,7 +36,7 @@ class DiscoveryServerTest {
             val response = DatagramPacket(ByteArray(4 * 1024), 4 * 1024)
             client.receive(response)
 
-            assertEquals(client.localPort, response.port)
+            assertEquals(server.localPort, response.port)
             assertEquals(loopback, response.address)
             val payload = JSONObject(String(response.data, response.offset, response.length, Charsets.UTF_8))
             assertEquals("hwtstudio", payload.getString("service"))
