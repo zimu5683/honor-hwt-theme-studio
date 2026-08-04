@@ -13,10 +13,17 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.StandardCopyOption
 import java.util.UUID
 
 private val themeInstallLock = Any()
+
+internal fun isReplaceableDirectThemeTarget(target: File): Boolean {
+    val path = target.toPath()
+    return !Files.exists(path, LinkOption.NOFOLLOW_LINKS) ||
+        Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+}
 
 class ThemeStorage(private val context: Context) {
     private val prefs = context.getSharedPreferences("storage", Context.MODE_PRIVATE)
@@ -149,17 +156,26 @@ class ThemeStorage(private val context: Context) {
     }
 
     private fun installDirect(source: File, name: String, digest: String): InstallResult {
-        if (!directDirectory.exists() && !directDirectory.mkdirs()) {
+        val directPath = directDirectory.toPath()
+        if (!Files.isDirectory(directPath, LinkOption.NOFOLLOW_LINKS) &&
+            (Files.exists(directPath, LinkOption.NOFOLLOW_LINKS) ||
+                !directDirectory.mkdirs() ||
+                !Files.isDirectory(directPath, LinkOption.NOFOLLOW_LINKS))
+        ) {
             throw TransferException(503, "storage_unavailable", "无法创建 Honor/Themes 目录")
         }
         val target = File(directDirectory, name)
+        val targetPath = target.toPath()
+        val overwritten = Files.exists(targetPath, LinkOption.NOFOLLOW_LINKS)
+        if (!isReplaceableDirectThemeTarget(target)) {
+            throw TransferException(503, "replace_failed", "同名目标不是普通主题文件")
+        }
         val uploading = File.createTempFile("hwt_upload_", ".uploading", directDirectory)
         var backup: File? = null
         var backupMoved = false
         var committed = false
         var restored = false
         var published = false
-        val overwritten = target.exists()
         try {
             FileInputStream(source).use { input ->
                 FileOutputStream(uploading).use { output ->
@@ -248,6 +264,7 @@ class ThemeStorage(private val context: Context) {
             val existing = directory.findFile(name)
             val overwritten = existing != null
             if (existing != null) {
+                requireSafRegularFile(existing, "同名目标不是普通主题文件")
                 val backupName = "$name.backup-${System.nanoTime()}"
                 if (!existing.renameTo(backupName)) {
                     throw TransferException(503, "replace_failed", "无法安全备份同名主题文件")
@@ -313,6 +330,8 @@ class ThemeStorage(private val context: Context) {
             child.name?.startsWith("$name.backup-") == true
         }
         val current = children.firstOrNull { it.name == name }
+        current?.let { requireSafRegularFile(it, "同名目标不是普通主题文件") }
+        backups.forEach { requireSafRegularFile(it, "主题备份不是普通文件") }
         var restoredUri: Uri? = null
         if (current == null && backups.isNotEmpty()) {
             val candidate = backups.maxByOrNull { it.lastModified() }!!
@@ -321,14 +340,16 @@ class ThemeStorage(private val context: Context) {
                 throw TransferException(503, "replace_failed", "无法恢复上次未完成的主题替换")
             }
             val restored = directory.findFile(name)
-            if (restored == null || restored.isDirectory || !restored.exists()) {
+            if (restored == null || !isRegularSafFile(restored)) {
                 if (backupName.isNotBlank()) runCatching { candidate.renameTo(backupName) }
                 throw TransferException(503, "replace_failed", "无法确认已恢复的主题文件")
             }
             restoredUri = candidate.uri
         }
         backups.filter { it.uri != restoredUri }.forEach { backup ->
-            runCatching { backup.delete() }
+            if (!backup.delete()) {
+                throw TransferException(503, "replace_failed", "无法清理残留主题备份")
+            }
         }
     }
 
@@ -336,9 +357,26 @@ class ThemeStorage(private val context: Context) {
         listSafChildren(directory)
             .filter { child ->
                 val name = child.name ?: return@filter false
-                name.startsWith("hwt_transfer_") && name.endsWith(".uploading")
+                if (!name.startsWith("hwt_transfer_") || !name.endsWith(".uploading")) {
+                    return@filter false
+                }
+                requireSafRegularFile(child, "主题临时对象不是普通文件")
+                true
             }
-            .forEach { runCatching { it.delete() } }
+            .forEach { child ->
+                if (!child.delete()) {
+                    throw TransferException(503, "replace_failed", "无法清理残留主题临时文件")
+                }
+            }
+    }
+
+    private fun isRegularSafFile(file: DocumentFile): Boolean =
+        file.exists() && file.isFile && !file.isDirectory
+
+    private fun requireSafRegularFile(file: DocumentFile, message: String) {
+        if (!isRegularSafFile(file)) {
+            throw TransferException(503, "replace_failed", message)
+        }
     }
 
     private fun ensureFreeSpace(size: Long, safTree: Uri?) {
