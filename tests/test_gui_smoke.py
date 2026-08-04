@@ -73,6 +73,28 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertIn("broken image header", "\n".join(window._log_lines))
         window.close()
 
+    def test_transfer_success_formats_structured_preflight_warnings(self):
+        window = MainWindow()
+        with patch("hwtstudio.app.QMessageBox.information") as information:
+            window._transfer_finished(
+                {
+                    "remote": "Honor/Themes/theme.hwt",
+                    "sha256": "a" * 64,
+                    "transport": "http",
+                    "theme_app_opened": False,
+                    "preflight": {
+                        "warnings": [
+                            {"kind": "image_format_mismatch", "path": "wrong.png", "actual": "JPEG"}
+                        ]
+                    },
+                }
+            )
+        message = information.call_args.args[2]
+        self.assertIn("图片格式不匹配", message)
+        self.assertIn("wrong.png", message)
+        self.assertNotIn("{'kind'", message)
+        window.close()
+
     def test_profile_error_detail_is_bounded_and_single_line(self):
         window = MainWindow()
         window._profile_generation = 1

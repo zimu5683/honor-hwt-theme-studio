@@ -73,6 +73,42 @@ def _compact_error_detail(detail: str, fallback: str, *, limit: int = 240) -> st
     return first_line if len(first_line) <= limit else first_line[:limit] + "..."
 
 
+_PREFLIGHT_WARNING_LABELS = {
+    "image_format_mismatch": "图片格式不匹配",
+    "missing_slot": "资源不存在",
+    "unsupported": "资源不支持",
+    "duplicate_target_merged": "重复目标已合并",
+    "duplicate_target_resolved": "重复目标已按兼容性处理",
+}
+
+
+def _format_preflight_warnings(value: object) -> str:
+    if not isinstance(value, list):
+        return ""
+    lines: list[str] = []
+    fields = (("module", "模块"), ("path", "路径"), ("slot_id", "资源"), ("reason", "原因"),
+              ("message", "说明"), ("expected", "期望"), ("actual", "实际"))
+    for item in value[:8]:
+        if isinstance(item, str):
+            line = _compact_error_detail(item, "预检警告")
+        elif isinstance(item, dict):
+            kind = item.get("kind")
+            kind_text = kind if isinstance(kind, str) and kind else "unknown"
+            label = _PREFLIGHT_WARNING_LABELS.get(kind_text, f"预检警告：{kind_text}")
+            details = []
+            for field, field_label in fields:
+                detail = item.get(field)
+                if isinstance(detail, (str, int, float)) and not isinstance(detail, bool):
+                    details.append(f"{field_label} {detail}")
+            line = label + ("：" + " / ".join(details) if details else "")
+            line = _compact_error_detail(line, "预检警告")
+        else:
+            line = _compact_error_detail(str(item), "预检警告")
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         app = QApplication.instance()
@@ -1358,8 +1394,10 @@ class MainWindow(QMainWindow):
             warning_text = ""
         else:
             opened = "已为你打开荣耀‘主题’应用。" if result.get("theme_app_opened") else "请手动打开荣耀‘主题’应用。"
-            warnings = result.get("preflight", {}).get("warnings", [])
-            warning_text = "\n" + "\n".join(warnings) if warnings else ""
+            preflight = result.get("preflight")
+            warnings = preflight.get("warnings", []) if isinstance(preflight, dict) else []
+            formatted_warnings = _format_preflight_warnings(warnings)
+            warning_text = "\n" + formatted_warnings if formatted_warnings else ""
         QMessageBox.information(
             self,
             "发送成功",
