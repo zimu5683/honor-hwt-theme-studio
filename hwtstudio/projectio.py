@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .common import MAX_PROJECT_BYTES
 from .models import ResourceSlot, ThemeProject
-from .paths import unique_temp_path
+from .paths import ensure_no_symlink_parents, unique_temp_path
 from .services.project_assets import (
     collect_project_assets,
     ensure_no_symlinks,
@@ -140,7 +140,6 @@ def _validate_project_payload(raw: object) -> dict:
 
 def save_project(project: ThemeProject, path: Path) -> Path:
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
     serialized = project.to_dict()
     _validate_project_payload(serialized)
     asset_dir = project_assets_dir(path)
@@ -148,6 +147,9 @@ def save_project(project: ThemeProject, path: Path) -> Path:
         raise ValueError("工程文件目标不是普通文件")
     if asset_dir.is_symlink() or (asset_dir.exists() and not asset_dir.is_dir()):
         raise ValueError("工程资产目录不是目录")
+    ensure_no_symlink_parents(path, "工程保存目录不能包含符号链接")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_no_symlink_parents(path, "工程保存目录不能包含符号链接")
     asset_stage = unique_temp_path(asset_dir, suffix=".tmp")
     temp = unique_temp_path(path)
     asset_backup = unique_temp_path(asset_dir, suffix=".backup")

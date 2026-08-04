@@ -42,6 +42,20 @@ def unique_temp_path(path: Path, suffix: str = ".tmp") -> Path:
     return path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}{suffix}")
 
 
+def ensure_no_symlink_parents(path: Path, message: str) -> None:
+    """Reject output paths whose existing parent components include symlinks."""
+    parent = Path(path).parent
+    if not parent.is_absolute():
+        parent = Path.cwd() / parent
+    current = Path(parent.anchor) if parent.anchor else Path()
+    for component in parent.parts:
+        if component == parent.anchor:
+            continue
+        current /= component
+        if current.is_symlink():
+            raise ValueError(message)
+
+
 def bundled_catalog() -> Path:
     return bundle_root() / "assets" / "catalog_daxue.json"
 

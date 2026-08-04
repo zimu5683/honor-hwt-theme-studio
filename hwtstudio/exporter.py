@@ -16,7 +16,7 @@ from .blank import blank_entries
 from .common import honor_module_name, honor_resource_name, honor_resource_path
 from .imageops import render_image, render_placeholder
 from .models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
-from .paths import unique_temp_path
+from .paths import ensure_no_symlink_parents, unique_temp_path
 from .validation import validate_change_value, validate_custom_slot, validate_theme
 
 
@@ -291,6 +291,9 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
     output = Path(output)
     if output.name.lower().endswith(".report.json"):
         raise ValueError("导出文件名不能以 .report.json 结尾，请选择 .hwt 文件名")
+    if output.is_symlink() or (output.exists() and not output.is_file()):
+        raise ValueError("导出文件目标不是普通文件")
+    ensure_no_symlink_parents(output, "导出目录不能包含符号链接")
     if catalog.source_path and _same_path(output, Path(catalog.source_path)):
         raise ValueError("不能覆盖资源目录对应的原始主题，请选择新的导出文件名")
     prepared = _prepare_export(project, catalog)
@@ -299,6 +302,7 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
     if not preflight["valid"]:
         raise ValueError("导出预检失败：" + json.dumps(preflight["errors"][:8], ensure_ascii=False))
     output.parent.mkdir(parents=True, exist_ok=True)
+    ensure_no_symlink_parents(output, "导出目录不能包含符号链接")
     root_entries = blank_entries(project.title, project.author, project.designer, project.version, project.screen)
     module_files: dict[str, dict[str, bytes]] = defaultdict(dict)
     module_xml: dict[str, dict[str, dict[tuple[str, str], str]]] = defaultdict(lambda: defaultdict(dict))

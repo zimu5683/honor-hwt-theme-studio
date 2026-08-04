@@ -101,6 +101,23 @@ class ImprovementTests(unittest.TestCase):
                 export_theme(ThemeProject(), self.catalog, output)
             self.assertFalse(output.exists())
 
+    def test_export_rejects_symlinked_output_parent(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside"
+            outside.mkdir()
+            link = root / "exports"
+            try:
+                os.symlink(outside, link, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
+            output = link / "theme.hwt"
+            with self.assertRaisesRegex(ValueError, "导出目录.*符号链接"):
+                export_theme(ThemeProject(), self.catalog, output)
+            self.assertFalse((outside / output.name).exists())
+
     def test_report_serialization_failure_keeps_export(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "theme.hwt"
@@ -297,6 +314,23 @@ class ImprovementTests(unittest.TestCase):
 
             self.assertTrue(asset_dir.is_file())
             self.assertEqual(asset_dir.read_text(encoding="utf-8"), "keep")
+
+    def test_project_save_rejects_symlinked_output_parent(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside"
+            outside.mkdir()
+            link = root / "projects"
+            try:
+                os.symlink(outside, link, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
+            target = link / "theme.hwtproj.json"
+            with self.assertRaisesRegex(ValueError, "工程保存目录.*符号链接"):
+                save_project(ThemeProject(), target)
+            self.assertFalse((outside / target.name).exists())
 
     def test_project_save_commit_failure_restores_project_and_assets(self):
         slot = next(item for item in self.catalog.resources if item.resource_type == "wallpaper")
