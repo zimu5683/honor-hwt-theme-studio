@@ -322,6 +322,12 @@ class PhoneTransferTests(unittest.TestCase):
         self.assertEqual(moved_port.token, "")
         self.assertIsNone(moved_port.profile)
 
+        with tempfile.TemporaryDirectory() as directory:
+            registry = PhoneRegistry(Path(directory) / "phones.json")
+            registry.update(saved["phone-1"])
+            registry.update(moved_endpoint)
+            self.assertEqual(registry.load()["phone-1"].token, "")
+
     def test_chunked_upload_sends_offsets_and_both_sha256_values(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "分块主题.hwt"

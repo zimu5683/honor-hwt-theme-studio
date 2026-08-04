@@ -239,7 +239,12 @@ class PhoneRegistry:
             with _interprocess_lock(self.path):
                 devices = self._load_unlocked()
                 previous = devices.get(device.device_id)
-                if previous and not device.token:
+                if (
+                    previous
+                    and not device.token
+                    and previous.host == device.host
+                    and previous.port == device.port
+                ):
                     device.token = previous.token
                 devices[device.device_id] = device
                 self._save_unlocked(devices)
