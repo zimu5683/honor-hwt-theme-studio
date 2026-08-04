@@ -25,6 +25,12 @@ internal fun staleChunkUploadFiles(directory: File): List<File> =
 internal fun cleanupStaleChunkUploadFiles(directory: File): List<File> =
     staleChunkUploadFiles(directory).filterNot { it.delete() }
 
+internal fun deleteParsedUploadFile(file: File): Boolean {
+    val path = file.toPath()
+    return !Files.exists(path, LinkOption.NOFOLLOW_LINKS) ||
+        (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && file.delete())
+}
+
 class ReceiverServer(
     context: Context,
     private val pairing: PairingManager,
@@ -379,7 +385,11 @@ class ReceiverServer(
                 .put("total", state.totalSize)
                 .put("next_offset", state.received))
         } finally {
-            incoming?.delete()
+            incoming?.let { file ->
+                if (!deleteParsedUploadFile(file)) {
+                    android.util.Log.w("ReceiverServer", "Unable to remove parsed chunk file: ${file.name}")
+                }
+            }
             synchronized(transferLock) { uploading.set(false) }
         }
     }
@@ -570,6 +580,7 @@ class ReceiverServer(
         if (!acquireFullTransfer(transferId)) {
             throw TransferException(409, "busy", "手机正在接收另一个主题")
         }
+        var temporary: File? = null
         try {
             val encodedName = session.uri.removePrefix("/api/v1/themes/")
             val name = Protocol.safeFileName(Uri.decode(encodedName))
@@ -577,8 +588,9 @@ class ReceiverServer(
             session.parseBody(files)
             val tempPath = files["content"] ?: files["postData"]
                 ?: throw TransferException(400, "missing_body", "没有收到文件内容")
-            val temporary = File(tempPath)
-            if (!temporary.isFile || temporary.length() != declaredSize) {
+            val tempFile = File(tempPath)
+            temporary = tempFile
+            if (!tempFile.isFile || tempFile.length() != declaredSize) {
                 throw TransferException(400, "incomplete_upload", "上传内容不完整")
             }
             val cached = cachedTransfer(transferId)
@@ -586,7 +598,7 @@ class ReceiverServer(
                 if (cached.size != declaredSize || !cached.sha256.equals(expectedHash, ignoreCase = true)) {
                     throw TransferException(409, "transfer_id_reused", "上传会话标识已用于其他文件")
                 }
-                if (!Protocol.sha256(temporary).equals(cached.sha256, ignoreCase = true)) {
+                if (!Protocol.sha256(tempFile).equals(cached.sha256, ignoreCase = true)) {
                     throw TransferException(422, "hash_mismatch", "重试文件的 SHA-256 与原上传不一致")
                 }
                 return installResponse(cached, transferId = transferId)
@@ -594,12 +606,17 @@ class ReceiverServer(
             if (!claimTransferForInstall(transferId)) {
                 throw TransferException(499, "cancelled", "上传已取消")
             }
-            val result = storage.install(temporary, name, expectedHash)
+            val result = storage.install(tempFile, name, expectedHash)
             if (transferId != null) rememberCompleted(transferId, result)
             runCatching { onTransfer(result) }
                 .onFailure { android.util.Log.e("ReceiverServer", "Transfer callback failed", it) }
             return installResponse(result, transferId = transferId)
         } finally {
+            temporary?.let { file ->
+                if (!deleteParsedUploadFile(file)) {
+                    android.util.Log.w("ReceiverServer", "Unable to remove parsed upload file: ${file.name}")
+                }
+            }
             clearTransfer(transferId)
         }
     }

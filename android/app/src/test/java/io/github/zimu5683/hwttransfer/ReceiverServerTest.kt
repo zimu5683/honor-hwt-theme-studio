@@ -10,6 +10,21 @@ import org.junit.Test
 
 class ReceiverServerTest {
     @Test
+    fun parsedUploadCleanupDeletesOnlyTheParsedFile() {
+        val root = Files.createTempDirectory("hwt-parsed-upload-cleanup-test")
+        try {
+            val parsed = root.resolve("parsed-upload.tmp").toFile()
+            parsed.writeText("payload")
+
+            assertTrue(deleteParsedUploadFile(parsed))
+            assertFalse(parsed.exists())
+            assertTrue(deleteParsedUploadFile(parsed))
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun staleChunkUploadFilesOnlyReturnsRegularFilesWithValidSessionNames() {
         val root = Files.createTempDirectory("hwt-chunk-cleanup-test")
         try {
