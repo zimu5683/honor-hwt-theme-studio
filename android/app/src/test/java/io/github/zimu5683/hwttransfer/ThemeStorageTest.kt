@@ -1,12 +1,79 @@
 package io.github.zimu5683.hwttransfer
 
 import java.io.IOException
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ThemeStorageTest {
+    @Test
+    fun directBackupPrefixIsStableAndThemeSpecific() {
+        val first = directThemeBackupPrefix("主题一.hwt")
+        val same = directThemeBackupPrefix("主题一.hwt")
+        val other = directThemeBackupPrefix("主题二.hwt")
+
+        assertTrue(first.startsWith("hwt_backup_"))
+        assertTrue(first.length > "hwt_backup_".length)
+        assertTrue(first == same)
+        assertFalse(first == other)
+    }
+
+    @Test
+    fun directRecoveryRestoresMatchingBackupAndKeepsUnknownLegacyBackup() {
+        val root = Files.createTempDirectory("hwt-recovery-test")
+        try {
+            val name = "theme.hwt"
+            val target = root.resolve(name).toFile()
+            val backup = root.resolve(
+                "${directThemeBackupPrefix(name)}old.backup",
+            ).toFile()
+            val legacy = root.resolve("hwt_backup_legacy.backup").toFile()
+            backup.writeText("old-theme", StandardCharsets.UTF_8)
+            legacy.writeText("legacy-theme", StandardCharsets.UTF_8)
+
+            recoverDirectThemeArtifacts(root.toFile(), target, name)
+
+            assertTrue(target.isFile)
+            assertTrue(target.readText(StandardCharsets.UTF_8) == "old-theme")
+            assertFalse(backup.exists())
+            assertTrue(legacy.isFile)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun staleDirectUploadsAreRemovedButUnsafeObjectsAreRejected() {
+        val root = Files.createTempDirectory("hwt-upload-cleanup-test")
+        try {
+            val stale = root.resolve("hwt_upload_old.uploading").toFile()
+            stale.writeText("partial", StandardCharsets.UTF_8)
+
+            cleanupStaleDirectThemeUploads(root.toFile())
+
+            assertFalse(stale.exists())
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+
+        val unsafeRoot = Files.createTempDirectory("hwt-upload-unsafe-test")
+        try {
+            val unsafe = Files.createDirectory(unsafeRoot.resolve("hwt_upload_dir.uploading")).toFile()
+
+            val error = assertThrows(TransferException::class.java) {
+                cleanupStaleDirectThemeUploads(unsafeRoot.toFile())
+            }
+
+            assertTrue(error.code == "replace_failed")
+            assertTrue(unsafe.isDirectory)
+        } finally {
+            unsafeRoot.toFile().deleteRecursively()
+        }
+    }
+
     @Test
     fun directTargetOnlyAllowsMissingAndRegularFiles() {
         val root = Files.createTempDirectory("hwt-storage-test")

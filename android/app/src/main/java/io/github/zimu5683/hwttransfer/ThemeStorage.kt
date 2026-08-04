@@ -18,10 +18,79 @@ import java.nio.file.StandardCopyOption
 import java.util.UUID
 
 private val themeInstallLock = Any()
+private const val DIRECT_UPLOAD_PREFIX = "hwt_upload_"
+private const val DIRECT_UPLOAD_SUFFIX = ".uploading"
+private const val DIRECT_BACKUP_SUFFIX = ".backup"
 
 internal fun isReplaceableDirectThemeTarget(target: File): Boolean {
     val path = target.toPath()
     return !Files.exists(path, LinkOption.NOFOLLOW_LINKS) ||
+        Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+}
+
+internal fun directThemeBackupPrefix(themeName: String): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(themeName.toByteArray(Charsets.UTF_8))
+    return "hwt_backup_" + digest.joinToString("") { "%02x".format(it) }
+}
+
+internal fun recoverDirectThemeArtifacts(directory: File, target: File, name: String) {
+    val children = directory.listFiles()
+        ?: throw TransferException(503, "storage_unavailable", "无法读取 Honor/Themes 目录")
+    val prefix = directThemeBackupPrefix(name)
+    val backups = children.filter { child ->
+        val childName = child.name
+        childName.startsWith(prefix) && childName.endsWith(DIRECT_BACKUP_SUFFIX)
+    }
+    backups.forEach { backup ->
+        if (!isRegularDirectThemeFile(backup)) {
+            throw TransferException(503, "replace_failed", "主题备份不是普通文件")
+        }
+    }
+    if (!isReplaceableDirectThemeTarget(target)) {
+        throw TransferException(503, "replace_failed", "同名目标不是普通主题文件")
+    }
+    var restoredBackup: File? = null
+    if (!Files.exists(target.toPath(), LinkOption.NOFOLLOW_LINKS) && backups.isNotEmpty()) {
+        val candidate = backups
+            .sortedWith(compareBy<File> { it.lastModified() }.thenBy { it.name })
+            .last()
+        try {
+            Files.move(candidate.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: Exception) {
+            Files.move(candidate.toPath(), target.toPath())
+        }
+        if (!isRegularDirectThemeFile(target)) {
+            throw TransferException(503, "replace_failed", "无法确认已恢复的主题文件")
+        }
+        restoredBackup = candidate
+    }
+    backups.filter { it != restoredBackup }.forEach { backup ->
+        if (!backup.delete()) {
+            throw TransferException(503, "replace_failed", "无法清理残留主题备份")
+        }
+    }
+}
+
+internal fun cleanupStaleDirectThemeUploads(directory: File) {
+    val children = directory.listFiles()
+        ?: throw TransferException(503, "storage_unavailable", "无法读取 Honor/Themes 目录")
+    children.filter { child ->
+        val name = child.name
+        name.startsWith(DIRECT_UPLOAD_PREFIX) && name.endsWith(DIRECT_UPLOAD_SUFFIX)
+    }.forEach { upload ->
+        if (!isRegularDirectThemeFile(upload)) {
+            throw TransferException(503, "replace_failed", "主题临时对象不是普通文件")
+        }
+        if (!upload.delete()) {
+            throw TransferException(503, "replace_failed", "无法清理残留主题临时文件")
+        }
+    }
+}
+
+private fun isRegularDirectThemeFile(file: File): Boolean {
+    val path = file.toPath()
+    return Files.exists(path, LinkOption.NOFOLLOW_LINKS) &&
         Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
 }
 
@@ -165,12 +234,13 @@ class ThemeStorage(private val context: Context) {
             throw TransferException(503, "storage_unavailable", "无法创建 Honor/Themes 目录")
         }
         val target = File(directDirectory, name)
-        val targetPath = target.toPath()
-        val overwritten = Files.exists(targetPath, LinkOption.NOFOLLOW_LINKS)
         if (!isReplaceableDirectThemeTarget(target)) {
             throw TransferException(503, "replace_failed", "同名目标不是普通主题文件")
         }
-        val uploading = File.createTempFile("hwt_upload_", ".uploading", directDirectory)
+        recoverDirectThemeArtifacts(directDirectory, target, name)
+        cleanupStaleDirectThemeUploads(directDirectory)
+        val overwritten = Files.exists(target.toPath(), LinkOption.NOFOLLOW_LINKS)
+        val uploading = File.createTempFile(DIRECT_UPLOAD_PREFIX, DIRECT_UPLOAD_SUFFIX, directDirectory)
         var backup: File? = null
         var backupMoved = false
         var committed = false
@@ -187,11 +257,11 @@ class ThemeStorage(private val context: Context) {
                 throw TransferException(422, "hash_mismatch", "写入手机存储后的 SHA-256 不一致")
             }
             if (overwritten) {
-                val candidate = File.createTempFile("hwt_backup_", ".backup", directDirectory)
+                val candidate = File(
+                    directDirectory,
+                    "${directThemeBackupPrefix(name)}${UUID.randomUUID()}$DIRECT_BACKUP_SUFFIX",
+                )
                 backup = candidate
-                if (!candidate.delete()) {
-                    throw TransferException(503, "replace_failed", "无法准备同名主题备份")
-                }
                 try {
                     Files.move(target.toPath(), candidate.toPath(), StandardCopyOption.ATOMIC_MOVE)
                 } catch (_: Exception) {
@@ -228,8 +298,6 @@ class ThemeStorage(private val context: Context) {
                     restored = true
                 } else if (!overwritten && published) {
                     target.delete()
-                } else if (!backupMoved) {
-                    savedBackup?.delete()
                 }
             }
             throw exc
