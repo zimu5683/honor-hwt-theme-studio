@@ -371,6 +371,37 @@ class ProtocolTest {
     }
 
     @Test
+    fun validateHwtRejectsLocalHeaderMetadataMismatch() {
+        val file = File.createTempFile("local-header-metadata-mismatch", ".hwt")
+        val content = "<HwTheme/>".toByteArray()
+        try {
+            val entry = ZipEntry("description.xml").apply {
+                method = ZipEntry.STORED
+                size = content.size.toLong()
+                crc = CRC32().apply { update(content) }.value
+            }
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(entry)
+                zip.write(content)
+                zip.closeEntry()
+            }
+            val encoded = file.readBytes()
+            val localCrc = ByteBuffer.wrap(encoded, 14, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .int
+            ByteBuffer.wrap(encoded, 14, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(localCrc xor 1)
+            file.writeBytes(encoded)
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun validateHwtRejectsNestedCrcCorruption() {
         val file = File.createTempFile("nested-crc", ".hwt")
         val content = byteArrayOf(0x21, 0x32, 0x43, 0x54)

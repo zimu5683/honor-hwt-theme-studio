@@ -264,11 +264,14 @@ object Protocol {
                         cursor + 46L + filenameLength,
                         extraLength.toLong(),
                     )
-                    var compressedSize = readUnsignedInt(fixed, 20)
+                    val centralCrc = readUnsignedInt(fixed, 16)
+                    val centralCompressedSize = readUnsignedInt(fixed, 20)
+                    val centralUncompressedSize = readUnsignedInt(fixed, 24)
+                    var compressedSize = centralCompressedSize
                     var localHeaderOffset = readUnsignedInt(fixed, 42)
                     val zip64 = readZip64Values(
                         extra,
-                        readUnsignedInt(fixed, 24) == ZIP32_SENTINEL,
+                        centralUncompressedSize == ZIP32_SENTINEL,
                         compressedSize == ZIP32_SENTINEL,
                         localHeaderOffset == ZIP32_SENTINEL,
                     )
@@ -290,6 +293,20 @@ object Protocol {
                     val localMethod = readUnsignedShort(localHeader, 8)
                     if (centralFlags != localFlags || centralMethod != localMethod) {
                         invalidArchiveData("条目 ${index + 1} 的本地文件头属性与中心目录不一致")
+                    }
+                    val localCrc = readUnsignedInt(localHeader, 14)
+                    val localCompressedSize = readUnsignedInt(localHeader, 18)
+                    val localUncompressedSize = readUnsignedInt(localHeader, 22)
+                    if (centralFlags and ZIP_DATA_DESCRIPTOR_FLAG == 0 &&
+                        (localCrc != centralCrc ||
+                            (localCompressedSize != ZIP32_SENTINEL &&
+                                centralCompressedSize != ZIP32_SENTINEL &&
+                                localCompressedSize != centralCompressedSize) ||
+                            (localUncompressedSize != ZIP32_SENTINEL &&
+                                centralUncompressedSize != ZIP32_SENTINEL &&
+                                localUncompressedSize != centralUncompressedSize))
+                    ) {
+                        invalidArchiveData("条目 ${index + 1} 的本地文件头数据与中心目录不一致")
                     }
                     val localFilenameLength = readUnsignedShort(localHeader, 26)
                     val localExtraLength = readUnsignedShort(localHeader, 28)
@@ -778,6 +795,7 @@ object Protocol {
     private const val ZIP_COMMENT_MAX_SIZE = 0xffffL
     private const val ZIP16_SENTINEL = 0xffff
     private const val ZIP32_SENTINEL = 0xffffffffL
+    private const val ZIP_DATA_DESCRIPTOR_FLAG = 1 shl 3
 }
 
 class TransferException(

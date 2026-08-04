@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
+from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
 
 from PIL import Image
 
@@ -884,6 +884,26 @@ class ImprovementTests(unittest.TestCase):
             path.write_bytes(encoded)
             result = validate_theme(path)
             self.assertIn("local_header_mismatch", {item["kind"] for item in result["errors"]})
+            catalog = scan_theme(path)
+            self.assertIn("local_header_mismatch", {item["kind"] for item in catalog.warnings})
+
+    def test_validator_rejects_local_header_metadata_mismatch(self):
+        raw = BytesIO()
+        with ZipFile(raw, "w", ZIP_STORED) as archive:
+            archive.writestr("description.xml", b"<HwTheme/>")
+        encoded = bytearray(raw.getvalue())
+        local_crc = struct.unpack_from("<I", encoded, 14)[0]
+        struct.pack_into("<I", encoded, 14, local_crc ^ 1)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "local-header-metadata-mismatch.hwt"
+            path.write_bytes(encoded)
+            result = validate_theme(path)
+            self.assertIn("local_header_mismatch", {item["kind"] for item in result["errors"]})
+            self.assertIn(
+                "local_header_metadata_mismatch",
+                {item["message"] for item in result["errors"] if item["kind"] == "local_header_mismatch"},
+            )
             catalog = scan_theme(path)
             self.assertIn("local_header_mismatch", {item["kind"] for item in catalog.warnings})
 

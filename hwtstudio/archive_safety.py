@@ -160,6 +160,7 @@ def archive_local_header_issues(
                 continue
             local_flags = struct.unpack_from("<H", header, 6)[0]
             local_method = struct.unpack_from("<H", header, 8)[0]
+            local_crc, local_compressed_size, local_uncompressed_size = struct.unpack_from("<III", header, 14)
             filename_length, _extra_length = struct.unpack_from("<HH", header, 26)
             local_name = fileobj.read(filename_length)
             if len(local_name) != filename_length:
@@ -170,6 +171,30 @@ def archive_local_header_issues(
             if local_flags != central_flags or local_method != central_method:
                 issues.append((filename, "local_header_attributes_mismatch"))
                 continue
+            if not local_flags & 0x08:
+                central_crc = getattr(info, "CRC", None)
+                central_compressed_size = getattr(info, "compress_size", None)
+                central_uncompressed_size = getattr(info, "file_size", None)
+                metadata_mismatch = (
+                    isinstance(central_crc, int)
+                    and not isinstance(central_crc, bool)
+                    and local_crc != central_crc
+                )
+                for local_size, central_size in (
+                    (local_compressed_size, central_compressed_size),
+                    (local_uncompressed_size, central_uncompressed_size),
+                ):
+                    if (
+                        isinstance(central_size, int)
+                        and not isinstance(central_size, bool)
+                        and 0 <= central_size <= 0xFFFFFFFF
+                        and local_size != 0xFFFFFFFF
+                        and local_size != central_size
+                    ):
+                        metadata_mismatch = True
+                if metadata_mismatch:
+                    issues.append((filename, "local_header_metadata_mismatch"))
+                    continue
             encoding = "utf-8" if local_flags & 0x800 else "cp437"
             try:
                 decoded_name = local_name.decode(encoding)
