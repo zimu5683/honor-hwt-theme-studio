@@ -662,8 +662,8 @@ def _remote_transfer_status(device: PhoneDevice, transfer_id: str, *, timeout: f
         state = _payload_text(payload, "state", "传输状态", required=True)
         if state in {"completed", "receiving", "committing"}:
             return payload
-        return None
-    except (OSError, http.client.HTTPException, PhoneTransferError):
+        raise PhoneTransferError("手机返回了未知的传输状态", code="bad_response")
+    except (OSError, http.client.HTTPException):
         return None
     finally:
         if connection is not None:
@@ -693,6 +693,16 @@ def _compact_remote_error(value: object, fallback: str) -> str:
     if len(cleaned) > MAX_REMOTE_ERROR_CHARS:
         return cleaned[:MAX_REMOTE_ERROR_CHARS].rstrip() + "..."
     return cleaned
+
+
+def _remote_receiving_offset(payload: dict, context: str) -> tuple[int, int]:
+    """Validate the byte counters used to resume a chunked transfer."""
+    total = _payload_int(payload, "total", context)
+    received = _payload_int(payload, "received", context)
+    next_offset = _payload_int(payload, "next_offset", context)
+    if received != next_offset or next_offset > total:
+        raise PhoneTransferError(f"手机返回的{context}分块偏移量不一致", code="bad_response")
+    return total, next_offset
 
 
 def _upload_result_from_payload(payload: dict, *, path: Path, device: PhoneDevice,
@@ -909,9 +919,8 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                         )
                     raise PhoneTransferError("手机提交主题的状态无效", code="bad_response")
                 if status_payload and status_payload.get("state") == "receiving":
-                    remote_total = _payload_int(status_payload, "total", "传输状态")
-                    remote_offset = _payload_int(status_payload, "next_offset", "传输状态")
-                    if remote_total != size or remote_offset < 0 or remote_offset > size:
+                    remote_total, remote_offset = _remote_receiving_offset(status_payload, "传输状态")
+                    if remote_total != size or remote_offset > size:
                         raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response")
                     offset = remote_offset
                 else:
@@ -976,9 +985,8 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                     )
                 raise PhoneTransferError("手机提交主题的状态无效", code="bad_response")
             if status_payload and status_payload.get("state") == "receiving":
-                remote_total = _payload_int(status_payload, "total", "传输状态")
-                offset = _payload_int(status_payload, "next_offset", "传输状态")
-                if remote_total != size or offset < 0 or offset > size:
+                remote_total, offset = _remote_receiving_offset(status_payload, "传输状态")
+                if remote_total != size or offset > size:
                     raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response")
                 continue
             offset = 0
@@ -1097,7 +1105,9 @@ def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event 
         if cancelled and cancelled.is_set():
             _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
             raise TransferCancelled()
-        for _attempt in range(2):
+        # A full PUT has no resumable offset. Wait for the original request to
+        # release its session before issuing the single idempotent retry.
+        for _attempt in range(40):
             status_payload = _remote_transfer_status(device, transfer_id, timeout=min(timeout, 5.0))
             if status_payload and status_payload.get("state") == "committing":
                 status_payload = _wait_for_remote_commit(
@@ -1121,9 +1131,12 @@ def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event 
                 )
             if not status_payload or status_payload.get("state") != "receiving":
                 break
-            if cancelled and cancelled.wait(0.25):
-                _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
-                raise TransferCancelled()
+            if cancelled:
+                if cancelled.wait(0.25):
+                    _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
+                    raise TransferCancelled()
+            else:
+                time.sleep(0.25)
         callback(0, 0, "网络中断，正在重试上传")
         return _upload_theme_once(
             path,

@@ -155,6 +155,14 @@ class ReceiverServer(
             ?: throw TransferException(400, "invalid_request", "请求缺少有效的 $name")
     }
 
+    private fun requireChunkTransferHeader(session: IHTTPSession, id: String) {
+        val headerId = session.headers["x-hwt-transfer-id"]?.trim()
+            ?: throw TransferException(400, "missing_transfer_id", "请求缺少上传会话标识")
+        if (headerId != id) {
+            throw TransferException(400, "transfer_id_mismatch", "上传会话标识与请求路径不一致")
+        }
+    }
+
     private fun prepareTransfer(session: IHTTPSession): Response {
         requireAuthorized(session)
         val id = prepareTransferId(session.uri)
@@ -259,6 +267,7 @@ class ReceiverServer(
     private fun uploadChunk(session: IHTTPSession): Response {
         requireAuthorized(session)
         val id = transferId(session.uri)
+        requireChunkTransferHeader(session, id)
         val declaredSize = requiredLong(session, "content-length")
         val totalSize = requiredLong(session, "x-hwt-total-size")
         val offset = requiredLong(session, "x-hwt-chunk-offset")

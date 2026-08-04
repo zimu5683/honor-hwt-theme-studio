@@ -346,6 +346,32 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertEqual(ChunkedConnection.instances[2].headers["X-HWT-Chunk-Offset"], str(CHUNK_SIZE))
             self.assertEqual(ChunkedConnection.instances[2].body, content[CHUNK_SIZE:])
 
+    def test_chunked_upload_rejects_inconsistent_remote_offsets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "异常恢复主题.hwt"
+            content = b"a" * CHUNK_SIZE + b"b" * CHUNK_SIZE
+            path.write_bytes(content)
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                OSError("第一块响应前断开"),
+                (202, {
+                    "state": "receiving", "transfer_id": "session",
+                    "received": CHUNK_SIZE - 1, "total": len(content),
+                    "next_offset": CHUNK_SIZE,
+                }),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
+                with self.assertRaisesRegex(PhoneTransferError, "偏移量不一致") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "bad_response")
+            self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "GET"])
+
     def test_chunked_upload_does_not_resend_last_chunk_when_commit_response_is_lost(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "提交主题.hwt"
@@ -406,6 +432,35 @@ class PhoneTransferTests(unittest.TestCase):
 
             self.assertEqual(result["sha256"], digest)
             self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "GET", "GET"])
+
+    def test_legacy_upload_waits_for_receiving_session_before_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "等待释放主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                OSError("完整上传响应前断开"),
+                (202, {"state": "receiving", "transfer_id": "session"}),
+                (404, {"state": "not_found", "transfer_id": "session"}),
+                (201, {
+                    "stored_name": "等待释放主题.hwt",
+                    "destination": "Honor/Themes/等待释放主题.hwt",
+                    "size": len(content), "sha256": digest,
+                    "overwritten": False, "theme_app_opened": False,
+                }),
+            ]
+            device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token")
+
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
+                result = upload_theme(path, device)
+
+            self.assertEqual(result["sha256"], digest)
+            self.assertEqual(
+                [request.method for request in ChunkedConnection.instances],
+                ["PUT", "GET", "GET", "PUT"],
+            )
 
     def test_metadata_prepare_is_verified_before_upload(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1041,6 +1096,24 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertEqual(result["remote"], "Honor/Themes/already-done.hwt")
             self.assertTrue(result["overwritten"])
             self.assertIn("手机已完成上传，正在确认结果", stages)
+
+    def test_unknown_remote_transfer_state_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            theme = Path(directory) / "未知状态.hwt"
+            theme.write_bytes(b"payload")
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                OSError("上传响应前断开"),
+                (200, {"state": "unknown"}),
+            ]
+            device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token")
+
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
+                with self.assertRaisesRegex(PhoneTransferError, "未知的传输状态") as raised:
+                    upload_theme(theme, device)
+
+            self.assertEqual(raised.exception.code, "bad_response")
+            self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "GET"])
 
     def test_safe_filename(self):
         self.assertEqual(safe_hwt_filename("../我的 主题.hwt"), "我的_主题.hwt")
