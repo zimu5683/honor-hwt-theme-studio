@@ -11,6 +11,11 @@ import java.util.UUID
 data class PairedClient(val name: String, val tokenHash: String, val pairedAt: Long)
 data class PairResult(val token: String, val client: PairedClient)
 
+internal const val MAX_AUTH_TOKEN_CHARS = 128
+
+internal fun isAcceptableAuthorizationToken(token: String?): Boolean =
+    !token.isNullOrBlank() && token.length <= MAX_AUTH_TOKEN_CHARS
+
 private fun normalizeClientName(value: String): String {
     val normalized = StringBuilder()
     var pendingSpace = false
@@ -95,8 +100,9 @@ class PairingManager(context: Context, private val clock: () -> Long = System::c
     }
 
     fun isAuthorized(token: String?): Boolean {
-        if (token.isNullOrBlank()) return false
-        val candidate = hashToken(token)
+        val authorizedToken = token ?: return false
+        if (!isAcceptableAuthorizationToken(authorizedToken)) return false
+        val candidate = hashToken(authorizedToken)
         return clients().any { MessageDigest.isEqual(it.tokenHash.toByteArray(), candidate.toByteArray()) }
     }
 

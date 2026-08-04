@@ -82,6 +82,14 @@ class ProtocolTest {
     }
 
     @Test
+    fun authorizationTokenInputIsBoundBeforeHashing() {
+        assertFalse(isAcceptableAuthorizationToken(null))
+        assertFalse(isAcceptableAuthorizationToken(" "))
+        assertTrue(isAcceptableAuthorizationToken("a".repeat(43)))
+        assertFalse(isAcceptableAuthorizationToken("a".repeat(MAX_AUTH_TOKEN_CHARS + 1)))
+    }
+
+    @Test
     fun pairRequestRejectsMalformedJsonAndWrongFieldTypes() {
         val malformed = assertThrows(TransferException::class.java) {
             Protocol.parsePairRequest("{")
