@@ -31,6 +31,7 @@ from hwtstudio.common import (
     honor_module_name,
     honor_resource_name,
     honor_resource_path,
+    honor_resource_paths,
     is_safe_archive_path,
 )
 from hwtstudio.exporter import export_theme, preflight_export, safe_filename
@@ -669,6 +670,100 @@ class ImprovementTests(unittest.TestCase):
             honor_resource_path("dynamic_icons/com.android.deskclock/clock.png"),
             "dynamic_icons/com.hihonor.deskclock/clock.png",
         )
+
+    def test_huawei_icon_fanout_is_exact_and_module_scoped(self):
+        self.assertEqual(
+            honor_resource_paths("icons", "com.vmall.client.png"),
+            ("com.hihonor.hstore.global.png", "com.hihonor.appmarket.png"),
+        )
+        self.assertEqual(
+            honor_resource_paths("com.example", "com.vmall.client.png"),
+            ("com.vmall.client.png",),
+        )
+        self.assertEqual(
+            honor_resource_paths("icons", "com.vmall.clientp.png"),
+            ("com.vmall.clientp.png",),
+        )
+
+    def test_huawei_icon_fanout_exports_both_targets_and_reports_mapping(self):
+        source = next(item for item in self.catalog.resources if item.path == "com.vmall.client.png")
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "icon.png"
+            Image.new("RGBA", (64, 64), (20, 40, 60, 255)).save(image)
+            project = ThemeProject()
+            project.set_change(ResourceChange(slot_id=source.id, source_file=str(image)))
+            output = Path(directory) / "fanout.hwt"
+            _, report = export_theme(project, self.catalog, output)
+
+            fanout = [item for item in report["preflight"]["warnings"] if item["kind"] == "resource_fanout"]
+            self.assertEqual(len(fanout), 1)
+            self.assertEqual(
+                fanout[0]["targets"],
+                [
+                    {"module": "icons", "path": "com.hihonor.hstore.global.png"},
+                    {"module": "icons", "path": "com.hihonor.appmarket.png"},
+                ],
+            )
+            with ZipFile(output) as outer:
+                with ZipFile(BytesIO(outer.read("icons"))) as icons:
+                    self.assertEqual(
+                        set(icons.namelist()),
+                        {"com.hihonor.hstore.global.png", "com.hihonor.appmarket.png"},
+                    )
+            self.assertEqual(
+                {item["path"] for item in report["applied"]},
+                {"com.hihonor.hstore.global.png", "com.hihonor.appmarket.png"},
+            )
+
+    def test_huawei_icon_fanout_keeps_native_target_priority_per_path(self):
+        source = ResourceSlot(
+            id="__source__::vmall",
+            module="icons",
+            container="",
+            resource_type="icon",
+            name="com.vmall.client.png",
+            path="com.vmall.client.png",
+            category="桌面图标",
+            label="华为商城图标",
+            width=8,
+            height=8,
+        )
+        native = ResourceSlot(
+            id="__native__::appmarket",
+            module="icons",
+            container="",
+            resource_type="icon",
+            name="com.hihonor.appmarket.png",
+            path="com.hihonor.appmarket.png",
+            category="桌面图标",
+            label="荣耀应用市场图标",
+            width=8,
+            height=8,
+        )
+        catalog = ThemeCatalog("", "", "", {}, [], [source, native])
+        with tempfile.TemporaryDirectory() as directory:
+            source_image = Path(directory) / "source.png"
+            native_image = Path(directory) / "native.png"
+            Image.new("RGBA", (8, 8), (220, 20, 20, 255)).save(source_image)
+            Image.new("RGBA", (8, 8), (20, 20, 220, 255)).save(native_image)
+            project = ThemeProject()
+            project.set_change(ResourceChange(slot_id=source.id, source_file=str(source_image)))
+            project.set_change(ResourceChange(slot_id=native.id, source_file=str(native_image)))
+            result = preflight_export(project, catalog)
+            resolved = [item for item in result["warnings"] if item["kind"] == "duplicate_target_resolved"]
+            self.assertTrue(result["valid"])
+            self.assertEqual(result["image_targets"], 2)
+            self.assertEqual(len(resolved), 1)
+            self.assertEqual(resolved[0]["selected_slot_id"], native.id)
+
+            output = Path(directory) / "native-priority.hwt"
+            export_theme(project, catalog, output)
+            with ZipFile(output) as outer:
+                with ZipFile(BytesIO(outer.read("icons"))) as icons:
+                    with Image.open(BytesIO(icons.read("com.hihonor.hstore.global.png"))) as image:
+                        self.assertEqual(image.getpixel((0, 0))[:3], (220, 20, 20))
+                    with Image.open(BytesIO(icons.read("com.hihonor.appmarket.png"))) as image:
+                        self.assertEqual(image.getpixel((0, 0))[:3], (20, 20, 220))
 
     def test_mapped_targets_with_same_content_are_merged(self):
         native = ResourceSlot(

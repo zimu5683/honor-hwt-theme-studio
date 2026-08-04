@@ -13,7 +13,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from lxml import etree
 
 from .blank import blank_entries
-from .common import honor_module_name, honor_resource_name, honor_resource_path
+from .common import honor_module_name, honor_resource_name, honor_resource_path, honor_resource_paths
 from .imageops import render_image, render_placeholder
 from .models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
 from .paths import ensure_no_symlink_parents, unique_temp_path
@@ -84,7 +84,11 @@ def _target_keys(slot: ResourceSlot, scanned_ids: set[str]) -> list[tuple[str, .
     if slot.synthetic:
         return [("image", target["module"], target["path"]) for target in slot.targets]
     target_module, _, _, target_path = _slot_target(slot, scanned_ids)
-    return [("image", target_module, target_path)]
+    if slot.id in scanned_ids:
+        target_paths = honor_resource_paths(slot.module, slot.path)
+    else:
+        target_paths = (target_path,)
+    return [("image", target_module, path) for path in target_paths]
 
 
 def _slot_priority(slot: ResourceSlot, scanned_ids: set[str]) -> int:
@@ -93,6 +97,11 @@ def _slot_priority(slot: ResourceSlot, scanned_ids: set[str]) -> int:
         return -1
     original = (slot.module, slot.container, slot.name, slot.path)
     converted = _slot_target(slot, scanned_ids)
+    if slot.resource_type in {"image", "icon", "wallpaper", "preview"}:
+        # A fan-out is a compatibility source even when its original path is
+        # otherwise unchanged; native Honor slots must win those targets.
+        if len(honor_resource_paths(slot.module, slot.path)) > 1:
+            return 1
     return 2 if converted == original else 1
 
 
@@ -243,6 +252,17 @@ def _prepare_export(project: ThemeProject, catalog: ThemeCatalog) -> dict:
             warnings.append({"kind": "unsupported_type", "slot_id": slot_id, "type": slot.resource_type})
             skipped_count += 1
             continue
+        if not slot.synthetic and slot.id in scanned_ids and len(target_keys) > 1:
+            warnings.append(
+                {
+                    "kind": "resource_fanout",
+                    "slot_id": slot.id,
+                    "source": {"module": slot.module, "path": slot.path},
+                    "targets": [{"module": key[1], "path": key[2]} for key in target_keys],
+                    "policy": "华为资源复制到全部兼容的荣耀目标",
+                    "message": "一个华为资源将复制到多个荣耀目标；每个目标单独执行冲突审计",
+                }
+            )
         signature = _change_signature(slot, change, value, file_digests)
         priority = _slot_priority(slot, scanned_ids)
         for key in target_keys:

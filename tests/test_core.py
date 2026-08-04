@@ -159,7 +159,8 @@ class CoreTests(unittest.TestCase):
             project = ThemeProject(name="背景测试")
             project.set_change(ResourceChange(slot_id=slot.id, source_file=str(image_path)))
             output = Path(directory) / "background.hwt"
-            export_theme(project, self.catalog, output)
+            _, report = export_theme(project, self.catalog, output)
+            self.assertFalse(any(item["kind"] == "resource_fanout" for item in report["preflight"]["warnings"]))
             with ZipFile(output) as outer:
                 with ZipFile(BytesIO(outer.read("com.android.settings"))) as module:
                     self.assertIn(

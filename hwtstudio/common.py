@@ -43,6 +43,16 @@ _HONOR_PATH_ALIASES_SORTED = tuple(
     sorted(HONOR_PATH_ALIASES.items(), key=lambda item: len(item[0]), reverse=True),
 )
 
+# The Huawei converter duplicates this icon for both Honor package names. Keep
+# the fan-out exact and module-scoped so a custom resource or an unrelated
+# module cannot inherit a surprising filename rewrite.
+HONOR_RESOURCE_FANOUTS = {
+    ("icons", "com.vmall.client.png"): (
+        "com.hihonor.hstore.global.png",
+        "com.hihonor.appmarket.png",
+    ),
+}
+
 
 def honor_module_name(value: str) -> str:
     return HONOR_MODULE_ALIASES.get(value, value)
@@ -64,6 +74,14 @@ def honor_resource_path(value: str) -> str:
             part = part.replace("emui", "magic")
         converted.append(part)
     return "/".join(converted)
+
+
+def honor_resource_paths(module: str, value: str) -> tuple[str, ...]:
+    """Return all Honor paths for a scanned resource, including exact fan-out rules."""
+    fanout = HONOR_RESOURCE_FANOUTS.get((module, value))
+    if fanout is not None:
+        return fanout
+    return (honor_resource_path(value),)
 
 
 def normalize_archive_path(value: str) -> str:
