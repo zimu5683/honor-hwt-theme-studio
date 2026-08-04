@@ -12,8 +12,16 @@ from zipfile import BadZipFile, ZipFile
 
 from PIL import Image
 
+from .archive_safety import (
+    compression_ratio,
+    duplicate_names,
+    duplicate_normalized_names,
+    is_symlink,
+    zip64_inconsistencies,
+)
 from .common import (
     COMMON_BACKGROUND_TARGETS,
+    MAX_ARCHIVE_COMPRESSION_RATIO,
     MAX_ARCHIVE_ENTRIES,
     MAX_ARCHIVE_ENTRY_BYTES,
     MAX_ARCHIVE_UNCOMPRESSED_BYTES,
@@ -21,6 +29,7 @@ from .common import (
     friendly_label,
     is_safe_archive_path,
     module_category,
+    normalize_archive_path,
     risk_for,
 )
 from .models import ResourceSlot, ThemeCatalog
@@ -54,6 +63,59 @@ def detect_format(data: bytes) -> str:
     if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
         return "WEBP"
     return "UNKNOWN"
+
+
+def _archive_blocked_paths(infos, warnings: list[dict], *, module: str | None = None) -> set[str]:
+    blocked: set[str] = set()
+    prefix = "nested_" if module is not None else ""
+
+    for duplicate in duplicate_names(infos):
+        blocked.update(info.filename for info in infos if info.filename == duplicate)
+        item = {"kind": f"{prefix}duplicate_zip_entry", "path": duplicate}
+        if module is not None:
+            item["module"] = module
+        warnings.append(item)
+    for duplicate in duplicate_normalized_names(infos):
+        blocked.update(
+            info.filename
+            for info in infos
+            if normalize_archive_path(info.filename) == duplicate
+        )
+        item = {"kind": f"{prefix}duplicate_normalized_zip_entry", "path": duplicate}
+        if module is not None:
+            item["module"] = module
+        warnings.append(item)
+
+    for info in infos:
+        ratio = compression_ratio(info)
+        if ratio is not None and ratio > MAX_ARCHIVE_COMPRESSION_RATIO:
+            blocked.add(info.filename)
+            item = {
+                "kind": f"{prefix}compression_ratio",
+                "path": info.filename,
+                "ratio": ratio,
+                "limit": MAX_ARCHIVE_COMPRESSION_RATIO,
+            }
+            if module is not None:
+                item["module"] = module
+            warnings.append(item)
+        if is_symlink(info):
+            blocked.add(info.filename)
+            item = {"kind": f"{prefix}symlink_entry", "path": info.filename}
+            if module is not None:
+                item["module"] = module
+            warnings.append(item)
+        for issue in zip64_inconsistencies(info):
+            blocked.add(info.filename)
+            item = {
+                "kind": f"{prefix}zip64_inconsistent",
+                "path": info.filename,
+                "message": issue,
+            }
+            if module is not None:
+                item["module"] = module
+            warnings.append(item)
+    return blocked
 
 
 def _scan_xml(module: str, container: str, raw: bytes, warnings: list[dict]) -> list[ResourceSlot]:
@@ -144,16 +206,23 @@ def _scan_module(module: str, raw: bytes, warnings: list[dict]) -> tuple[list[Re
             }
             for path in sorted(unsafe_paths):
                 warnings.append({"kind": "unsafe_nested_path", "module": module, "path": path})
-            bad = None if unsafe_paths else archive.testzip()
+            blocked_paths = set(unsafe_paths)
+            blocked_paths.update(_archive_blocked_paths(infos, warnings, module=module))
+            bad = None if blocked_paths else archive.testzip()
             if bad:
                 warnings.append({"kind": "module_crc", "module": module, "path": bad})
+                blocked_paths.add(bad)
             for info in infos:
                 if info.is_dir():
                     continue
-                if info.filename in unsafe_paths:
+                if info.filename in blocked_paths:
                     continue
                 path = info.filename
-                data = archive.read(info)
+                try:
+                    data = archive.read(info)
+                except (BadZipFile, OSError, RuntimeError, ValueError) as exc:
+                    warnings.append({"kind": "nested_entry_read", "module": module, "path": path, "message": str(exc)})
+                    continue
                 if path.endswith("theme.xml"):
                     slots = _scan_xml(module, path, data, warnings)
                     resources.extend(slots)
@@ -243,16 +312,23 @@ def scan_theme(path: Path) -> ThemeCatalog:
         }
         for name in sorted(unsafe_paths):
             warnings.append({"kind": "unsafe_path", "path": name})
-        bad = None if unsafe_paths else outer.testzip()
+        blocked_paths = set(unsafe_paths)
+        blocked_paths.update(_archive_blocked_paths(outer_infos, warnings))
+        bad = None if blocked_paths else outer.testzip()
         if bad:
             warnings.append({"kind": "outer_crc", "path": bad})
+            blocked_paths.add(bad)
         for info in outer_infos:
             if info.is_dir():
                 continue
-            if info.filename in unsafe_paths:
+            if info.filename in blocked_paths:
                 continue
             name = info.filename
-            raw = outer.read(info)
+            try:
+                raw = outer.read(info)
+            except (BadZipFile, OSError, RuntimeError, ValueError) as exc:
+                warnings.append({"kind": "outer_entry_read", "path": name, "message": str(exc)})
+                continue
             if name in {"description.xml", "unlock/theme.xml"}:
                 continue
             if name.startswith("wallpaper/") and Path(name).suffix.lower() in IMAGE_EXTENSIONS:

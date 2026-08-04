@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import re
-import stat
-import struct
-from collections import Counter
 from io import BytesIO
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
+from .archive_safety import (
+    compression_ratio,
+    duplicate_names,
+    duplicate_normalized_names,
+    is_symlink,
+    zip64_inconsistencies,
+)
 from .catalog import detect_format
 from .common import (
     MAX_ARCHIVE_COMPRESSION_RATIO,
@@ -15,7 +19,6 @@ from .common import (
     MAX_ARCHIVE_ENTRY_BYTES,
     MAX_ARCHIVE_UNCOMPRESSED_BYTES,
     is_safe_archive_path,
-    normalize_archive_path,
 )
 from .models import ResourceSlot
 from .xmlutil import parse_xml
@@ -73,66 +76,6 @@ def validate_custom_slot(slot: ResourceSlot) -> None:
             raise ValueError(f"{label}必须在 1 到 16384 之间")
 
 
-def _duplicate_names(infos) -> list[str]:
-    counts = Counter(info.filename for info in infos)
-    return sorted(name for name, count in counts.items() if count > 1)
-
-
-def _duplicate_normalized_names(infos) -> list[str]:
-    counts = Counter(normalize_archive_path(info.filename) for info in infos)
-    return sorted(name for name, count in counts.items() if count > 1)
-
-
-def _is_symlink(info) -> bool:
-    try:
-        mode = (int(info.external_attr) >> 16) & 0xFFFF
-    except (TypeError, ValueError):
-        return False
-    return stat.S_ISLNK(mode)
-
-
-def _compression_ratio(info) -> float | None:
-    compressed_size = getattr(info, "compress_size", None)
-    file_size = getattr(info, "file_size", None)
-    if not isinstance(compressed_size, int) or not isinstance(file_size, int):
-        return None
-    if compressed_size <= 0 or file_size <= 0:
-        return None
-    return file_size / compressed_size
-
-
-def _zip64_values(info) -> tuple[int, ...]:
-    extra = getattr(info, "extra", b"")
-    if not isinstance(extra, (bytes, bytearray)):
-        return ()
-    offset = 0
-    while offset + 4 <= len(extra):
-        field_id, field_size = struct.unpack_from("<HH", extra, offset)
-        offset += 4
-        field_end = offset + field_size
-        if field_end > len(extra):
-            return ()
-        if field_id == 0x0001:
-            payload = extra[offset:field_end]
-            if len(payload) not in {8, 16, 24}:
-                return ()
-            return tuple(struct.unpack_from("<" + "Q" * (len(payload) // 8), payload))
-        offset = field_end
-    return ()
-
-
-def _zip64_inconsistencies(info) -> list[str]:
-    values = _zip64_values(info)
-    if not values:
-        return []
-    issues = []
-    if values[0] != info.file_size:
-        issues.append(f"uncompressed_size={values[0]} (header={info.file_size})")
-    if len(values) >= 16 and values[1] != info.compress_size:
-        issues.append(f"compressed_size={values[1]} (header={info.compress_size})")
-    return issues
-
-
 def _validate_resource_xml(raw: bytes, *, module: str, path: str, errors: list[dict]) -> None:
     try:
         root = parse_xml(raw)
@@ -188,9 +131,9 @@ def validate_theme(path: Path) -> dict:
                 outer_size_blocked = True
             names = set(outer.namelist())
             unsafe_outer_paths = set()
-            for duplicate in _duplicate_names(outer.infolist()):
+            for duplicate in duplicate_names(outer.infolist()):
                 errors.append({"kind": "duplicate_zip_entry", "path": duplicate})
-            for duplicate in _duplicate_normalized_names(outer.infolist()):
+            for duplicate in duplicate_normalized_names(outer.infolist()):
                 errors.append({"kind": "duplicate_normalized_zip_entry", "path": duplicate})
             for name in outer.namelist():
                 if not is_safe_archive_path(name.rstrip("/")):
@@ -200,7 +143,7 @@ def validate_theme(path: Path) -> dict:
             for info in outer_infos:
                 if info.is_dir():
                     continue
-                ratio = _compression_ratio(info)
+                ratio = compression_ratio(info)
                 if ratio is not None and ratio > MAX_ARCHIVE_COMPRESSION_RATIO:
                     errors.append({
                         "kind": "compression_ratio",
@@ -209,10 +152,10 @@ def validate_theme(path: Path) -> dict:
                         "limit": MAX_ARCHIVE_COMPRESSION_RATIO,
                     })
                     outer_read_blocked = True
-                if _is_symlink(info):
+                if is_symlink(info):
                     errors.append({"kind": "symlink_entry", "path": info.filename})
                     outer_read_blocked = True
-                for issue in _zip64_inconsistencies(info):
+                for issue in zip64_inconsistencies(info):
                     errors.append({"kind": "zip64_inconsistent", "path": info.filename, "message": issue})
                     outer_read_blocked = True
             bad = None if outer_size_blocked or outer_read_blocked or unsafe_outer_paths else outer.testzip()
@@ -275,15 +218,15 @@ def validate_theme(path: Path) -> dict:
                             if not is_safe_archive_path(child.filename.rstrip("/")):
                                 errors.append({"kind": "unsafe_nested_path", "module": info.filename, "path": child.filename})
                                 unsafe_nested_paths.add(child.filename)
-                        for duplicate in _duplicate_names(nested_infos):
+                        for duplicate in duplicate_names(nested_infos):
                             errors.append({"kind": "duplicate_nested_entry", "module": info.filename, "path": duplicate})
-                        for duplicate in _duplicate_normalized_names(nested_infos):
+                        for duplicate in duplicate_normalized_names(nested_infos):
                             errors.append({"kind": "duplicate_normalized_nested_entry", "module": info.filename, "path": duplicate})
                         nested_read_blocked = False
                         for child in nested_infos:
                             if child.is_dir():
                                 continue
-                            ratio = _compression_ratio(child)
+                            ratio = compression_ratio(child)
                             if ratio is not None and ratio > MAX_ARCHIVE_COMPRESSION_RATIO:
                                 errors.append({
                                     "kind": "nested_compression_ratio",
@@ -293,14 +236,14 @@ def validate_theme(path: Path) -> dict:
                                     "limit": MAX_ARCHIVE_COMPRESSION_RATIO,
                                 })
                                 nested_read_blocked = True
-                            if _is_symlink(child):
+                            if is_symlink(child):
                                 errors.append({
                                     "kind": "nested_symlink_entry",
                                     "module": info.filename,
                                     "path": child.filename,
                                 })
                                 nested_read_blocked = True
-                            for issue in _zip64_inconsistencies(child):
+                            for issue in zip64_inconsistencies(child):
                                 errors.append({
                                     "kind": "nested_zip64_inconsistent",
                                     "module": info.filename,

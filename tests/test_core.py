@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import stat
 import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
-from zipfile import ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from PIL import Image
 
@@ -137,6 +138,26 @@ class CoreTests(unittest.TestCase):
             warning_kinds = {item["kind"] for item in catalog.warnings}
             self.assertIn("unsafe_path", warning_kinds)
             self.assertIn("unsafe_nested_path", warning_kinds)
+
+    def test_scan_blocks_dangerous_nested_entries_before_reading(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module = BytesIO()
+            with ZipFile(module, "w", ZIP_DEFLATED) as nested:
+                nested.writestr("theme.xml", b"<resources><color name='safe'>#FF112233</color></resources>")
+                nested.writestr("bomb.bin", b"\0" * (2 * 1024 * 1024))
+                link = ZipInfo("link")
+                link.external_attr = (stat.S_IFLNK | 0o777) << 16
+                nested.writestr(link, b"../escape.txt")
+            source = Path(directory) / "dangerous.hwt"
+            with ZipFile(source, "w", ZIP_DEFLATED) as outer:
+                outer.writestr("description.xml", b"<HwTheme/>")
+                outer.writestr("com.example", module.getvalue())
+
+            catalog = scan_theme(source)
+            self.assertTrue(any(item.name == "safe" for item in catalog.resources))
+            warning_kinds = {item["kind"] for item in catalog.warnings}
+            self.assertIn("nested_compression_ratio", warning_kinds)
+            self.assertIn("nested_symlink_entry", warning_kinds)
 
     def test_custom_resource_round_trip_and_export(self):
         slot = ResourceSlot(

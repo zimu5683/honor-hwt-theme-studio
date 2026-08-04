@@ -521,7 +521,7 @@ class ImprovementTests(unittest.TestCase):
                 module.writestr("e\u0301.txt", b"one")
                 module.writestr("\u00e9.txt", b"two")
                 bad = ZipInfo("zip64.bin")
-                bad.extra = struct.pack("<HHQQ", 0x0001, 16, 99, 99)
+                bad.extra = struct.pack("<HHQQ", 0x0001, 16, 4, 99)
                 module.writestr(bad, b"data")
             with ZipFile(output, "a", ZIP_DEFLATED) as outer:
                 outer.writestr("com.example", module_data.getvalue())
