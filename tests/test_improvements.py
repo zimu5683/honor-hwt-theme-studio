@@ -278,6 +278,26 @@ class ImprovementTests(unittest.TestCase):
             self.assertFalse(target.exists())
             self.assertTrue((asset_dir / "linked.bin").is_symlink())
 
+    def test_project_save_rejects_non_file_targets_without_replacing_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "theme.hwtproj.json"
+            target.mkdir()
+
+            with self.assertRaisesRegex(ValueError, "工程文件目标"):
+                save_project(ThemeProject(), target)
+
+            self.assertTrue(target.is_dir())
+
+            target.rmdir()
+            asset_dir = project_assets_dir(target)
+            asset_dir.write_text("keep", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "工程资产目录"):
+                save_project(ThemeProject(), target)
+
+            self.assertTrue(asset_dir.is_file())
+            self.assertEqual(asset_dir.read_text(encoding="utf-8"), "keep")
+
     def test_project_save_commit_failure_restores_project_and_assets(self):
         slot = next(item for item in self.catalog.resources if item.resource_type == "wallpaper")
         with tempfile.TemporaryDirectory() as directory:

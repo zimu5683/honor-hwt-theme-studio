@@ -144,6 +144,10 @@ def save_project(project: ThemeProject, path: Path) -> Path:
     serialized = project.to_dict()
     _validate_project_payload(serialized)
     asset_dir = project_assets_dir(path)
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError("工程文件目标不是普通文件")
+    if asset_dir.is_symlink() or (asset_dir.exists() and not asset_dir.is_dir()):
+        raise ValueError("工程资产目录不是目录")
     asset_stage = unique_temp_path(asset_dir, suffix=".tmp")
     temp = unique_temp_path(path)
     asset_backup = unique_temp_path(asset_dir, suffix=".backup")
