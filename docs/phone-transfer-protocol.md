@@ -93,6 +93,7 @@ APK 只接受包含根目录 `description.xml` 文件的有效 ZIP，并在读�
 `202 committing` 表示文件已收齐、正在校验并安装，返回 `200 completed` 时附带原上传结果；不存在或旧版助手不支持时返回 `404`。
 `receiving` 响应包含 `received`、`total`、`next_offset`，三者均为非负字节数，其中 `next_offset` 是下一块的写入偏移量；桌面端会在连接中断后先查询该接口，
 避免对已经完成的主题重复发送文件。
+所有 `transfers/{id}` 的成功状态响应都带有与 URL 相同的 `transfer_id`；桌面端在分块上传和断点恢复时会拒绝会话标识不一致的响应，避免把其他会话的进度当作当前上传进度。
 
 ### `POST /api/v1/transfers/{id}/prepare`（可选元数据预检）
 
@@ -162,7 +163,7 @@ APK 只接受包含根目录 `description.xml` 文件的有效 ZIP，并在读�
 所有分块成功后，桌面端发送带 Bearer Token 的空请求体。手机再次校验整个临时文件的大小和 SHA-256，
 然后复用完整上传路径的 HWT 校验、存储空间检查及原子安装逻辑。提交期间状态为 `committing`；
 安装完成后返回与完整 `PUT` 相同的 `stored_name`、`destination`、`size`、`sha256`、`overwritten` 和
-`theme_app_opened` 字段。提交响应丢失时，桌面端查询状态并等待 `completed`，不会重新追加最后一个分块。
+`theme_app_opened` 字段，并带有当前 `transfer_id`。提交响应丢失时，桌面端查询状态并等待 `completed`，不会重新追加最后一个分块。
 
 ### `DELETE /api/v1/transfers/{id}`（可选取消扩展）
 

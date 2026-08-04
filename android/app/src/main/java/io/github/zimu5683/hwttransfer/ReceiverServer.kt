@@ -398,10 +398,10 @@ class ReceiverServer(
         requireAuthorized(session)
         val id = chunkCommitId(session.uri)
         val cached = cachedTransfer(id)
-        if (cached != null) return installResponse(cached)
+        if (cached != null) return installResponse(cached, transferId = id)
         val state = synchronized(transferLock) {
             // Recheck under the state lock so a retry cannot observe the hand-off gap.
-            completedTransfers[id]?.let { return installResponse(it) }
+            completedTransfers[id]?.let { return installResponse(it, transferId = id) }
             if (committingTransferId == id) {
                 return json(202, JSONObject()
                     .put("state", "committing")
@@ -429,7 +429,7 @@ class ReceiverServer(
             rememberCompleted(id, result)
             runCatching { onTransfer(result) }
                 .onFailure { android.util.Log.e("ReceiverServer", "Transfer callback failed", it) }
-            return installResponse(result)
+            return installResponse(result, transferId = id)
         } finally {
             state.file.delete()
             synchronized(transferLock) {
@@ -446,7 +446,7 @@ class ReceiverServer(
         val id = transferId(session.uri)
         val completed = cachedTransfer(id)
         if (completed != null) {
-            return installResponse(completed, 200, "completed")
+            return installResponse(completed, 200, "completed", id)
         }
         val committing = synchronized(transferLock) { committingTransferId == id }
         if (committing) {
@@ -548,8 +548,16 @@ class ReceiverServer(
         }
     }
 
-    private fun installResponse(result: InstallResult, status: Int = 201, state: String? = null): Response = json(status, JSONObject()
-        .apply { if (state != null) put("state", state) }
+    private fun installResponse(
+        result: InstallResult,
+        status: Int = 201,
+        state: String? = null,
+        transferId: String? = null,
+    ): Response = json(status, JSONObject()
+        .apply {
+            if (state != null) put("state", state)
+            if (transferId != null) put("transfer_id", transferId)
+        }
         .put("stored_name", result.storedName)
         .put("destination", result.destination)
         .put("size", result.size)

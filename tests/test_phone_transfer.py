@@ -182,6 +182,29 @@ class ChunkedConnection:
         if isinstance(self.plan, BaseException):
             raise self.plan
         status, payload = self.plan
+        if isinstance(payload, dict) and payload.get("transfer_id") == "session":
+            payload = dict(payload)
+            marker = "/api/v1/transfers/"
+            transfer_id = self.target.split(marker, 1)[1].split("/", 1)[0]
+            payload["transfer_id"] = transfer_id
+        elif (
+            isinstance(payload, dict)
+            and self.method == "GET"
+            and payload.get("state") == "completed"
+            and "transfer_id" not in payload
+        ):
+            payload = dict(payload)
+            marker = "/api/v1/transfers/"
+            payload["transfer_id"] = self.target.split(marker, 1)[1].split("/", 1)[0]
+        elif (
+            isinstance(payload, dict)
+            and self.method == "POST"
+            and self.target.endswith("/complete")
+            and "transfer_id" not in payload
+        ):
+            payload = dict(payload)
+            marker = "/api/v1/transfers/"
+            payload["transfer_id"] = self.target.split(marker, 1)[1].split("/", 1)[0]
         return FakeHttpResponse(payload, status=status)
 
     def close(self):
@@ -371,6 +394,85 @@ class PhoneTransferTests(unittest.TestCase):
 
             self.assertEqual(raised.exception.code, "bad_response")
             self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "GET"])
+
+    def test_chunked_upload_rejects_mismatched_response_transfer_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "串会话主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (202, {
+                    "state": "receiving", "transfer_id": "another-session",
+                    "received": len(content), "total": len(content), "next_offset": len(content),
+                }),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
+                with self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "bad_response")
+            self.assertEqual(len(ChunkedConnection.instances), 1)
+
+    def test_chunked_recovery_rejects_mismatched_status_transfer_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "串会话恢复.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                OSError("上传响应前断开"),
+                (202, {
+                    "state": "receiving", "transfer_id": "another-session",
+                    "received": len(content), "total": len(content), "next_offset": len(content),
+                }),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
+                with self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "bad_response")
+            self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "GET"])
+
+    def test_chunked_commit_rejects_mismatched_response_transfer_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "串会话提交.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (202, {
+                    "state": "receiving", "transfer_id": "session",
+                    "received": len(content), "total": len(content), "next_offset": len(content),
+                }),
+                (201, {
+                    "transfer_id": "another-session", "stored_name": "串会话提交.hwt",
+                    "destination": "Honor/Themes/串会话提交.hwt", "size": len(content),
+                    "sha256": digest, "overwritten": False, "theme_app_opened": False,
+                }),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
+                with self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "bad_response")
+            self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "POST"])
 
     def test_chunked_upload_does_not_resend_last_chunk_when_commit_response_is_lost(self):
         with tempfile.TemporaryDirectory() as directory:

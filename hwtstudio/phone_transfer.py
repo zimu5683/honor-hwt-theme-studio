@@ -359,6 +359,16 @@ def _payload_int(payload: dict, key: str, context: str, *, minimum: int = 0) -> 
     return value
 
 
+def _payload_transfer_id(payload: dict, expected: str, context: str, *, required: bool = True) -> str:
+    """Bind a resumable response to the request session that produced it."""
+    if not required and "transfer_id" not in payload:
+        return ""
+    actual = _payload_text(payload, "transfer_id", context, required=True)
+    if actual != expected:
+        raise PhoneTransferError(f"手机返回的{context}会话标识不一致", code="bad_response")
+    return actual
+
+
 def _payload_strings(value: object, *, context: str = "", strict: bool = False) -> list[str]:
     if not isinstance(value, (list, tuple, set)):
         if strict:
@@ -645,7 +655,8 @@ def _cancel_remote_transfer(device: PhoneDevice, transfer_id: str, *, timeout: f
             connection.close()
 
 
-def _remote_transfer_status(device: PhoneDevice, transfer_id: str, *, timeout: float) -> dict | None:
+def _remote_transfer_status(device: PhoneDevice, transfer_id: str, *, timeout: float,
+                            require_transfer_id: bool = False) -> dict | None:
     """Return the current state payload when the optional endpoint is supported."""
     connection = None
     try:
@@ -661,6 +672,7 @@ def _remote_transfer_status(device: PhoneDevice, transfer_id: str, *, timeout: f
         payload = _decode_json(body, "传输状态")
         state = _payload_text(payload, "state", "传输状态", required=True)
         if state in {"completed", "receiving", "committing"}:
+            _payload_transfer_id(payload, transfer_id, "传输状态", required=require_transfer_id)
             return payload
         raise PhoneTransferError("手机返回了未知的传输状态", code="bad_response")
     except (OSError, http.client.HTTPException):
@@ -671,11 +683,16 @@ def _remote_transfer_status(device: PhoneDevice, transfer_id: str, *, timeout: f
 
 
 def _wait_for_remote_commit(device: PhoneDevice, transfer_id: str, *, cancelled: threading.Event | None,
-                            timeout: float) -> dict | None:
+                            timeout: float, require_transfer_id: bool = False) -> dict | None:
     for _ in range(40):
         if cancelled and cancelled.is_set():
             raise TransferCancelled()
-        status_payload = _remote_transfer_status(device, transfer_id, timeout=timeout)
+        status_payload = _remote_transfer_status(
+            device,
+            transfer_id,
+            timeout=timeout,
+            require_transfer_id=require_transfer_id,
+        )
         if not status_payload or status_payload.get("state") != "committing":
             return status_payload
         if cancelled and cancelled.wait(0.25):
@@ -759,6 +776,7 @@ def _send_chunk(device: PhoneDevice, transfer_id: str, block: bytes, *, total_si
         connection.close()
     if response.status not in (200, 202):
         raise _error_from_response(response.status, payload)
+    _payload_transfer_id(payload, transfer_id, "分块上传")
     return payload
 
 
@@ -827,6 +845,7 @@ def _commit_chunk(device: PhoneDevice, transfer_id: str, *, timeout: float) -> d
         connection.close()
     if response.status not in (200, 201):
         raise _error_from_response(response.status, payload)
+    _payload_transfer_id(payload, transfer_id, "分块提交")
     return payload
 
 
@@ -892,7 +911,9 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                 if cancelled and cancelled.is_set():
                     _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
                     raise TransferCancelled()
-                status_payload = _remote_transfer_status(device, transfer_id, timeout=min(timeout, 5.0))
+                status_payload = _remote_transfer_status(
+                    device, transfer_id, timeout=min(timeout, 5.0), require_transfer_id=True,
+                )
                 if status_payload and status_payload.get("state") == "completed":
                     _ensure_file_signature(path, initial_signature, "状态确认后")
                     return _upload_result_from_payload(
@@ -905,7 +926,11 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                     )
                 if status_payload and status_payload.get("state") == "committing":
                     status_payload = _wait_for_remote_commit(
-                        device, transfer_id, cancelled=cancelled, timeout=min(timeout, 5.0),
+                        device,
+                        transfer_id,
+                        cancelled=cancelled,
+                        timeout=min(timeout, 5.0),
+                        require_transfer_id=True,
                     )
                     if status_payload and status_payload.get("state") == "completed":
                         _ensure_file_signature(path, initial_signature, "状态确认后")
@@ -959,7 +984,9 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
             if cancelled and cancelled.is_set():
                 _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
                 raise TransferCancelled()
-            status_payload = _remote_transfer_status(device, transfer_id, timeout=min(timeout, 5.0))
+            status_payload = _remote_transfer_status(
+                device, transfer_id, timeout=min(timeout, 5.0), require_transfer_id=True,
+            )
             if status_payload and status_payload.get("state") == "completed":
                 return _upload_result_from_payload(
                     status_payload,
@@ -971,7 +998,11 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                 )
             if status_payload and status_payload.get("state") == "committing":
                 status_payload = _wait_for_remote_commit(
-                    device, transfer_id, cancelled=cancelled, timeout=min(timeout, 5.0),
+                    device,
+                    transfer_id,
+                    cancelled=cancelled,
+                    timeout=min(timeout, 5.0),
+                    require_transfer_id=True,
                 )
                 if status_payload and status_payload.get("state") == "completed":
                     _ensure_file_signature(path, initial_signature, "状态确认后")
