@@ -42,8 +42,10 @@ class PairingManager(context: Context, private val clock: () -> Long = System::c
     private val failedAttempts = ArrayDeque<Long>()
 
     val deviceId: String = synchronized(storageLock) {
-        prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also {
-            prefs.edit().putString("device_id", it).apply()
+        prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also { generated ->
+            if (!prefs.edit().putString("device_id", generated).commit()) {
+                throw IllegalStateException("无法保存手机设备标识")
+            }
         }
     }
 
@@ -157,7 +159,9 @@ class PairingManager(context: Context, private val clock: () -> Long = System::c
         clients.forEach {
             array.put(JSONObject().put("name", it.name).put("token_hash", it.tokenHash).put("paired_at", it.pairedAt))
         }
-        prefs.edit().putString("clients", array.toString()).apply()
+        if (!prefs.edit().putString("clients", array.toString()).commit()) {
+            throw IllegalStateException("无法保存手机配对状态")
+        }
     }
 
     private fun hashToken(token: String): String = MessageDigest.getInstance("SHA-256")
