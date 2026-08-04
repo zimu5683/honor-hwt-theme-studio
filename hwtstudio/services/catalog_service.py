@@ -19,7 +19,13 @@ from ..catalog import (
 from ..common import MAX_CATALOG_BYTES
 from ..locking import InterprocessLockTimeoutError, interprocess_lock
 from ..models import ThemeCatalog
-from ..paths import bundled_catalog, data_dir, default_source_theme, unique_temp_path
+from ..paths import (
+    bundled_catalog,
+    data_dir,
+    default_source_theme,
+    ensure_no_symlink_parents,
+    unique_temp_path,
+)
 
 
 _CATALOG_FILE_NAME = "catalog_daxue.json"
@@ -158,7 +164,15 @@ def _read_transaction(root: Path) -> list[dict] | None:
 
 def _write_transaction(root: Path, entries: list[dict]) -> None:
     marker = _transaction_path(root)
+    if marker.is_symlink() or (marker.exists() and not marker.is_file()):
+        raise OSError("资源目录事务记录不是普通文件")
+    try:
+        ensure_no_symlink_parents(marker, "资源目录事务目录不能包含符号链接")
+    except ValueError as exc:
+        raise OSError(str(exc)) from exc
     temp = unique_temp_path(marker, suffix=".tmp")
+    if temp.is_symlink() or (temp.exists() and not temp.is_file()):
+        raise OSError("资源目录事务临时文件不是普通文件")
     payload = {"schema": _TRANSACTION_SCHEMA, "files": entries}
     try:
         encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -166,9 +180,14 @@ def _write_transaction(root: Path, entries: list[dict]) -> None:
             stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
+        if temp.is_symlink() or not temp.is_file():
+            raise OSError("资源目录事务临时文件不是普通文件")
+        if marker.is_symlink() or (marker.exists() and not marker.is_file()):
+            raise OSError("资源目录事务记录不是普通文件")
         os.replace(temp, marker)
     finally:
-        _safe_unlink(temp)
+        if not temp.is_symlink() and (not temp.exists() or temp.is_file()):
+            _safe_unlink(temp)
 
 
 def _cleanup_transaction(root: Path, entries: list[dict]) -> None:

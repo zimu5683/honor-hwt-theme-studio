@@ -1049,6 +1049,34 @@ class ImprovementTests(unittest.TestCase):
             self.assertIn("不是普通文件", warning)
             self.assertTrue(marker.is_dir())
 
+    def test_user_catalog_transaction_rejects_symlinked_marker_and_temp(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside.json"
+            outside.write_text("keep", encoding="utf-8")
+            marker = root / catalog_service._TRANSACTION_FILE_NAME
+            try:
+                os.symlink(outside, marker)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建文件符号链接：{exc}")
+            with self.assertRaisesRegex(OSError, "事务记录.*普通文件"):
+                catalog_service._write_transaction(root, [])
+            self.assertTrue(marker.is_symlink())
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+
+            marker.unlink()
+            temp = unique_temp_path(marker, suffix=".tmp")
+            try:
+                os.symlink(outside, temp)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建文件符号链接：{exc}")
+            with self.assertRaisesRegex(OSError, "事务临时文件.*普通文件"):
+                catalog_service._write_transaction(root, [])
+            self.assertTrue(temp.is_symlink())
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+
     def test_user_catalog_load_falls_back_when_bundle_lock_is_busy(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
