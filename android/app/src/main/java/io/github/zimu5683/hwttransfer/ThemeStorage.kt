@@ -48,10 +48,13 @@ class ThemeStorage(private val context: Context) {
     fun validateAndPersistTree(uri: Uri) = synchronized(themeInstallLock) {
         val directory = DocumentFile.fromTreeUri(context, uri)
             ?: throw TransferException(503, "storage_unavailable", "无法打开所选目录")
+        val documentId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()
         if (!directory.isDirectory || !directory.canWrite()) {
             throw TransferException(503, "storage_unavailable", "所选目录不可写")
         }
-        if (!directory.name.equals("Themes", ignoreCase = true)) {
+        if (!directory.name.equals("Themes", ignoreCase = true) ||
+            documentId == null || !Protocol.isHonorThemesDocumentId(documentId)
+        ) {
             throw TransferException(400, "wrong_directory", "请选择 Honor 文件夹中的 Themes 目录")
         }
         val probeName = "hwt_transfer_permission_check_${UUID.randomUUID()}.tmp"

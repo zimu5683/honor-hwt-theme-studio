@@ -35,6 +35,15 @@ class ProtocolTest {
     }
 
     @Test
+    fun honorThemesDocumentIdRequiresHonorParent() {
+        assertTrue(Protocol.isHonorThemesDocumentId("primary:Honor/Themes"))
+        assertTrue(Protocol.isHonorThemesDocumentId("ABCD-1234:Honor/Themes/"))
+        assertFalse(Protocol.isHonorThemesDocumentId("primary:Download/Themes"))
+        assertFalse(Protocol.isHonorThemesDocumentId("primary:Honor/Archive/Themes"))
+        assertFalse(Protocol.isHonorThemesDocumentId("Themes"))
+    }
+
+    @Test
     fun pairingStateKeepsValidEntriesWhenOneEntryIsCorrupt() {
         val validHash = "a".repeat(64)
         val raw = JSONArray()

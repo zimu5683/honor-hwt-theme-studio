@@ -88,6 +88,14 @@ object Protocol {
         return truncateUtf8(stem, maxStemBytes) + extension
     }
 
+    internal fun isHonorThemesDocumentId(documentId: String): Boolean {
+        val parts = documentId.substringAfter(':', missingDelimiterValue = "")
+            .split('/')
+            .filter { it.isNotBlank() }
+        return parts.size >= 2 && parts.last().equals("Themes", ignoreCase = true) &&
+            parts[parts.lastIndex - 1].equals("Honor", ignoreCase = true)
+    }
+
     private fun truncateUtf8(value: String, maxBytes: Int): String {
         var usedBytes = 0
         return buildString {
