@@ -14,6 +14,7 @@ from PIL import Image
 
 from .archive_safety import (
     archive_data_overlaps,
+    archive_local_header_issues,
     archive_path_overlaps,
     compression_ratio,
     duplicate_names,
@@ -130,6 +131,13 @@ def _archive_blocked_paths(
             if info.filename in {parent, path}
         )
         item = {"kind": f"{prefix}data_overlap", "path": path, "overlaps": parent}
+        if module is not None:
+            item["module"] = module
+        warnings.append(item)
+
+    for path, issue in archive_local_header_issues(infos, fileobj):
+        blocked.add(path)
+        item = {"kind": f"{prefix}local_header_mismatch", "path": path, "message": issue}
         if module is not None:
             item["module"] = module
         warnings.append(item)

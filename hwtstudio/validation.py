@@ -7,6 +7,7 @@ from zipfile import BadZipFile, ZipFile
 
 from .archive_safety import (
     archive_data_overlaps,
+    archive_local_header_issues,
     archive_path_overlaps,
     compression_ratio,
     duplicate_names,
@@ -197,11 +198,16 @@ def validate_theme(path: Path) -> dict:
                 errors.append({"kind": "path_overlap", "path": path_name, "parent": parent})
             for parent, path_name in outer_data_overlaps:
                 errors.append({"kind": "data_overlap", "path": path_name, "overlaps": parent})
+            outer_local_header_issues = archive_local_header_issues(outer.infolist(), outer.fp)
+            for path_name, issue in outer_local_header_issues:
+                errors.append({"kind": "local_header_mismatch", "path": path_name, "message": issue})
             for name in outer.namelist():
                 if not is_safe_archive_path(name.rstrip("/")):
                     errors.append({"kind": "unsafe_path", "path": name})
                     unsafe_outer_paths.add(name)
-            outer_read_blocked = bool(outer_overlaps or outer_data_overlaps)
+            outer_read_blocked = bool(
+                outer_overlaps or outer_data_overlaps or outer_local_header_issues
+            )
             for info in outer_infos:
                 if info.is_dir():
                     continue
@@ -308,7 +314,17 @@ def validate_theme(path: Path) -> dict:
                                 "path": path_name,
                                 "overlaps": parent,
                             })
-                        nested_read_blocked = bool(nested_overlaps or nested_data_overlaps)
+                        nested_local_header_issues = archive_local_header_issues(nested_infos, module.fp)
+                        for path_name, issue in nested_local_header_issues:
+                            errors.append({
+                                "kind": "nested_local_header_mismatch",
+                                "module": info.filename,
+                                "path": path_name,
+                                "message": issue,
+                            })
+                        nested_read_blocked = bool(
+                            nested_overlaps or nested_data_overlaps or nested_local_header_issues
+                        )
                         for child in nested_infos:
                             if child.is_dir():
                                 continue

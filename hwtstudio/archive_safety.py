@@ -131,6 +131,64 @@ def archive_data_overlaps(
     return overlaps
 
 
+def archive_local_header_issues(
+    infos,
+    fileobj: BinaryIO | None = None,
+) -> list[tuple[str, str]]:
+    """Return central-directory entries inconsistent with local headers."""
+    if fileobj is None:
+        return []
+
+    issues: list[tuple[str, str]] = []
+    for info in infos:
+        filename = getattr(info, "filename", "")
+        header_offset = getattr(info, "header_offset", None)
+        if (
+            not isinstance(filename, str)
+            or isinstance(header_offset, bool)
+            or not isinstance(header_offset, int)
+            or header_offset < 0
+        ):
+            continue
+        position = None
+        try:
+            position = fileobj.tell()
+            fileobj.seek(header_offset)
+            header = fileobj.read(_LOCAL_FILE_HEADER_SIZE)
+            if len(header) != _LOCAL_FILE_HEADER_SIZE or header[:4] != _LOCAL_FILE_HEADER:
+                issues.append((filename, "invalid_local_header"))
+                continue
+            local_flags = struct.unpack_from("<H", header, 6)[0]
+            local_method = struct.unpack_from("<H", header, 8)[0]
+            filename_length, _extra_length = struct.unpack_from("<HH", header, 26)
+            local_name = fileobj.read(filename_length)
+            if len(local_name) != filename_length:
+                issues.append((filename, "truncated_local_filename"))
+                continue
+            central_flags = getattr(info, "flag_bits", None)
+            central_method = getattr(info, "compress_type", None)
+            if local_flags != central_flags or local_method != central_method:
+                issues.append((filename, "local_header_attributes_mismatch"))
+                continue
+            encoding = "utf-8" if local_flags & 0x800 else "cp437"
+            try:
+                decoded_name = local_name.decode(encoding)
+            except UnicodeDecodeError:
+                issues.append((filename, "invalid_local_filename"))
+                continue
+            if decoded_name != filename:
+                issues.append((filename, "local_filename_mismatch"))
+        except (AttributeError, OSError, TypeError, ValueError, UnicodeError):
+            issues.append((filename, "local_header_unreadable"))
+        finally:
+            if position is not None:
+                try:
+                    fileobj.seek(position)
+                except (AttributeError, OSError, TypeError, ValueError):
+                    pass
+    return issues
+
+
 def is_symlink(info) -> bool:
     try:
         mode = (int(info.external_attr) >> 16) & 0xFFFF

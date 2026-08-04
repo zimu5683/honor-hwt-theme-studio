@@ -863,6 +863,30 @@ class ImprovementTests(unittest.TestCase):
             catalog = scan_theme(nested_path)
             self.assertIn("nested_data_overlap", {item["kind"] for item in catalog.warnings})
 
+    def test_validator_rejects_central_directory_local_header_mismatch(self):
+        raw = BytesIO()
+        payload = b"same payload"
+        with ZipFile(raw, "w") as archive:
+            archive.writestr("description.xml", payload)
+            archive.writestr("second.bin", payload)
+        encoded = bytearray(raw.getvalue())
+        first = encoded.find(b"PK\x01\x02")
+        second = encoded.find(b"PK\x01\x02", first + 4)
+        self.assertGreaterEqual(first, 0)
+        self.assertGreater(second, first)
+        first_offset = struct.unpack_from("<I", encoded, first + 42)[0]
+        second_offset = struct.unpack_from("<I", encoded, second + 42)[0]
+        struct.pack_into("<I", encoded, first + 42, second_offset)
+        struct.pack_into("<I", encoded, second + 42, first_offset)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "local-header-mismatch.hwt"
+            path.write_bytes(encoded)
+            result = validate_theme(path)
+            self.assertIn("local_header_mismatch", {item["kind"] for item in result["errors"]})
+            catalog = scan_theme(path)
+            self.assertIn("local_header_mismatch", {item["kind"] for item in catalog.warnings})
+
     def test_validator_rejects_oversized_entry_before_decompression(self):
         info = MagicMock()
         info.filename = "bomb.bin"

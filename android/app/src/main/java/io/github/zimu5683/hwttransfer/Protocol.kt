@@ -294,8 +294,23 @@ object Protocol {
                     if (readUnsignedInt(localHeader, 0) != LOCAL_FILE_HEADER_SIGNATURE) {
                         invalidArchiveData("条目 ${index + 1} 的本地文件头无效")
                     }
+                    val centralFlags = readUnsignedShort(fixed, 8)
+                    val centralMethod = readUnsignedShort(fixed, 10)
+                    val localFlags = readUnsignedShort(localHeader, 6)
+                    val localMethod = readUnsignedShort(localHeader, 8)
+                    if (centralFlags != localFlags || centralMethod != localMethod) {
+                        invalidArchiveData("条目 ${index + 1} 的本地文件头属性与中心目录不一致")
+                    }
                     val localFilenameLength = readUnsignedShort(localHeader, 26)
                     val localExtraLength = readUnsignedShort(localHeader, 28)
+                    val localFilename = readArchiveBytes(
+                        archive,
+                        addArchiveOffset(localHeaderOffset, LOCAL_FILE_HEADER_SIZE),
+                        localFilenameLength.toLong(),
+                    )
+                    if (!localFilename.contentEquals(filename)) {
+                        invalidArchiveData("条目 ${index + 1} 的本地文件名与中心目录不一致")
+                    }
                     val dataStart = addArchiveOffset(
                         localHeaderOffset,
                         LOCAL_FILE_HEADER_SIZE + localFilenameLength + localExtraLength,

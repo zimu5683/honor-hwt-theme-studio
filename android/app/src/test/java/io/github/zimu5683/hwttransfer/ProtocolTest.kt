@@ -329,6 +329,48 @@ class ProtocolTest {
     }
 
     @Test
+    fun validateHwtRejectsCentralDirectoryLocalHeaderNameMismatch() {
+        val file = File.createTempFile("local-header-mismatch", ".hwt")
+        val payload = "same payload".toByteArray()
+        try {
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write(payload)
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("second.bin"))
+                zip.write(payload)
+                zip.closeEntry()
+            }
+            val encoded = file.readBytes()
+            val firstCentral = encoded.indexOfSignature(byteArrayOf(0x50, 0x4b, 0x01, 0x02))
+            val secondCentral = encoded.indexOfSignature(
+                byteArrayOf(0x50, 0x4b, 0x01, 0x02),
+                firstCentral + 4,
+            )
+            assertTrue(firstCentral >= 0)
+            assertTrue(secondCentral > firstCentral)
+            val firstOffset = ByteBuffer.wrap(encoded, firstCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .int
+            val secondOffset = ByteBuffer.wrap(encoded, secondCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .int
+            ByteBuffer.wrap(encoded, firstCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(secondOffset)
+            ByteBuffer.wrap(encoded, secondCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(firstOffset)
+            file.writeBytes(encoded)
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun validateHwtRejectsNestedCrcCorruption() {
         val file = File.createTempFile("nested-crc", ".hwt")
         val content = byteArrayOf(0x21, 0x32, 0x43, 0x54)
