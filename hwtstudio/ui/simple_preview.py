@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QVBoxLayout
 
-from ..imageops import enhance_image, fit_image
+from ..imageops import enhance_image, fit_image, load_image
 from ..models import ResourceChange
 from ..paths import bundle_root
 from ..semantic import PreviewSpec
@@ -68,11 +68,13 @@ class PreviewRepository:
             return None
         return self.scenes.get(spec.scene)
 
-    def _image(self, scene: PreviewScene) -> Image.Image:
+    def _image(self, scene: PreviewScene) -> Image.Image | None:
         cached = self._images.get(scene.name)
         if cached is None:
-            with Image.open(scene.path) as opened:
-                cached = opened.convert("RGBA")
+            try:
+                cached = load_image(scene.path)
+            except (OSError, ValueError, Image.DecompressionBombError):
+                return None
             self._images[scene.name] = cached
         return cached.copy()
 
@@ -96,6 +98,8 @@ class PreviewRepository:
         if scene is None:
             return None
         image = self._image(scene)
+        if image is None:
+            return None
         rect = self._rect(scene, spec)
         if rect:
             draw = ImageDraw.Draw(image, "RGBA")
@@ -108,6 +112,8 @@ class PreviewRepository:
         if scene is None:
             return None
         image = self._image(scene)
+        if image is None:
+            return None
         rect = self._rect(scene, spec)
         if rect is None:
             return image
@@ -120,14 +126,13 @@ class PreviewRepository:
                 source = Path(change.source_file)
                 if source.is_file():
                     try:
-                        with Image.open(source) as opened:
-                            replacement = opened.convert("RGBA")
+                        replacement = load_image(source)
                         width = max(1, rect[2] - rect[0])
                         height = max(1, rect[3] - rect[1])
                         replacement = fit_image(replacement, (width, height), change.fit, change.focus_x, change.focus_y)
                         replacement = enhance_image(replacement, change.enhance, change.enhance_strength)
                         image.alpha_composite(replacement, rect[:2])
-                    except (OSError, ValueError):
+                    except (OSError, ValueError, Image.DecompressionBombError):
                         self._blend_missing(image, rect)
                 else:
                     self._blend_missing(image, rect)

@@ -11,15 +11,47 @@ from .pngmeta import inject_android_chunks
 
 PLACEHOLDER_SIZE = (1080, 1920)
 PLACEHOLDER_RGBA = (242, 242, 242, 255)
+MAX_IMAGE_FILE_BYTES = 256 * 1024 * 1024
+MAX_IMAGE_DIMENSION = 16384
+MAX_IMAGE_PIXELS = 64_000_000
+
+
+def _validate_image_size(width: int, height: int) -> None:
+    if (
+        isinstance(width, bool)
+        or isinstance(height, bool)
+        or not isinstance(width, int)
+        or not isinstance(height, int)
+        or width < 1
+        or height < 1
+    ):
+        raise ValueError("图片尺寸无效")
+    if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
+        raise ValueError(f"图片单边不能超过 {MAX_IMAGE_DIMENSION} 像素")
+    if width * height > MAX_IMAGE_PIXELS:
+        raise ValueError(f"图片像素总数不能超过 {MAX_IMAGE_PIXELS}")
+
+
+def load_image(source: Path) -> Image.Image:
+    source = Path(source)
+    try:
+        file_size = source.stat().st_size
+    except OSError as exc:
+        raise ValueError(f"图片文件不可用：{source}") from exc
+    if file_size > MAX_IMAGE_FILE_BYTES:
+        raise ValueError(f"图片文件不能超过 {MAX_IMAGE_FILE_BYTES} 字节")
+    with Image.open(source) as opened:
+        _validate_image_size(opened.width, opened.height)
+        return opened.convert("RGBA")
 
 
 def render_image(source: Path, slot: ResourceSlot, change: ResourceChange) -> bytes:
-    with Image.open(source) as opened:
-        image = opened.convert("RGBA")
+    image = load_image(source)
 
     target_width = slot.width or image.width
     target_height = slot.height or image.height
     if target_width and target_height:
+        _validate_image_size(target_width, target_height)
         image = fit_image(
             image,
             (target_width, target_height),
@@ -47,6 +79,7 @@ def render_placeholder(slot: ResourceSlot) -> bytes:
     """Render a neutral managed placeholder using the slot's output format."""
     width = slot.width or PLACEHOLDER_SIZE[0]
     height = slot.height or PLACEHOLDER_SIZE[1]
+    _validate_image_size(width, height)
     image = Image.new("RGBA", (width, height), PLACEHOLDER_RGBA)
     target_format = _target_format(slot)
     output = BytesIO()
@@ -69,6 +102,7 @@ def fit_image(
     focus_x: float = 0.5,
     focus_y: float = 0.5,
 ) -> Image.Image:
+    _validate_image_size(*size)
     focus_x = min(1.0, max(0.0, focus_x))
     focus_y = min(1.0, max(0.0, focus_y))
     if mode == "stretch":

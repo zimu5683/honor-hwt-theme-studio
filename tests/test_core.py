@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from PIL import Image
@@ -13,7 +14,7 @@ from PIL import Image
 from hwtstudio.blank import DIRECTORY_ENTRIES, IMAGE_LAYOUT, create_blank_theme
 from hwtstudio.catalog import load_catalog, scan_theme
 from hwtstudio.exporter import export_theme
-from hwtstudio.imageops import render_image
+from hwtstudio.imageops import MAX_IMAGE_DIMENSION, load_image, render_image
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
 from hwtstudio.projectio import load_project, save_project
 from hwtstudio.paths import bundled_catalog, default_source_theme
@@ -205,6 +206,18 @@ class CoreTests(unittest.TestCase):
             rendered = render_image(source, slot, ResourceChange(slot_id=slot.id))
             with Image.open(BytesIO(rendered)) as image:
                 self.assertEqual(image.format, "PNG")
+
+    def test_image_loader_rejects_oversized_dimensions_before_conversion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "declared-huge.png"
+            source.write_bytes(b"not decoded")
+            with patch("hwtstudio.imageops.Image.open") as open_image:
+                decoded = open_image.return_value.__enter__.return_value
+                decoded.width = MAX_IMAGE_DIMENSION + 1
+                decoded.height = 1
+                with self.assertRaisesRegex(ValueError, "单边"):
+                    load_image(source)
+                decoded.convert.assert_not_called()
 
     def test_custom_resource_round_trip_and_export(self):
         slot = ResourceSlot(
