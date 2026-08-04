@@ -238,10 +238,13 @@ class ProtocolTest {
                 zip.closeEntry()
             }
             val encoded = file.readBytes()
-            val offset = (0..encoded.size - content.size).first { index ->
-                content.indices.all { encoded[index + it] == content[it] }
-            }
-            encoded[offset] = (encoded[offset].toInt() xor 0x01).toByte()
+            val fileNameBytes = "description.xml".toByteArray(Charsets.UTF_8)
+            val localHeaderSize = 30
+            val payloadOffset = localHeaderSize + fileNameBytes.size
+            assertEquals(0x50, encoded[0].toInt() and 0xff)
+            assertEquals(0x4b, encoded[1].toInt() and 0xff)
+            assertEquals(content.toList(), encoded.slice(payloadOffset until payloadOffset + content.size))
+            encoded[payloadOffset] = (encoded[payloadOffset].toInt() xor 0x01).toByte()
             file.writeBytes(encoded)
 
             val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
