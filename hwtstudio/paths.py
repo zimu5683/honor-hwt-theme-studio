@@ -21,8 +21,16 @@ def data_dir() -> Path:
         root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     else:
         root = Path.home() / ".local" / "share"
+    if root.is_symlink() or (root.exists() and not root.is_dir()):
+        raise OSError("应用数据根目录不是普通目录")
     path = root / "HwtThemeStudio"
+    if path.is_symlink():
+        raise OSError("应用数据目录不能是符号链接")
+    if path.exists() and not path.is_dir():
+        raise OSError("应用数据目录不是目录")
     path.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink() or not path.is_dir():
+        raise OSError("应用数据目录不是普通目录")
     return path
 
 
@@ -41,4 +49,3 @@ def bundled_blank_theme() -> Path:
 
 def default_source_theme() -> Path:
     return Path(r"D:\HONOR Share\Honor Share\30039574_大雪.hwt")
-
