@@ -2,11 +2,15 @@ package io.github.zimu5683.hwttransfer
 
 import org.json.JSONException
 import org.json.JSONObject
+import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
+import java.io.InputStream
 import java.security.MessageDigest
 import java.text.Normalizer
 import java.util.HashSet
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
 import java.util.zip.ZipFile
 
 object Protocol {
@@ -41,6 +45,59 @@ object Protocol {
     data class PairRequest(val code: String, val clientName: String)
 
     data class TransferPrepare(val fileName: String, val totalSize: Long, val sha256: String)
+
+    private class ArchivePathTracker {
+        private val normalizedNames = HashSet<String>()
+        private val filePaths = HashSet<String>()
+        private val pathAncestors = HashSet<String>()
+        private val directoryPaths = HashSet<String>()
+
+        fun add(entry: ZipEntry) {
+            val normalizedName = normalizeArchivePath(entry.name)
+            if (!isSafeArchivePath(normalizedName)) {
+                throw TransferException(422, "invalid_hwt", "HWT ZIP 路径不安全")
+            }
+            if (!normalizedNames.add(normalizedName)) {
+                throw TransferException(422, "invalid_hwt", "HWT ZIP 存在规范化后的重复路径")
+            }
+            val topologyName = normalizedName.removeSuffix("/")
+            if (entry.isDirectory) {
+                if (topologyName in filePaths || hasFilePathParent(topologyName, filePaths)) {
+                    throw TransferException(422, "invalid_hwt", "HWT ZIP 存在文件/目录路径重叠")
+                }
+                directoryPaths.add(topologyName)
+            } else {
+                if (topologyName in directoryPaths ||
+                    topologyName in pathAncestors ||
+                    hasFilePathParent(topologyName, filePaths)
+                ) {
+                    throw TransferException(422, "invalid_hwt", "HWT ZIP 存在文件/目录路径重叠")
+                }
+                filePaths.add(topologyName)
+            }
+            addPathAncestors(topologyName, pathAncestors)
+        }
+    }
+
+    private class CountingInputStream(input: InputStream) : InputStream() {
+        private val source = input
+        var count: Long = 0
+            private set
+
+        override fun read(): Int {
+            val value = source.read()
+            if (value >= 0) count += 1
+            return value
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            val read = source.read(buffer, offset, length)
+            if (read > 0) count += read
+            return read
+        }
+
+        override fun close() = source.close()
+    }
 
     fun parsePairRequest(raw: String): PairRequest {
         val body = try {
@@ -140,10 +197,7 @@ object Protocol {
                 if (description == null || description.isDirectory) {
                     throw TransferException(422, "invalid_hwt", "HWT 中缺少 description.xml")
                 }
-                val normalizedNames = HashSet<String>()
-                val filePaths = HashSet<String>()
-                val pathAncestors = HashSet<String>()
-                val directoryPaths = HashSet<String>()
+                val paths = ArchivePathTracker()
                 val sizes = buildList {
                     val entries = archive.entries()
                     var entryCount = 0
@@ -151,29 +205,7 @@ object Protocol {
                         val entry = entries.nextElement()
                         entryCount += 1
                         validateArchiveEntryCount(entryCount)
-                        val normalizedName = normalizeArchivePath(entry.name)
-                        if (!isSafeArchivePath(normalizedName)) {
-                            throw TransferException(422, "invalid_hwt", "HWT ZIP 路径不安全")
-                        }
-                        if (!normalizedNames.add(normalizedName)) {
-                            throw TransferException(422, "invalid_hwt", "HWT ZIP 存在规范化后的重复路径")
-                        }
-                        val topologyName = normalizedName.removeSuffix("/")
-                        if (entry.isDirectory) {
-                            if (topologyName in filePaths || hasFilePathParent(topologyName, filePaths)) {
-                                throw TransferException(422, "invalid_hwt", "HWT ZIP 存在文件/目录路径重叠")
-                            }
-                            directoryPaths.add(topologyName)
-                        } else {
-                            if (topologyName in directoryPaths ||
-                                topologyName in pathAncestors ||
-                                hasFilePathParent(topologyName, filePaths)
-                            ) {
-                                throw TransferException(422, "invalid_hwt", "HWT ZIP 存在文件/目录路径重叠")
-                            }
-                            filePaths.add(topologyName)
-                        }
-                        addPathAncestors(topologyName, pathAncestors)
+                        paths.add(entry)
                         if (!entry.isDirectory) {
                             validateArchiveCompression(entry.size, entry.compressedSize)
                             add(entry.size)
@@ -198,25 +230,109 @@ object Protocol {
             while (entries.hasMoreElements()) {
                 val entry = entries.nextElement()
                 if (entry.isDirectory) continue
-                var entryBytes = 0L
-                archive.getInputStream(entry).use { input ->
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        entryBytes += count
-                        totalBytes += count
-                        if (entryBytes > MAX_ARCHIVE_ENTRY_BYTES ||
-                            totalBytes > MAX_ARCHIVE_UNCOMPRESSED_BYTES
-                        ) {
-                            throw TransferException(422, "invalid_hwt", "HWT ZIP 解压总量超过限制")
-                        }
+                val counted = CountingInputStream(archive.getInputStream(entry))
+                counted.use { source ->
+                    val input = BufferedInputStream(source)
+                    if (startsLikeZip(input)) {
+                        validateNestedArchive(input)
+                    } else {
+                        drainArchiveEntry(input, buffer, totalBytes)
                     }
+                    val entryBytes = source.count
+                    if (entryBytes > MAX_ARCHIVE_ENTRY_BYTES ||
+                        entryBytes > MAX_ARCHIVE_UNCOMPRESSED_BYTES - totalBytes
+                    ) {
+                        throw TransferException(422, "invalid_hwt", "HWT ZIP 解压总量超过限制")
+                    }
+                    totalBytes += entryBytes
                 }
             }
         } catch (exc: TransferException) {
             throw exc
         } catch (exc: Exception) {
             throw TransferException(422, "invalid_hwt", "HWT ZIP 内容校验失败").also {
+                it.addSuppressed(exc)
+            }
+        }
+    }
+
+    private fun startsLikeZip(input: BufferedInputStream): Boolean {
+        input.mark(4)
+        val signature = ByteArray(4)
+        var offset = 0
+        while (offset < signature.size) {
+            val count = input.read(signature, offset, signature.size - offset)
+            if (count < 0) break
+            if (count == 0) continue
+            offset += count
+        }
+        input.reset()
+        if (offset != signature.size) return false
+        return signature.contentEquals(byteArrayOf(0x50, 0x4b, 0x03, 0x04)) ||
+            signature.contentEquals(byteArrayOf(0x50, 0x4b, 0x05, 0x06)) ||
+            signature.contentEquals(byteArrayOf(0x50, 0x4b, 0x07, 0x08))
+    }
+
+    private fun drainArchiveEntry(input: InputStream, buffer: ByteArray, previousTotal: Long) {
+        var entryBytes = 0L
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            entryBytes += count
+            if (entryBytes > MAX_ARCHIVE_ENTRY_BYTES ||
+                entryBytes > MAX_ARCHIVE_UNCOMPRESSED_BYTES - previousTotal
+            ) {
+                throw TransferException(422, "invalid_hwt", "HWT ZIP 解压总量超过限制")
+            }
+        }
+    }
+
+    private fun validateNestedArchive(input: InputStream) {
+        val buffer = ByteArray(1024 * 1024)
+        val paths = ArchivePathTracker()
+        var totalBytes = 0L
+        var entryCount = 0
+        try {
+            ZipInputStream(input).use { archive ->
+                while (true) {
+                    val entry = archive.nextEntry ?: break
+                    entryCount += 1
+                    validateArchiveEntryCount(entryCount)
+                    paths.add(entry)
+                    if (entry.isDirectory) {
+                        archive.closeEntry()
+                        continue
+                    }
+                    if (entry.size > MAX_ARCHIVE_ENTRY_BYTES ||
+                        entry.size > MAX_ARCHIVE_UNCOMPRESSED_BYTES - totalBytes
+                    ) {
+                        throw TransferException(422, "invalid_hwt", "HWT 嵌套 ZIP 解压总量超过限制")
+                    }
+                    var entryBytes = 0L
+                    while (true) {
+                        val count = archive.read(buffer)
+                        if (count < 0) break
+                        entryBytes += count
+                        if (entryBytes > MAX_ARCHIVE_ENTRY_BYTES ||
+                            entryBytes > MAX_ARCHIVE_UNCOMPRESSED_BYTES - totalBytes
+                        ) {
+                            throw TransferException(422, "invalid_hwt", "HWT 嵌套 ZIP 解压总量超过限制")
+                        }
+                    }
+                    archive.closeEntry()
+                    if (entry.size >= 0L && entry.size != entryBytes) {
+                        throw TransferException(422, "invalid_hwt", "HWT 嵌套 ZIP 条目大小无效")
+                    }
+                    if (entry.compressedSize >= 0L) {
+                        validateArchiveCompression(entryBytes, entry.compressedSize)
+                    }
+                    totalBytes += entryBytes
+                }
+            }
+        } catch (exc: TransferException) {
+            throw exc
+        } catch (exc: Exception) {
+            throw TransferException(422, "invalid_hwt", "HWT 嵌套 ZIP 内容校验失败").also {
                 it.addSuppressed(exc)
             }
         }

@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
@@ -246,6 +247,68 @@ class ProtocolTest {
             assertEquals(content.toList(), encoded.slice(payloadOffset until payloadOffset + content.size))
             encoded[payloadOffset] = (encoded[payloadOffset].toInt() xor 0x01).toByte()
             file.writeBytes(encoded)
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsNestedCrcCorruption() {
+        val file = File.createTempFile("nested-crc", ".hwt")
+        val content = byteArrayOf(0x21, 0x32, 0x43, 0x54)
+        try {
+            val nestedBytes = ByteArrayOutputStream()
+            val entry = ZipEntry("theme.xml").apply {
+                method = ZipEntry.STORED
+                size = content.size.toLong()
+                crc = CRC32().apply { update(content) }.value
+            }
+            ZipOutputStream(nestedBytes).use { zip ->
+                zip.putNextEntry(entry)
+                zip.write(content)
+                zip.closeEntry()
+            }
+            val nested = nestedBytes.toByteArray()
+            val payloadOffset = 30 + "theme.xml".toByteArray(Charsets.UTF_8).size
+            nested[payloadOffset] = (nested[payloadOffset].toInt() xor 0x01).toByte()
+
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons"))
+                zip.write(nested)
+                zip.closeEntry()
+            }
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsUnsafeNestedPath() {
+        val file = File.createTempFile("nested-path", ".hwt")
+        try {
+            val nestedBytes = ByteArrayOutputStream()
+            ZipOutputStream(nestedBytes).use { zip ->
+                zip.putNextEntry(ZipEntry("../escape.xml"))
+                zip.write("<resources/>".toByteArray())
+                zip.closeEntry()
+            }
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons"))
+                zip.write(nestedBytes.toByteArray())
+                zip.closeEntry()
+            }
 
             val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
             assertEquals("invalid_hwt", error.code)
