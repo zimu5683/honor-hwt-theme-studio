@@ -18,8 +18,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 from PIL import Image
 
 from hwtstudio.blank import create_blank_theme
-from hwtstudio.catalog import load_catalog, scan_theme
-from hwtstudio.catalog import save_catalog
+from hwtstudio.catalog import load_catalog, save_catalog, save_source_compatibility_report, scan_theme
 from hwtstudio.common import (
     MAX_ARCHIVE_ENTRIES,
     MAX_ARCHIVE_ENTRY_BYTES,
@@ -39,6 +38,7 @@ from hwtstudio.projectio import load_project, project_assets_dir, save_project
 from hwtstudio.phone_transfer import TransferCancelled
 from hwtstudio.ssh_transfer import preflight_phone, transfer_to_phone
 from hwtstudio.services.catalog_service import load_preferred_catalog, save_user_catalog
+from hwtstudio.services import catalog_service
 from hwtstudio.ui.dialogs import find_named_files
 from hwtstudio.validation import validate_custom_slot, validate_theme
 from hwtstudio.xmlutil import parse_xml
@@ -647,6 +647,72 @@ class ImprovementTests(unittest.TestCase):
             report = json.loads((root / "source_compatibility.report.json").read_text(encoding="utf-8"))
             self.assertEqual(report["summary"]["compatibility_warnings"], 1)
             self.assertTrue((root / "catalog_daxue.json").is_file())
+
+    def test_user_catalog_save_rolls_back_both_files_when_second_replace_fails(self):
+        old = ThemeCatalog("old.hwt", "a" * 64, "old", {"modules": 1}, [], [])
+        new = ThemeCatalog("new.hwt", "b" * 64, "new", {"modules": 2}, [], [])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("hwtstudio.services.catalog_service.data_dir", return_value=root):
+                save_user_catalog(old)
+            old_catalog = (root / "catalog_daxue.json").read_bytes()
+            old_report = (root / "source_compatibility.report.json").read_bytes()
+            real_replace = os.replace
+            failed = False
+
+            def fail_report_replace(source, target):
+                nonlocal failed
+                if Path(target).name == "source_compatibility.report.json" and not failed:
+                    failed = True
+                    raise OSError("模拟报告提交失败")
+                return real_replace(source, target)
+
+            with patch("hwtstudio.services.catalog_service.os.replace", side_effect=fail_report_replace):
+                with patch("hwtstudio.services.catalog_service.data_dir", return_value=root):
+                    with self.assertRaisesRegex(OSError, "提交校验失败"):
+                        save_user_catalog(new)
+
+            self.assertEqual((root / "catalog_daxue.json").read_bytes(), old_catalog)
+            self.assertEqual((root / "source_compatibility.report.json").read_bytes(), old_report)
+            self.assertFalse((root / ".catalog_bundle.transaction.json").exists())
+            self.assertEqual(list(root.glob("*.pending")), [])
+            self.assertEqual(list(root.glob("*.backup")), [])
+
+    def test_user_catalog_load_recovers_after_first_file_was_replaced(self):
+        slot = copy.deepcopy(self.catalog.resources[0])
+        old = ThemeCatalog("old.hwt", "a" * 64, "old", {"modules": 1}, [], [slot])
+        new = ThemeCatalog("new.hwt", "b" * 64, "new", {"modules": 2}, [], [slot])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("hwtstudio.services.catalog_service.data_dir", return_value=root):
+                save_user_catalog(old)
+            targets = [root / catalog_service._CATALOG_FILE_NAME, root / catalog_service._REPORT_FILE_NAME]
+            stages = [catalog_service.unique_temp_path(target, suffix=".pending") for target in targets]
+            backups = [catalog_service.unique_temp_path(target, suffix=".backup") for target in targets]
+            save_catalog(new, stages[0])
+            save_source_compatibility_report(new, stages[1])
+            entries = []
+            for target, stage, backup in zip(targets, stages, backups):
+                shutil.copyfile(target, backup)
+                entries.append({
+                    "target": target.name,
+                    "stage": stage.name,
+                    "backup": backup.name,
+                    "sha256": catalog_service._bounded_sha256(stage),
+                    "backup_sha256": catalog_service._bounded_sha256(backup),
+                    "original_exists": True,
+                })
+            catalog_service._write_transaction(root, entries)
+            os.replace(stages[0], targets[0])
+
+            with patch("hwtstudio.services.catalog_service.data_dir", return_value=root):
+                loaded, warning = load_preferred_catalog()
+
+            self.assertEqual(loaded.source_path, "new.hwt")
+            self.assertIn("恢复", warning)
+            report = json.loads(targets[1].read_text(encoding="utf-8"))
+            self.assertEqual(report["source_path"], "new.hwt")
+            self.assertFalse((root / ".catalog_bundle.transaction.json").exists())
 
     def test_catalog_loader_bounds_and_validates_cache_shape(self):
         with tempfile.TemporaryDirectory() as directory:

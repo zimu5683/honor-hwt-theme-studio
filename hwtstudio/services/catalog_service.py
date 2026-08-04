@@ -1,27 +1,255 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+import re
+import shutil
+from pathlib import Path
+
 from ..catalog import (
     load_catalog,
     save_catalog,
     save_source_compatibility_report,
     scan_theme,
 )
+from ..common import MAX_CATALOG_BYTES
 from ..models import ThemeCatalog
-from ..paths import bundled_catalog, data_dir, default_source_theme
+from ..paths import bundled_catalog, data_dir, default_source_theme, unique_temp_path
+
+
+_CATALOG_FILE_NAME = "catalog_daxue.json"
+_REPORT_FILE_NAME = "source_compatibility.report.json"
+_TRANSACTION_FILE_NAME = ".catalog_bundle.transaction.json"
+_TRANSACTION_SCHEMA = 1
+_MAX_TRANSACTION_BYTES = 16 * 1024
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _bounded_sha256(path: Path) -> str | None:
+    try:
+        if not path.is_file() or path.stat().st_size > MAX_CATALOG_BYTES:
+            return None
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _safe_unlink(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _transaction_path(root: Path) -> Path:
+    return root / _TRANSACTION_FILE_NAME
+
+
+def _stage_name_is_safe(name: object, target_name: str, suffix: str) -> bool:
+    return (
+        isinstance(name, str)
+        and Path(name).name == name
+        and name.startswith(f".{target_name}.")
+        and name.endswith(suffix)
+    )
+
+
+def _transaction_entries(raw: object) -> list[dict] | None:
+    if not isinstance(raw, dict):
+        return None
+    schema = raw.get("schema")
+    files = raw.get("files")
+    if isinstance(schema, bool) or schema != _TRANSACTION_SCHEMA or not isinstance(files, list):
+        return None
+    expected_targets = {_CATALOG_FILE_NAME, _REPORT_FILE_NAME}
+    entries: list[dict] = []
+    seen: set[str] = set()
+    for item in files:
+        if not isinstance(item, dict):
+            return None
+        target = item.get("target")
+        if not isinstance(target, str) or target not in expected_targets or target in seen:
+            return None
+        stage = item.get("stage")
+        backup = item.get("backup")
+        backup_hash = item.get("backup_sha256")
+        if not _stage_name_is_safe(stage, target, ".pending"):
+            return None
+        if backup is not None and not _stage_name_is_safe(backup, target, ".backup"):
+            return None
+        if not isinstance(item.get("sha256"), str) or not _SHA256_PATTERN.fullmatch(item["sha256"]):
+            return None
+        original_exists = item.get("original_exists")
+        if not isinstance(original_exists, bool):
+            return None
+        if original_exists:
+            if backup is None or not isinstance(backup_hash, str) or not _SHA256_PATTERN.fullmatch(backup_hash):
+                return None
+        elif backup is not None or backup_hash is not None:
+            return None
+        entries.append({
+            "target": target,
+            "stage": stage,
+            "backup": backup,
+            "sha256": item["sha256"],
+            "backup_sha256": backup_hash,
+            "original_exists": original_exists,
+        })
+        seen.add(target)
+    if seen != expected_targets:
+        return None
+    return entries
+
+
+def _read_transaction(root: Path) -> list[dict] | None:
+    marker = _transaction_path(root)
+    try:
+        encoded = marker.read_bytes()
+        if len(encoded) > _MAX_TRANSACTION_BYTES:
+            return None
+        raw = json.loads(encoded.decode("utf-8"))
+    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return _transaction_entries(raw)
+
+
+def _write_transaction(root: Path, entries: list[dict]) -> None:
+    marker = _transaction_path(root)
+    temp = unique_temp_path(marker, suffix=".tmp")
+    payload = {"schema": _TRANSACTION_SCHEMA, "files": entries}
+    try:
+        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        with temp.open("wb") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, marker)
+    finally:
+        _safe_unlink(temp)
+
+
+def _cleanup_transaction(root: Path, entries: list[dict]) -> None:
+    for item in entries:
+        _safe_unlink(root / item["stage"])
+        if item["backup"]:
+            _safe_unlink(root / item["backup"])
+    _safe_unlink(_transaction_path(root))
+
+
+def _complete_transaction(root: Path, entries: list[dict]) -> bool:
+    for item in entries:
+        target = root / item["target"]
+        stage = root / item["stage"]
+        expected = item["sha256"]
+        if _bounded_sha256(target) == expected:
+            continue
+        if _bounded_sha256(stage) != expected:
+            return False
+        try:
+            os.replace(stage, target)
+        except OSError:
+            return False
+    if all(_bounded_sha256(root / item["target"]) == item["sha256"] for item in entries):
+        _cleanup_transaction(root, entries)
+        return True
+    return False
+
+
+def _rollback_transaction(root: Path, entries: list[dict]) -> bool:
+    try:
+        for item in entries:
+            target = root / item["target"]
+            backup = root / item["backup"] if item["backup"] else None
+            if item["original_exists"]:
+                if backup is None or _bounded_sha256(backup) != item["backup_sha256"]:
+                    return False
+                os.replace(backup, target)
+            else:
+                _safe_unlink(target)
+        _cleanup_transaction(root, entries)
+        return True
+    except OSError:
+        return False
+
+
+def _recover_catalog_transaction(root: Path) -> tuple[bool, str]:
+    marker = _transaction_path(root)
+    if not marker.exists():
+        return True, ""
+    entries = _read_transaction(root)
+    if entries is None:
+        _safe_unlink(marker)
+        return True, "资源目录事务记录损坏，已清理"
+    if _complete_transaction(root, entries):
+        return True, "资源目录与兼容性报告已从未完成事务中恢复"
+    if _rollback_transaction(root, entries):
+        return True, "资源目录事务未完成，已回滚到上一版本"
+    return False, "资源目录事务无法恢复，已暂时忽略用户缓存"
+
+
+def _save_catalog_bundle(catalog: ThemeCatalog, root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    targets = [root / _CATALOG_FILE_NAME, root / _REPORT_FILE_NAME]
+    stages = [unique_temp_path(target, suffix=".pending") for target in targets]
+    backups = [unique_temp_path(target, suffix=".backup") for target in targets]
+    entries: list[dict] = []
+    marker_written = False
+    try:
+        save_catalog(catalog, stages[0])
+        save_source_compatibility_report(catalog, stages[1])
+        for target, stage, backup in zip(targets, stages, backups):
+            original_exists = target.is_file()
+            backup_name = backup.name if original_exists else None
+            backup_hash = None
+            if original_exists:
+                shutil.copyfile(target, backup)
+                backup_hash = _bounded_sha256(backup)
+                if backup_hash is None:
+                    raise OSError(f"无法备份用户资源目录：{target}")
+            new_hash = _bounded_sha256(stage)
+            if new_hash is None:
+                raise OSError(f"无法校验待保存的用户资源目录：{stage}")
+            entries.append({
+                "target": target.name,
+                "stage": stage.name,
+                "backup": backup_name,
+                "sha256": new_hash,
+                "backup_sha256": backup_hash,
+                "original_exists": original_exists,
+            })
+        _write_transaction(root, entries)
+        marker_written = True
+        if not _complete_transaction(root, entries):
+            raise OSError("资源目录与兼容性报告提交校验失败")
+    except Exception:
+        if marker_written and not _rollback_transaction(root, entries):
+            raise OSError("资源目录保存失败，且无法回滚到上一版本")
+        raise
+    finally:
+        for stage, backup in zip(stages, backups):
+            _safe_unlink(stage)
+            _safe_unlink(backup)
 
 
 def load_preferred_catalog() -> tuple[ThemeCatalog, str]:
     """Load a valid user scan first, falling back to bundled/source data."""
-    warning = ""
-    cached = data_dir() / "catalog_daxue.json"
-    if cached.is_file():
+    root = data_dir()
+    recovered, warning = _recover_catalog_transaction(root)
+    cached = root / _CATALOG_FILE_NAME
+    if recovered and cached.is_file():
         try:
             catalog = load_catalog(cached)
             if not catalog.resources:
                 raise ValueError("资源目录为空")
             return catalog, warning
         except Exception as exc:
-            warning = f"用户扫描目录损坏，已回退到内置目录：{exc}"
+            fallback_warning = f"用户扫描目录损坏，已回退到内置目录：{exc}"
+            warning = f"{warning}\n{fallback_warning}" if warning else fallback_warning
     bundled = bundled_catalog()
     if bundled.is_file():
         return load_catalog(bundled), warning
@@ -29,11 +257,14 @@ def load_preferred_catalog() -> tuple[ThemeCatalog, str]:
     if not source.is_file():
         raise FileNotFoundError("找不到资源目录，也找不到默认大雪主题。")
     catalog = scan_theme(source)
-    save_catalog(catalog, cached)
+    if recovered:
+        save_catalog(catalog, cached)
     return catalog, warning
 
 
 def save_user_catalog(catalog: ThemeCatalog) -> None:
     root = data_dir()
-    save_catalog(catalog, root / "catalog_daxue.json")
-    save_source_compatibility_report(catalog, root / "source_compatibility.report.json")
+    recovered, warning = _recover_catalog_transaction(root)
+    if not recovered:
+        raise OSError(warning)
+    _save_catalog_bundle(catalog, root)
