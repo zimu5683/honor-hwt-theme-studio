@@ -1063,6 +1063,18 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertEqual(devices[0].token, "secret")
             self.assertEqual(registry.load()["phone-1"].host, "10.0.0.8")
 
+    def test_discovery_does_not_reuse_stale_capabilities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry = PhoneRegistry(Path(directory) / "phones.json")
+            registry.update(PhoneDevice(
+                "phone-1", "旧名称", "10.0.0.2", features=[FEATURE_TRANSFER_CHUNKED],
+            ))
+            with patch("hwtstudio.phone_transfer.socket.socket", FakeDiscoverySocket):
+                devices = discover_phones(timeout=0.01, registry=registry)
+
+            self.assertEqual(devices[0].features, ["device_profile"])
+            self.assertNotIn(FEATURE_TRANSFER_CHUNKED, registry.load()["phone-1"].features)
+
     def test_probe_pair_and_stream_upload(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), ReceiverHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

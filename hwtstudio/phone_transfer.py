@@ -398,8 +398,6 @@ def _merge_saved(device: PhoneDevice, saved: dict[str, PhoneDevice]) -> PhoneDev
     if previous:
         device.token = previous.token
         device.profile = previous.profile
-        if not device.features:
-            device.features = previous.features
     return device
 
 
