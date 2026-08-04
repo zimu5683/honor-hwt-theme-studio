@@ -31,6 +31,7 @@ from hwtstudio.common import (
     honor_module_name,
     honor_resource_name,
     honor_resource_path,
+    is_safe_archive_path,
 )
 from hwtstudio.exporter import export_theme, preflight_export, safe_filename
 from hwtstudio.imageops import render_image as render_source_image
@@ -818,6 +819,13 @@ class ImprovementTests(unittest.TestCase):
                 outer.writestr("com.example", nested_data.getvalue())
             nested_result = validate_theme(nested_only)
         self.assertIn("nested_path_overlap", {item["kind"] for item in nested_result["errors"]})
+
+    def test_archive_paths_reject_empty_and_dot_segments(self):
+        self.assertTrue(is_safe_archive_path("preview/"))
+        self.assertTrue(is_safe_archive_path("preview/cover.jpg"))
+        self.assertFalse(is_safe_archive_path("preview//cover.jpg"))
+        self.assertFalse(is_safe_archive_path("preview/./cover.jpg"))
+        self.assertFalse(is_safe_archive_path("preview/../cover.jpg"))
 
     def test_validator_rejects_physically_overlapping_zip_data(self):
         def overlap_archive() -> bytes:

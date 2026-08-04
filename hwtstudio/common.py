@@ -75,7 +75,11 @@ def is_safe_archive_path(value: str) -> bool:
     value = normalize_archive_path(value)
     if not value or "\\" in value or ":" in value or value.startswith("/") or "\x00" in value:
         return False
-    path = PurePosixPath(value)
+    path_value = value[:-1] if value.endswith("/") else value
+    parts = path_value.split("/")
+    if not path_value or any(part in {"", ".", ".."} for part in parts):
+        return False
+    path = PurePosixPath(path_value)
     return not path.is_absolute() and all(part not in {"", ".", ".."} for part in path.parts)
 
 
