@@ -9,6 +9,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -242,6 +244,24 @@ class ProtocolTest {
     }
 
     @Test
+    fun validateHwtAcceptsSequentialZipDataRanges() {
+        val file = File.createTempFile("sequential", ".hwt")
+        try {
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("second.bin"))
+                zip.write("normal payload".toByteArray())
+                zip.closeEntry()
+            }
+            Protocol.validateHwt(file)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun validateHwtRejectsCrcCorruption() {
         val file = File.createTempFile("crc", ".hwt")
         val content = byteArrayOf(0x11, 0x22, 0x33, 0x44, 0x55)
@@ -264,6 +284,41 @@ class ProtocolTest {
             assertEquals(0x4b, encoded[1].toInt() and 0xff)
             assertEquals(content.toList(), encoded.slice(payloadOffset until payloadOffset + content.size))
             encoded[payloadOffset] = (encoded[payloadOffset].toInt() xor 0x01).toByte()
+            file.writeBytes(encoded)
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsPhysicallyOverlappingZipData() {
+        val file = File.createTempFile("data-overlap", ".hwt")
+        try {
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("second.bin"))
+                zip.write("same payload".toByteArray())
+                zip.closeEntry()
+            }
+            val encoded = file.readBytes()
+            val firstCentral = encoded.indexOfSignature(byteArrayOf(0x50, 0x4b, 0x01, 0x02))
+            val secondCentral = encoded.indexOfSignature(
+                byteArrayOf(0x50, 0x4b, 0x01, 0x02),
+                firstCentral + 4,
+            )
+            assertTrue(firstCentral >= 0)
+            assertTrue(secondCentral > firstCentral)
+            val firstOffset = ByteBuffer.wrap(encoded, firstCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .int
+            ByteBuffer.wrap(encoded, secondCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(firstOffset)
             file.writeBytes(encoded)
 
             val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
@@ -469,5 +524,12 @@ class ProtocolTest {
             Protocol.validateArchiveEntryCount(Protocol.MAX_ARCHIVE_ENTRIES + 1)
         }
         assertEquals("invalid_hwt", error.code)
+    }
+
+    private fun ByteArray.indexOfSignature(signature: ByteArray, start: Int = 0): Int {
+        for (index in start..(size - signature.size)) {
+            if (copyOfRange(index, index + signature.size).contentEquals(signature)) return index
+        }
+        return -1
     }
 }
