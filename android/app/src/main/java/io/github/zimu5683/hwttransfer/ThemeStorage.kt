@@ -52,6 +52,19 @@ internal fun <T> selectLatestBackup(
     name: (T) -> String?,
 ): T? = backups.maxWithOrNull(compareBy<T> { lastModified(it) }.thenBy { name(it) ?: "" })
 
+internal fun <T> selectUniqueSafChild(
+    children: Iterable<T>,
+    expectedName: String,
+    name: (T) -> String?,
+): T? {
+    val matches = children.filter { name(it) == expectedName }
+    return when (matches.size) {
+        0 -> null
+        1 -> matches.single()
+        else -> throw TransferException(503, "replace_failed", "主题目录存在多个同名对象")
+    }
+}
+
 internal fun isReplaceableDirectThemeTarget(target: File): Boolean {
     val path = target.toPath()
     return !Files.exists(path, LinkOption.NOFOLLOW_LINKS) ||
@@ -376,7 +389,7 @@ class ThemeStorage(private val context: Context) {
             if (!writtenDigest.equals(digest, ignoreCase = true)) {
                 throw TransferException(422, "hash_mismatch", "写入手机存储后的 SHA-256 不一致")
             }
-            val existing = directory.findFile(name)
+            val existing = findSafChild(directory, name)
             val overwritten = existing != null
             if (existing != null) {
                 requireSafRegularFile(existing, "同名目标不是普通主题文件")
@@ -411,7 +424,7 @@ class ThemeStorage(private val context: Context) {
                     throw TransferException(422, "hash_mismatch", "最终主题文件 SHA-256 不一致")
                 }
             }
-            val finalFile = directory.findFile(name)
+            val finalFile = findSafChild(directory, name)
                 ?: throw TransferException(503, "rename_failed", "无法确认最终主题文件")
             val finalDigest = context.contentResolver.openInputStream(finalFile.uri)?.use(::sha256Stream)
                 ?: throw TransferException(503, "rename_failed", "无法复核最终主题文件")
@@ -460,12 +473,15 @@ class ThemeStorage(private val context: Context) {
             throw TransferException(503, "storage_unavailable", "无法读取主题目录")
         }
 
+    private fun findSafChild(directory: DocumentFile, name: String): DocumentFile? =
+        selectUniqueSafChild(listSafChildren(directory), name) { it.name }
+
     private fun recoverSafArtifacts(directory: DocumentFile, name: String) {
         val children = listSafChildren(directory)
         val backups = children.filter { child ->
             child.name?.let { isSafBackupName(name, it) } == true
         }
-        val current = children.firstOrNull { it.name == name }
+        val current = selectUniqueSafChild(children, name) { it.name }
         current?.let { requireSafRegularFile(it, "同名目标不是普通主题文件") }
         backups.forEach { requireSafRegularFile(it, "主题备份不是普通文件") }
         var restoredCandidate: DocumentFile? = null
@@ -513,8 +529,8 @@ class ThemeStorage(private val context: Context) {
         sourceName: String,
         targetName: String,
     ): DocumentFile? {
-        val source = directory.findFile(sourceName)
-        val target = directory.findFile(targetName)
+        val source = findSafChild(directory, sourceName)
+        val target = findSafChild(directory, targetName)
         return when (classifySafRenameState(source != null, target != null)) {
             SafRenameState.MOVED -> target
                 ?: throw TransferException(503, "rename_failed", "无法确认主题文件改名状态")

@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -31,6 +32,19 @@ class ThemeStorageTest {
         assertEquals(SafRenameState.NOT_MOVED, classifySafRenameState(sourceExists = true, targetExists = false))
         assertEquals(SafRenameState.AMBIGUOUS, classifySafRenameState(sourceExists = true, targetExists = true))
         assertEquals(SafRenameState.AMBIGUOUS, classifySafRenameState(sourceExists = false, targetExists = false))
+    }
+
+    @Test
+    fun safChildResolutionRequiresExactlyOneMatchingName() {
+        val children = listOf("theme.hwt", "other.hwt")
+
+        assertEquals("theme.hwt", selectUniqueSafChild(children, "theme.hwt") { it })
+        assertNull(selectUniqueSafChild(children, "missing.hwt") { it })
+
+        val error = assertThrows(TransferException::class.java) {
+            selectUniqueSafChild(listOf("theme.hwt", "theme.hwt"), "theme.hwt") { it }
+        }
+        assertEquals("replace_failed", error.code)
     }
 
     @Test
