@@ -592,6 +592,29 @@ def _ensure_file_signature(path: Path, expected: tuple[int, int, int, int], stag
         raise PhoneTransferError(f"主题文件在{stage}时发生变化，请重新选择文件", code="file_changed")
 
 
+def _snapshot_upload_file(
+    path: Path,
+    *,
+    cancelled: threading.Event | None,
+    progress: Callable[[int, int, str], None],
+) -> tuple[tuple[int, int, int, int], str]:
+    """Capture the file identity and digest used by all retries of one upload."""
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    initial_signature = _file_signature(path)
+    size = initial_signature[2]
+    if size > MAX_FILE_SIZE:
+        raise PhoneTransferError("HWT 文件超过 1 GiB 上限", code="too_large")
+    progress(0, size, "正在计算 SHA-256")
+    try:
+        digest = sha256_file(path, cancelled=cancelled)
+    except OSError as exc:
+        raise PhoneTransferError("主题文件在校验时不可用，请重新选择文件", code="file_changed") from exc
+    _ensure_file_signature(path, initial_signature, "校验后")
+    return initial_signature, digest
+
+
 def _error_from_response(status: int, payload: dict) -> PhoneTransferError:
     message = _compact_remote_error(payload.get("message"), f"手机返回错误 HTTP {status}")
     codes = {
@@ -1002,22 +1025,25 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
 def _upload_theme_once(path: Path, device: PhoneDevice, *, transfer_id: str,
                        cancelled: threading.Event | None = None,
                        progress: Callable[[int, int, str], None] | None = None,
+                       initial_signature: tuple[int, int, int, int] | None = None,
+                       digest: str | None = None,
                        timeout: float = 1800.0) -> dict:
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(path)
-    initial_signature = _file_signature(path)
+    initial_signature = initial_signature or _file_signature(path)
     size = initial_signature[2]
     if size > MAX_FILE_SIZE:
         raise PhoneTransferError("HWT 文件超过 1 GiB 上限", code="too_large")
     if not device.token:
         raise PhoneTransferError("手机尚未配对", code="not_paired")
     progress = progress or (lambda _sent, _total, _stage: None)
-    progress(0, size, "正在计算 SHA-256")
-    try:
-        digest = sha256_file(path, cancelled=cancelled)
-    except OSError as exc:
-        raise PhoneTransferError("主题文件在校验时不可用，请重新选择文件", code="file_changed") from exc
+    if digest is None:
+        progress(0, size, "正在计算 SHA-256")
+        try:
+            digest = sha256_file(path, cancelled=cancelled)
+        except OSError as exc:
+            raise PhoneTransferError("主题文件在校验时不可用，请重新选择文件", code="file_changed") from exc
     _ensure_file_signature(path, initial_signature, "校验后")
     _ensure_file_signature(path, initial_signature, "发送前")
     filename = safe_hwt_filename(path.name)
@@ -1088,8 +1114,18 @@ def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event 
             progress=progress,
             timeout=timeout,
         )
+    path = Path(path)
     transfer_id = uuid.uuid4().hex
     callback = progress or (lambda _sent, _total, _stage: None)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    if not device.token:
+        raise PhoneTransferError("手机尚未配对", code="not_paired")
+    initial_signature, digest = _snapshot_upload_file(
+        path,
+        cancelled=cancelled,
+        progress=callback,
+    )
     try:
         return _upload_theme_once(
             path,
@@ -1097,6 +1133,8 @@ def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event 
             transfer_id=transfer_id,
             cancelled=cancelled,
             progress=callback,
+            initial_signature=initial_signature,
+            digest=digest,
             timeout=timeout,
         )
     except PhoneTransferError as exc:
@@ -1114,20 +1152,15 @@ def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event 
                     device, transfer_id, cancelled=cancelled, timeout=min(timeout, 5.0),
                 )
             if status_payload and status_payload.get("state") == "completed":
-                current_path = Path(path)
-                try:
-                    current_size = current_path.stat().st_size
-                    current_digest = sha256_file(current_path, cancelled=cancelled)
-                except OSError as exc:
-                    raise PhoneTransferError("主题文件在状态确认时不可用，请重新选择文件", code="file_changed") from exc
-                callback(current_size, current_size, "手机已完成上传，正在确认结果")
+                _ensure_file_signature(path, initial_signature, "状态确认后")
+                callback(initial_signature[2], initial_signature[2], "手机已完成上传，正在确认结果")
                 return _upload_result_from_payload(
                     status_payload,
-                    path=current_path,
+                    path=path,
                     device=device,
-                    digest=current_digest,
-                    size=current_size,
-                    filename=safe_hwt_filename(current_path.name),
+                    digest=digest,
+                    size=initial_signature[2],
+                    filename=safe_hwt_filename(path.name),
                 )
             if not status_payload or status_payload.get("state") != "receiving":
                 break
@@ -1145,6 +1178,8 @@ def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event 
             cancelled=cancelled,
             progress=callback,
             timeout=timeout,
+            initial_signature=initial_signature,
+            digest=digest,
         )
 
 

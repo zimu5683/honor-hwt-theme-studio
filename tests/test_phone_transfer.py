@@ -1385,6 +1385,47 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertTrue(result["overwritten"])
             self.assertIn("手机已完成上传，正在确认结果", stages)
 
+    def test_completed_transfer_status_rejects_file_changed_after_initial_upload(self):
+        class MutatingStatusConnection(FakeHttpConnection):
+            def __init__(self, fail=False, *_args, **_kwargs):
+                self.fail = fail
+                self.headers = {}
+
+            def putheader(self, name, value):
+                self.headers[name] = value
+
+            def getresponse(self):
+                if self.fail:
+                    raise OSError("连接在响应前断开")
+                theme.write_bytes(b"changed")
+                payload = b"payload"
+                return FakeHttpResponse(
+                    {
+                        "state": "completed",
+                        "size": len(payload),
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                        "destination": "Honor/Themes/already-done.hwt",
+                        "overwritten": True,
+                        "theme_app_opened": False,
+                    },
+                    status=200,
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            theme = Path(directory) / "already-done-changed.hwt"
+            theme.write_bytes(b"payload")
+            with patch(
+                "hwtstudio.phone_transfer.http.client.HTTPConnection",
+                side_effect=[MutatingStatusConnection(fail=True), MutatingStatusConnection()],
+            ):
+                with self.assertRaisesRegex(PhoneTransferError, "状态确认后.*发生变化") as raised:
+                    upload_theme(
+                        theme,
+                        PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="test-token"),
+                    )
+
+            self.assertEqual(raised.exception.code, "file_changed")
+
     def test_unknown_remote_transfer_state_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             theme = Path(directory) / "未知状态.hwt"
