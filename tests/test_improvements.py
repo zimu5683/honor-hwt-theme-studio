@@ -547,6 +547,24 @@ class ImprovementTests(unittest.TestCase):
         outer.read.assert_not_called()
         outer.testzip.assert_not_called()
 
+    def test_validator_reports_entry_read_failure_without_raising(self):
+        info = MagicMock()
+        info.filename = "broken.bin"
+        info.file_size = 1
+        info.is_dir.return_value = False
+        outer = MagicMock()
+        outer.__enter__.return_value = outer
+        outer.__exit__.return_value = False
+        outer.infolist.return_value = [info]
+        outer.namelist.return_value = [info.filename]
+        outer.testzip.return_value = None
+        outer.read.side_effect = OSError("压缩流读取失败")
+        with patch("hwtstudio.validation.ZipFile", return_value=outer):
+            result = validate_theme(Path("broken.hwt"))
+        self.assertFalse(result["valid"])
+        read_error = next(item for item in result["errors"] if item["kind"] == "entry_read")
+        self.assertEqual(read_error["path"], "broken.bin")
+
     def test_xml_parser_does_not_expand_external_entities(self):
         raw = b'''<!DOCTYPE resources [<!ENTITY external SYSTEM "file:///definitely-not-read.txt">]>
             <resources><string name="value">&external;</string></resources>'''

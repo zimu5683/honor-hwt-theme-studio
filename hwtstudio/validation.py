@@ -158,7 +158,11 @@ def validate_theme(path: Path) -> dict:
                 for issue in zip64_inconsistencies(info):
                     errors.append({"kind": "zip64_inconsistent", "path": info.filename, "message": issue})
                     outer_read_blocked = True
-            bad = None if outer_size_blocked or outer_read_blocked or unsafe_outer_paths else outer.testzip()
+            try:
+                bad = None if outer_size_blocked or outer_read_blocked or unsafe_outer_paths else outer.testzip()
+            except (BadZipFile, OSError, RuntimeError, ValueError) as exc:
+                errors.append({"kind": "outer_crc_check", "message": str(exc)})
+                bad = None
             if bad:
                 errors.append({"kind": "crc", "path": bad})
             required = {
@@ -181,7 +185,11 @@ def validate_theme(path: Path) -> dict:
                     continue
                 if outer_size_blocked or outer_read_blocked or info.file_size > MAX_ARCHIVE_ENTRY_BYTES or outer_expanded > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
                     continue
-                raw = outer.read(info)
+                try:
+                    raw = outer.read(info)
+                except (BadZipFile, OSError, RuntimeError, ValueError) as exc:
+                    errors.append({"kind": "entry_read", "path": info.filename, "message": str(exc)})
+                    continue
                 if info.filename.endswith(".xml"):
                     try:
                         parse_xml(raw)
@@ -251,7 +259,11 @@ def validate_theme(path: Path) -> dict:
                                     "message": issue,
                                 })
                                 nested_read_blocked = True
-                        nested_bad = None if nested_size_blocked or nested_read_blocked or unsafe_nested_paths else module.testzip()
+                        try:
+                            nested_bad = None if nested_size_blocked or nested_read_blocked or unsafe_nested_paths else module.testzip()
+                        except (BadZipFile, OSError, RuntimeError, ValueError) as exc:
+                            errors.append({"kind": "nested_crc_check", "module": info.filename, "message": str(exc)})
+                            nested_bad = None
                         if nested_bad:
                             errors.append({"kind": "nested_crc", "module": info.filename, "path": nested_bad})
                         for child in nested_infos:
@@ -261,7 +273,16 @@ def validate_theme(path: Path) -> dict:
                                 continue
                             if nested_size_blocked or nested_read_blocked or child.file_size > MAX_ARCHIVE_ENTRY_BYTES or nested_expanded > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
                                 continue
-                            child_raw = module.read(child)
+                            try:
+                                child_raw = module.read(child)
+                            except (BadZipFile, OSError, RuntimeError, ValueError) as exc:
+                                errors.append({
+                                    "kind": "nested_entry_read",
+                                    "module": info.filename,
+                                    "path": child.filename,
+                                    "message": str(exc),
+                                })
+                                continue
                             if Path(child.filename).suffix.lower() == ".xml":
                                 try:
                                     parsed = parse_xml(child_raw)
@@ -277,6 +298,8 @@ def validate_theme(path: Path) -> dict:
                                     errors.append({"kind": "image_format", "module": info.filename, "path": child.filename, "expected": expected, "actual": fmt})
                 except BadZipFile:
                     pass
-    except BadZipFile as exc:
+                except (OSError, RuntimeError, ValueError) as exc:
+                    errors.append({"kind": "nested_zip", "module": info.filename, "message": str(exc)})
+    except (BadZipFile, OSError, RuntimeError, ValueError) as exc:
         errors.append({"kind": "outer_zip", "message": str(exc)})
     return {"valid": not errors, "errors": errors, "warnings": warnings, "modules": modules, "resource_nodes": resources}
