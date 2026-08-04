@@ -953,6 +953,7 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                 device, transfer_id, timeout=min(timeout, 5.0), require_transfer_id=True,
             )
             if status_payload and status_payload.get("state") == "completed":
+                _ensure_file_signature(path, initial_signature, "状态确认后")
                 return _upload_result_from_payload(
                     status_payload,
                     path=path,
@@ -987,6 +988,7 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                 continue
             offset = 0
             continue
+        _ensure_file_signature(path, initial_signature, "提交响应后")
         return _upload_result_from_payload(
             payload,
             path=path,
@@ -1062,6 +1064,7 @@ def _upload_theme_once(path: Path, device: PhoneDevice, *, transfer_id: str,
         connection.close()
     if response.status not in (200, 201):
         raise _error_from_response(response.status, payload)
+    _ensure_file_signature(path, initial_signature, "响应确认后")
     _payload_transfer_id(payload, transfer_id, "上传响应", required=False)
     return _upload_result_from_payload(
         payload,

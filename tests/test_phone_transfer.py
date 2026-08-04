@@ -510,6 +510,91 @@ class PhoneTransferTests(unittest.TestCase):
             )
             self.assertEqual(sum(request.method == "PUT" for request in ChunkedConnection.instances), 2)
 
+    def test_chunked_upload_refuses_file_changed_after_commit_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "提交状态变化主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+
+            class MutatingStatusConnection(ChunkedConnection):
+                def getresponse(self):
+                    if (
+                        self.method == "GET"
+                        and isinstance(self.plan, tuple)
+                        and isinstance(self.plan[1], dict)
+                        and self.plan[1].get("state") == "completed"
+                    ):
+                        path.write_bytes(b"changed after remote commit")
+                    return super().getresponse()
+
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (202, {
+                    "state": "receiving", "transfer_id": "session", "received": len(content),
+                    "total": len(content), "next_offset": len(content),
+                }),
+                OSError("提交响应前断开"),
+                (200, {
+                    "state": "completed", "stored_name": path.name,
+                    "destination": f"Honor/Themes/{path.name}", "size": len(content),
+                    "sha256": digest, "overwritten": False, "theme_app_opened": False,
+                }),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with patch(
+                "hwtstudio.phone_transfer.http.client.HTTPConnection",
+                MutatingStatusConnection,
+            ):
+                with self.assertRaisesRegex(PhoneTransferError, "状态确认后.*发生变化") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "file_changed")
+
+    def test_chunked_upload_refuses_file_changed_after_commit_response(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "提交响应变化主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+
+            class MutatingCommitConnection(ChunkedConnection):
+                def getresponse(self):
+                    response = super().getresponse()
+                    if self.method == "POST" and self.target.endswith("/complete"):
+                        path.write_bytes(b"changed after commit response")
+                    return response
+
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (202, {
+                    "state": "receiving", "transfer_id": "session", "received": len(content),
+                    "total": len(content), "next_offset": len(content),
+                }),
+                (201, {
+                    "stored_name": path.name, "destination": f"Honor/Themes/{path.name}",
+                    "size": len(content), "sha256": digest, "overwritten": False,
+                    "theme_app_opened": False,
+                }),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with patch(
+                "hwtstudio.phone_transfer.http.client.HTTPConnection",
+                MutatingCommitConnection,
+            ):
+                with self.assertRaisesRegex(PhoneTransferError, "提交响应后.*发生变化") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "file_changed")
+
     def test_chunked_upload_cancels_before_commit_when_signal_arrives_after_last_chunk(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "提交前取消主题.hwt"
@@ -774,6 +859,39 @@ class PhoneTransferTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(PhoneTransferError, "发送后") as raised:
                     upload_theme(path, device)
+            self.assertEqual(raised.exception.code, "file_changed")
+
+    def test_legacy_upload_refuses_file_changed_after_response(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "响应后变化主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+
+            class MutatingResponseConnection(ChunkedConnection):
+                def getresponse(self):
+                    response = super().getresponse()
+                    if self.method == "PUT":
+                        path.write_bytes(b"changed after response")
+                    return response
+
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (201, {
+                    "stored_name": path.name, "destination": f"Honor/Themes/{path.name}",
+                    "size": len(content), "sha256": digest, "overwritten": False,
+                    "theme_app_opened": False,
+                }),
+            ]
+            device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token")
+
+            with patch(
+                "hwtstudio.phone_transfer.http.client.HTTPConnection",
+                MutatingResponseConnection,
+            ):
+                with self.assertRaisesRegex(PhoneTransferError, "响应确认后.*发生变化") as raised:
+                    upload_theme(path, device)
+
             self.assertEqual(raised.exception.code, "file_changed")
 
     def test_malformed_remote_protocol_is_reported_as_bad_response(self):
