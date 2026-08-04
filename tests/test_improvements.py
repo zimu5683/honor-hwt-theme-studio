@@ -801,6 +801,35 @@ class ImprovementTests(unittest.TestCase):
             self.assertTrue(target.is_symlink())
             self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
 
+    def test_user_catalog_recovery_cleans_dangling_transaction_symlink(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / catalog_service._TRANSACTION_FILE_NAME
+            outside = root / "missing-marker-target.json"
+            try:
+                os.symlink(outside, marker)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建符号链接：{exc}")
+            recovered, warning = catalog_service._recover_catalog_transaction(root)
+
+            self.assertTrue(recovered)
+            self.assertIn("不是普通文件", warning)
+            self.assertFalse(marker.is_symlink())
+
+    def test_user_catalog_recovery_fails_closed_for_non_file_transaction_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / catalog_service._TRANSACTION_FILE_NAME
+            marker.mkdir()
+
+            recovered, warning = catalog_service._recover_catalog_transaction(root)
+
+            self.assertFalse(recovered)
+            self.assertIn("不是普通文件", warning)
+            self.assertTrue(marker.is_dir())
+
     def test_user_catalog_load_falls_back_when_bundle_lock_is_busy(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -74,11 +74,12 @@ def _catalog_source_is_stale(catalog: ThemeCatalog) -> bool:
     return actual != expected.lower()
 
 
-def _safe_unlink(path: Path) -> None:
+def _safe_unlink(path: Path) -> bool:
     try:
         path.unlink(missing_ok=True)
+        return True
     except OSError:
-        pass
+        return False
 
 
 def _transaction_path(root: Path) -> Path:
@@ -222,11 +223,18 @@ def _rollback_transaction(root: Path, entries: list[dict]) -> bool:
 
 def _recover_catalog_transaction(root: Path) -> tuple[bool, str]:
     marker = _transaction_path(root)
+    if marker.is_symlink():
+        if not _safe_unlink(marker):
+            return False, "资源目录事务记录不是普通文件，且无法清理"
+        return True, "资源目录事务记录不是普通文件，已清理"
     if not marker.exists():
         return True, ""
+    if not marker.is_file():
+        return False, "资源目录事务记录不是普通文件，无法恢复"
     entries = _read_transaction(root)
     if entries is None:
-        _safe_unlink(marker)
+        if not _safe_unlink(marker):
+            return False, "资源目录事务记录损坏，且无法清理"
         return True, "资源目录事务记录损坏，已清理"
     if _complete_transaction(root, entries):
         return True, "资源目录与兼容性报告已从未完成事务中恢复"
