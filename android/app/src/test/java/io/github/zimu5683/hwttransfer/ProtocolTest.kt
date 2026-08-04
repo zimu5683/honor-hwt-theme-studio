@@ -150,6 +150,19 @@ class ProtocolTest {
     }
 
     @Test
+    fun advertisedFeaturesAreCentralizedForEveryHandshake() {
+        assertEquals(
+            listOf(
+                Protocol.FEATURE_DEVICE_PROFILE,
+                Protocol.FEATURE_TRANSFER_CANCEL,
+                Protocol.FEATURE_TRANSFER_CHUNKED,
+                Protocol.FEATURE_TRANSFER_PREPARE,
+            ),
+            Protocol.ADVERTISED_FEATURES,
+        )
+    }
+
+    @Test
     fun chunkedTransferFeatureAndBudgetAreStable() {
         assertEquals("transfer_chunked", Protocol.FEATURE_TRANSFER_CHUNKED)
         assertEquals("transfer_prepare", Protocol.FEATURE_TRANSFER_PREPARE)

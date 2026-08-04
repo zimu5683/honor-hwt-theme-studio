@@ -14,9 +14,16 @@ object Protocol {
     const val DISCOVERY_PORT = 48620
     const val HTTP_PORT = 48621
     const val DISCOVERY_REQUEST = "HWTSTUDIO_DISCOVER_V1"
+    const val FEATURE_DEVICE_PROFILE = "device_profile"
     const val FEATURE_TRANSFER_CANCEL = "transfer_cancel"
     const val FEATURE_TRANSFER_CHUNKED = "transfer_chunked"
     const val FEATURE_TRANSFER_PREPARE = "transfer_prepare"
+    val ADVERTISED_FEATURES = listOf(
+        FEATURE_DEVICE_PROFILE,
+        FEATURE_TRANSFER_CANCEL,
+        FEATURE_TRANSFER_CHUNKED,
+        FEATURE_TRANSFER_PREPARE,
+    )
     const val MAX_FILE_SIZE = 1024L * 1024L * 1024L
     const val MAX_FILE_NAME_BYTES = 200
     const val MAX_ARCHIVE_ENTRY_BYTES = 256L * 1024L * 1024L

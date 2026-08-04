@@ -112,12 +112,7 @@ class ReceiverServer(
         .put("device_id", pairing.deviceId)
         .put("name", android.os.Build.MODEL)
         .put("app_version", BuildConfig.VERSION_NAME)
-        .put("features", JSONArray(listOf(
-            "device_profile",
-            Protocol.FEATURE_TRANSFER_CANCEL,
-            Protocol.FEATURE_TRANSFER_CHUNKED,
-            Protocol.FEATURE_TRANSFER_PREPARE,
-        )))
+        .put("features", JSONArray(Protocol.ADVERTISED_FEATURES))
         .put("running", true)
         .put("storage_ready", storage.isAvailable()))
 
@@ -142,12 +137,7 @@ class ReceiverServer(
             .put("device_id", pairing.deviceId)
             .put("name", android.os.Build.MODEL)
             .put("app_version", BuildConfig.VERSION_NAME)
-            .put("features", JSONArray(listOf(
-                "device_profile",
-                Protocol.FEATURE_TRANSFER_CANCEL,
-                Protocol.FEATURE_TRANSFER_CHUNKED,
-                Protocol.FEATURE_TRANSFER_PREPARE,
-            )))
+            .put("features", JSONArray(Protocol.ADVERTISED_FEATURES))
             .put("token", result.token))
     }
 
