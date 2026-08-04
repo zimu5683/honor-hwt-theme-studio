@@ -589,7 +589,7 @@ class ReceiverServer(
                 if (!Protocol.sha256(temporary).equals(cached.sha256, ignoreCase = true)) {
                     throw TransferException(422, "hash_mismatch", "重试文件的 SHA-256 与原上传不一致")
                 }
-                return installResponse(cached)
+                return installResponse(cached, transferId = transferId)
             }
             if (!claimTransferForInstall(transferId)) {
                 throw TransferException(499, "cancelled", "上传已取消")
@@ -598,7 +598,7 @@ class ReceiverServer(
             if (transferId != null) rememberCompleted(transferId, result)
             runCatching { onTransfer(result) }
                 .onFailure { android.util.Log.e("ReceiverServer", "Transfer callback failed", it) }
-            return installResponse(result)
+            return installResponse(result, transferId = transferId)
         } finally {
             clearTransfer(transferId)
         }

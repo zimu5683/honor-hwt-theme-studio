@@ -719,6 +719,29 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertIn("/api/v1/themes/", request.target)
             self.assertNotIn("X-HWT-Chunk-Offset", request.headers)
 
+    def test_legacy_upload_rejects_mismatched_response_transfer_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "完整会话绑定主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (201, {
+                    "transfer_id": "another-session", "stored_name": "完整会话绑定主题.hwt",
+                    "destination": "Honor/Themes/完整会话绑定主题.hwt", "size": len(content),
+                    "sha256": digest, "overwritten": False, "theme_app_opened": False,
+                }),
+            ]
+            device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token")
+
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
+                with self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "bad_response")
+            self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT"])
+
     def test_upload_refuses_file_changed_after_hashing(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "theme.hwt"

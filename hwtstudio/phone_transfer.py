@@ -1098,6 +1098,7 @@ def _upload_theme_once(path: Path, device: PhoneDevice, *, transfer_id: str,
         connection.close()
     if response.status not in (200, 201):
         raise _error_from_response(response.status, payload)
+    _payload_transfer_id(payload, transfer_id, "上传响应", required=False)
     return _upload_result_from_payload(
         payload,
         path=path,

@@ -70,6 +70,7 @@ APK 只接受包含根目录 `description.xml` 文件的有效 ZIP，并在读�
 
 ```json
 {
+  "transfer_id": "same-session-id",
   "stored_name": "主题.hwt",
   "destination": "Honor/Themes/主题.hwt",
   "size": 64875407,
@@ -78,6 +79,9 @@ APK 只接受包含根目录 `description.xml` 文件的有效 ZIP，并在读�
   "theme_app_opened": false
 }
 ```
+
+当请求带有 `X-HWT-Transfer-Id` 时，新版助手会在成功响应中回显相同的 `transfer_id`；桌面端会校验该字段。
+旧版助手可能省略该字段，桌面端仍保留完整 PUT 兼容路径。
 
 `overwritten` 和 `theme_app_opened` 是必需的布尔字段。接收服务在仍有 HTTP 请求处理时不会因 30 分钟空闲计时而停止。
 一次安装开始后会固定当时选定的 SAF 目录；授权切换不会把同一文件拆分写入不同存储位置。
