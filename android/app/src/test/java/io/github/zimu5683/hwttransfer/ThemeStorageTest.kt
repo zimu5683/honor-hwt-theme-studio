@@ -59,13 +59,25 @@ class ThemeStorageTest {
     }
 
     @Test
+    fun directArtifactNamesOnlyMatchGeneratedShapes() {
+        val themeName = "theme.hwt"
+        val backup = "${directThemeBackupPrefix(themeName)}123e4567-e89b-42d3-a456-426614174000.backup"
+
+        assertTrue(isDirectBackupName(themeName, backup))
+        assertFalse(isDirectBackupName(themeName, "${directThemeBackupPrefix(themeName)}old.backup"))
+        assertTrue(isDirectUploadName("hwt_upload_Abc123.uploading"))
+        assertFalse(isDirectUploadName("hwt_upload_old.uploading"))
+        assertFalse(isDirectUploadName("hwt_upload_Abc123.backup"))
+    }
+
+    @Test
     fun directRecoveryRestoresMatchingBackupAndKeepsUnknownLegacyBackup() {
         val root = Files.createTempDirectory("hwt-recovery-test")
         try {
             val name = "theme.hwt"
             val target = root.resolve(name).toFile()
             val backup = root.resolve(
-                "${directThemeBackupPrefix(name)}old.backup",
+                "${directThemeBackupPrefix(name)}123e4567-e89b-42d3-a456-426614174000.backup",
             ).toFile()
             val legacy = root.resolve("hwt_backup_legacy.backup").toFile()
             backup.writeText("old-theme", StandardCharsets.UTF_8)
@@ -86,19 +98,22 @@ class ThemeStorageTest {
     fun staleDirectUploadsAreRemovedButUnsafeObjectsAreRejected() {
         val root = Files.createTempDirectory("hwt-upload-cleanup-test")
         try {
-            val stale = root.resolve("hwt_upload_old.uploading").toFile()
+            val stale = root.resolve("hwt_upload_Abc123.uploading").toFile()
+            val unknown = root.resolve("hwt_upload_old.uploading").toFile()
             stale.writeText("partial", StandardCharsets.UTF_8)
+            unknown.writeText("keep", StandardCharsets.UTF_8)
 
             cleanupStaleDirectThemeUploads(root.toFile())
 
             assertFalse(stale.exists())
+            assertTrue(unknown.isFile)
         } finally {
             root.toFile().deleteRecursively()
         }
 
         val unsafeRoot = Files.createTempDirectory("hwt-upload-unsafe-test")
         try {
-            val unsafe = Files.createDirectory(unsafeRoot.resolve("hwt_upload_dir.uploading")).toFile()
+            val unsafe = Files.createDirectory(unsafeRoot.resolve("hwt_upload_Abc123.uploading")).toFile()
 
             val error = assertThrows(TransferException::class.java) {
                 cleanupStaleDirectThemeUploads(unsafeRoot.toFile())

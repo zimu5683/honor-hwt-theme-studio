@@ -23,6 +23,10 @@ private val themeInstallLock = Any()
 private const val DIRECT_UPLOAD_PREFIX = "hwt_upload_"
 private const val DIRECT_UPLOAD_SUFFIX = ".uploading"
 private const val DIRECT_BACKUP_SUFFIX = ".backup"
+private val DIRECT_UPLOAD_NAME_PATTERN = Regex("^hwt_upload_[A-Za-z0-9_-]{6,64}\\.uploading$")
+private val DIRECT_BACKUP_SUFFIX_PATTERN = Regex(
+    "^[0-9a-f]{8}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+)
 private const val STORAGE_PREFERENCES_NAME = "storage"
 private const val TREE_URI_KEY = "tree_uri"
 private val SAF_UPLOAD_NAME_PATTERN = Regex(
@@ -60,6 +64,16 @@ internal fun directThemeBackupPrefix(themeName: String): String {
     return "hwt_backup_" + digest.joinToString("") { "%02x".format(it) }
 }
 
+internal fun isDirectBackupName(themeName: String, candidate: String): Boolean {
+    val prefix = directThemeBackupPrefix(themeName)
+    if (!candidate.startsWith(prefix) || !candidate.endsWith(DIRECT_BACKUP_SUFFIX)) return false
+    return DIRECT_BACKUP_SUFFIX_PATTERN.matches(
+        candidate.removePrefix(prefix).removeSuffix(DIRECT_BACKUP_SUFFIX),
+    )
+}
+
+internal fun isDirectUploadName(candidate: String): Boolean = DIRECT_UPLOAD_NAME_PATTERN.matches(candidate)
+
 internal fun isSafBackupName(themeName: String, candidate: String): Boolean {
     val prefix = "$themeName.backup-"
     return candidate.startsWith(prefix) && SAF_BACKUP_SUFFIX_PATTERN.matches(candidate.removePrefix(prefix))
@@ -70,10 +84,8 @@ internal fun isSafUploadName(candidate: String): Boolean = SAF_UPLOAD_NAME_PATTE
 internal fun recoverDirectThemeArtifacts(directory: File, target: File, name: String) {
     val children = directory.listFiles()
         ?: throw TransferException(503, "storage_unavailable", "无法读取 Honor/Themes 目录")
-    val prefix = directThemeBackupPrefix(name)
     val backups = children.filter { child ->
-        val childName = child.name
-        childName.startsWith(prefix) && childName.endsWith(DIRECT_BACKUP_SUFFIX)
+        isDirectBackupName(name, child.name)
     }
     backups.forEach { backup ->
         if (!isRegularDirectThemeFile(backup)) {
@@ -109,8 +121,7 @@ internal fun cleanupStaleDirectThemeUploads(directory: File) {
     val children = directory.listFiles()
         ?: throw TransferException(503, "storage_unavailable", "无法读取 Honor/Themes 目录")
     children.filter { child ->
-        val name = child.name
-        name.startsWith(DIRECT_UPLOAD_PREFIX) && name.endsWith(DIRECT_UPLOAD_SUFFIX)
+        isDirectUploadName(child.name)
     }.forEach { upload ->
         if (!isRegularDirectThemeFile(upload)) {
             throw TransferException(503, "replace_failed", "主题临时对象不是普通文件")
