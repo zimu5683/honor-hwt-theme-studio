@@ -250,6 +250,13 @@ object Protocol {
                     if (readUnsignedInt(fixed, 0) != CENTRAL_DIRECTORY_SIGNATURE) {
                         invalidArchiveData("中心目录条目格式无效")
                     }
+                    val madeByOs = readUnsignedShort(fixed, 4) ushr 8
+                    val externalAttributes = readUnsignedInt(fixed, 38)
+                    if (madeByOs == ZIP_UNIX_OS &&
+                        (((externalAttributes ushr 16) and ZIP_UNIX_FILE_TYPE_MASK.toLong()) == ZIP_UNIX_SYMLINK_TYPE.toLong())
+                    ) {
+                        invalidArchiveData("条目 ${index + 1} 是不允许的 Unix 符号链接")
+                    }
                     val filenameLength = readUnsignedShort(fixed, 28)
                     val extraLength = readUnsignedShort(fixed, 30)
                     val commentLength = readUnsignedShort(fixed, 32)
@@ -796,6 +803,9 @@ object Protocol {
     private const val ZIP16_SENTINEL = 0xffff
     private const val ZIP32_SENTINEL = 0xffffffffL
     private const val ZIP_DATA_DESCRIPTOR_FLAG = 1 shl 3
+    private const val ZIP_UNIX_OS = 3
+    private const val ZIP_UNIX_FILE_TYPE_MASK = 0xf000
+    private const val ZIP_UNIX_SYMLINK_TYPE = 0xa000
 }
 
 class TransferException(

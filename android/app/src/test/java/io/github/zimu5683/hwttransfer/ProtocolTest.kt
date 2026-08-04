@@ -482,6 +482,42 @@ class ProtocolTest {
     }
 
     @Test
+    fun validateHwtRejectsNestedUnixSymlinkEntry() {
+        val file = File.createTempFile("nested-symlink", ".hwt")
+        try {
+            val nestedBytes = ByteArrayOutputStream()
+            ZipOutputStream(nestedBytes).use { zip ->
+                zip.putNextEntry(ZipEntry("link"))
+                zip.write("../outside.txt".toByteArray())
+                zip.closeEntry()
+            }
+            val encoded = nestedBytes.toByteArray()
+            val central = encoded.indexOfSignature(byteArrayOf(0x50, 0x4b, 0x01, 0x02))
+            assertTrue(central >= 0)
+            ByteBuffer.wrap(encoded, central + 4, 2)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putShort(((3 shl 8) or 20).toShort())
+            ByteBuffer.wrap(encoded, central + 38, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(Integer.MIN_VALUE or 0x20000000)
+
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons"))
+                zip.write(encoded)
+                zip.closeEntry()
+            }
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun validateHwtRejectsUnsafeNestedPath() {
         val file = File.createTempFile("nested-path", ".hwt")
         try {
