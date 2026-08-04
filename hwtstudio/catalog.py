@@ -43,6 +43,7 @@ VALUE_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+IMAGE_FORMATS = {"PNG", "JPEG", "WEBP"}
 _RESOURCE_STRING_FIELDS = ("id", "module", "container", "resource_type", "name", "path", "category", "label")
 _RESOURCE_OPTIONAL_STRING_FIELDS = ("status", "risk", "mode", "actual_format", "extension")
 
@@ -63,6 +64,21 @@ def detect_format(data: bytes) -> str:
     if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
         return "WEBP"
     return "UNKNOWN"
+
+
+def _expected_image_format(path: str) -> str | None:
+    suffix = Path(path).suffix.lower()
+    if suffix == ".png":
+        return "PNG"
+    if suffix in {".jpg", ".jpeg"}:
+        return "JPEG"
+    if suffix == ".webp":
+        return "WEBP"
+    return None
+
+
+def _is_image_payload(path: str, raw: bytes) -> bool:
+    return Path(path).suffix.lower() in IMAGE_EXTENSIONS or detect_format(raw) in IMAGE_FORMATS
 
 
 def _archive_blocked_paths(infos, warnings: list[dict], *, module: str | None = None) -> set[str]:
@@ -159,16 +175,34 @@ def _scan_xml(module: str, container: str, raw: bytes, warnings: list[dict]) -> 
     return resources
 
 
-def _image_slot(module: str, path: str, raw: bytes, resource_type: str = "image") -> ResourceSlot:
+def _image_slot(
+    module: str,
+    path: str,
+    raw: bytes,
+    resource_type: str = "image",
+    warnings: list[dict] | None = None,
+) -> ResourceSlot:
     width = height = None
     mode = None
+    actual_format = detect_format(raw)
     try:
         with Image.open(BytesIO(raw)) as image:
             width, height, mode = image.width, image.height, image.mode
     except Exception:
         pass
+    expected_format = _expected_image_format(path)
+    if warnings is not None and expected_format is not None and actual_format != expected_format:
+        warnings.append(
+            {
+                "kind": "image_format_mismatch",
+                "module": module,
+                "path": path,
+                "expected": expected_format,
+                "actual": actual_format,
+            }
+        )
     name = Path(path).name
-    chunks = extract_android_chunks(raw) if detect_format(raw) == "PNG" else {}
+    chunks = extract_android_chunks(raw) if actual_format == "PNG" else {}
     return ResourceSlot(
         id=f"{module}::image::{path}",
         module=module,
@@ -182,7 +216,7 @@ def _image_slot(module: str, path: str, raw: bytes, resource_type: str = "image"
         width=width,
         height=height,
         mode=mode,
-        actual_format=detect_format(raw),
+        actual_format=actual_format,
         extension=Path(path).suffix.lower(),
         ninepatch="npTc" in chunks,
         png_chunks=chunks,
@@ -229,9 +263,9 @@ def _scan_module(module: str, raw: bytes, warnings: list[dict]) -> tuple[list[Re
                     for slot in slots:
                         stats[f"{slot.resource_type}_slots"] += 1
                         stats[f"{slot.resource_type}_declarations"] += slot.occurrences
-                elif Path(path).suffix.lower() in IMAGE_EXTENSIONS:
+                elif _is_image_payload(path, data):
                     kind = "icon" if module == "icons" else "image"
-                    resources.append(_image_slot(module, path, data, kind))
+                    resources.append(_image_slot(module, path, data, kind, warnings))
                     stats[f"{kind}_slots"] += 1
     except BadZipFile:
         warnings.append({"kind": "bad_module_zip", "module": module})
@@ -331,12 +365,12 @@ def scan_theme(path: Path) -> ThemeCatalog:
                 continue
             if name in {"description.xml", "unlock/theme.xml"}:
                 continue
-            if name.startswith("wallpaper/") and Path(name).suffix.lower() in IMAGE_EXTENSIONS:
-                resources.append(_image_slot("__root__", name, raw, "wallpaper"))
+            if name.startswith("wallpaper/") and _is_image_payload(name, raw):
+                resources.append(_image_slot("__root__", name, raw, "wallpaper", warnings))
                 stats["wallpaper_slots"] += 1
                 continue
-            if name.startswith("preview/") and Path(name).suffix.lower() in IMAGE_EXTENSIONS:
-                resources.append(_image_slot("__root__", name, raw, "preview"))
+            if name.startswith("preview/") and _is_image_payload(name, raw):
+                resources.append(_image_slot("__root__", name, raw, "preview", warnings))
                 stats["preview_slots"] += 1
                 continue
             try:

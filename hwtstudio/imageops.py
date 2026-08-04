@@ -29,7 +29,7 @@ def render_image(source: Path, slot: ResourceSlot, change: ResourceChange) -> by
         )
     image = enhance_image(image, change.enhance, change.enhance_strength)
 
-    target_format = (slot.actual_format or _format_from_extension(slot.extension or Path(slot.path).suffix)).upper()
+    target_format = _target_format(slot)
     output = BytesIO()
     if target_format == "JPEG":
         image.convert("RGB").save(output, "JPEG", quality=95, optimize=True, subsampling=0)
@@ -48,7 +48,7 @@ def render_placeholder(slot: ResourceSlot) -> bytes:
     width = slot.width or PLACEHOLDER_SIZE[0]
     height = slot.height or PLACEHOLDER_SIZE[1]
     image = Image.new("RGBA", (width, height), PLACEHOLDER_RGBA)
-    target_format = (slot.actual_format or _format_from_extension(slot.extension or Path(slot.path).suffix)).upper()
+    target_format = _target_format(slot)
     output = BytesIO()
     if target_format == "JPEG":
         image.convert("RGB").save(output, "JPEG", quality=90, optimize=True)
@@ -97,3 +97,11 @@ def _format_from_extension(extension: str) -> str:
     if lowered == ".webp":
         return "WEBP"
     return "PNG"
+
+
+def _target_format(slot: ResourceSlot) -> str:
+    extension = (slot.extension or Path(slot.path).suffix).lower()
+    if extension in {".png", ".jpg", ".jpeg", ".webp"}:
+        return _format_from_extension(extension)
+    actual = (slot.actual_format or "").upper()
+    return actual if actual in {"PNG", "JPEG", "WEBP"} else "PNG"

@@ -13,6 +13,7 @@ from PIL import Image
 from hwtstudio.blank import DIRECTORY_ENTRIES, IMAGE_LAYOUT, create_blank_theme
 from hwtstudio.catalog import load_catalog, scan_theme
 from hwtstudio.exporter import export_theme
+from hwtstudio.imageops import render_image
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
 from hwtstudio.projectio import load_project, save_project
 from hwtstudio.paths import bundled_catalog, default_source_theme
@@ -158,6 +159,52 @@ class CoreTests(unittest.TestCase):
             warning_kinds = {item["kind"] for item in catalog.warnings}
             self.assertIn("nested_compression_ratio", warning_kinds)
             self.assertIn("nested_symlink_entry", warning_kinds)
+
+    def test_scan_detects_supported_images_by_signature_and_reports_mismatch(self):
+        png = BytesIO()
+        Image.new("RGBA", (8, 8), (10, 20, 30, 255)).save(png, "PNG")
+        jpeg = BytesIO()
+        Image.new("RGB", (8, 8), (30, 20, 10)).save(jpeg, "JPEG")
+        with tempfile.TemporaryDirectory() as directory:
+            module = BytesIO()
+            with ZipFile(module, "w", ZIP_DEFLATED) as nested:
+                nested.writestr("extensionless_icon", png.getvalue())
+                nested.writestr("wrong.png", jpeg.getvalue())
+            source = Path(directory) / "signature-images.hwt"
+            with ZipFile(source, "w", ZIP_DEFLATED) as outer:
+                outer.writestr("description.xml", b"<HwTheme/>")
+                outer.writestr("icons", module.getvalue())
+
+            catalog = scan_theme(source)
+            extensionless = next(item for item in catalog.resources if item.path == "extensionless_icon")
+            self.assertEqual(extensionless.resource_type, "icon")
+            self.assertEqual(extensionless.actual_format, "PNG")
+            mismatch = next(item for item in catalog.warnings if item["kind"] == "image_format_mismatch")
+            self.assertEqual(mismatch["path"], "wrong.png")
+            self.assertEqual(mismatch["expected"], "PNG")
+            self.assertEqual(mismatch["actual"], "JPEG")
+
+    def test_render_image_follows_hwt_extension_for_mismatched_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.jpg"
+            Image.new("RGB", (8, 8), (30, 20, 10)).save(source, "JPEG")
+            slot = ResourceSlot(
+                id="icons::image::wrong.png",
+                module="icons",
+                container="",
+                resource_type="icon",
+                name="wrong.png",
+                path="wrong.png",
+                category="桌面图标",
+                label="错误扩展名",
+                actual_format="JPEG",
+                extension=".png",
+                width=8,
+                height=8,
+            )
+            rendered = render_image(source, slot, ResourceChange(slot_id=slot.id))
+            with Image.open(BytesIO(rendered)) as image:
+                self.assertEqual(image.format, "PNG")
 
     def test_custom_resource_round_trip_and_export(self):
         slot = ResourceSlot(
