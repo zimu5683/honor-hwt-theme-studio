@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 import tempfile
 import unittest
@@ -85,6 +86,34 @@ class CoreTests(unittest.TestCase):
                 self.assertFalse(any(name.startswith("com.") for name in archive.namelist()))
                 with ZipFile(BytesIO(archive.read("icons"))) as icons:
                     self.assertEqual(icons.namelist(), [])
+
+    def test_blank_theme_write_failure_preserves_existing_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "blank.hwt"
+            output.write_bytes(b"previous theme")
+            with patch("hwtstudio.blank.ZipFile") as zip_file:
+                archive = zip_file.return_value.__enter__.return_value
+                archive.writestr.side_effect = OSError("模拟写入失败")
+                with self.assertRaisesRegex(OSError, "模拟写入失败"):
+                    create_blank_theme(output)
+            self.assertEqual(output.read_bytes(), b"previous theme")
+            self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
+
+    def test_blank_theme_rejects_symlinked_output_parent(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside"
+            outside.mkdir()
+            link = root / "exports"
+            try:
+                os.symlink(outside, link, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
+            with self.assertRaisesRegex(ValueError, "空白主题输出目录.*符号链接"):
+                create_blank_theme(link / "blank.hwt")
+            self.assertEqual(list(outside.iterdir()), [])
 
     def test_honor_local_theme_admission_entries_are_required(self):
         """Mirror Theme Manager 20.x isValidThemeInfo()'s local-HWT gate."""

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from PIL import Image
+
+from .paths import ensure_no_symlink_parents, unique_temp_path
 
 
 PLACEHOLDER_COLOR = (242, 242, 242)
@@ -89,8 +92,18 @@ def create_blank_theme(
     screen: str = "FHD",
 ) -> Path:
     output = Path(output)
+    if output.is_symlink() or (output.exists() and not output.is_file()):
+        raise ValueError("空白主题输出目标不是普通文件")
+    ensure_no_symlink_parents(output, "空白主题输出目录不能包含符号链接")
     output.parent.mkdir(parents=True, exist_ok=True)
-    with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=9) as archive:
-        for name, data in blank_entries(title, author, designer, version, screen).items():
-            archive.writestr(name, data)
+    ensure_no_symlink_parents(output, "空白主题输出目录不能包含符号链接")
+    temp = unique_temp_path(output)
+    temp.unlink(missing_ok=True)
+    try:
+        with ZipFile(temp, "w", ZIP_DEFLATED, compresslevel=9) as archive:
+            for name, data in blank_entries(title, author, designer, version, screen).items():
+                archive.writestr(name, data)
+        os.replace(temp, output)
+    finally:
+        temp.unlink(missing_ok=True)
     return output
