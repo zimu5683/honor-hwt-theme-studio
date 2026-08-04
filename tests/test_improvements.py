@@ -354,6 +354,46 @@ class ImprovementTests(unittest.TestCase):
             self.assertFalse(target.exists())
             self.assertTrue((asset_dir / "linked.bin").is_symlink())
 
+    def test_project_save_preserves_symlinked_transaction_file(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "theme.hwtproj.json"
+            outside = root / "outside.json"
+            outside.write_text("keep", encoding="utf-8")
+            temp = unique_temp_path(target)
+            try:
+                os.symlink(outside, temp)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建文件符号链接：{exc}")
+            with self.assertRaisesRegex(ValueError, "工程事务临时对象.*符号链接"):
+                save_project(ThemeProject(), target)
+            self.assertTrue(temp.is_symlink())
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+            self.assertFalse(target.exists())
+
+    def test_project_save_preserves_unsafe_staging_directory(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "theme.hwtproj.json"
+            asset_stage = unique_temp_path(project_assets_dir(target), suffix=".tmp")
+            asset_stage.mkdir()
+            outside = root / "outside.bin"
+            outside.write_bytes(b"keep")
+            try:
+                os.symlink(outside, asset_stage / "linked.bin")
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建文件符号链接：{exc}")
+            with self.assertRaisesRegex(ValueError, "工程资产目录不能包含符号链接"):
+                save_project(ThemeProject(), target)
+            self.assertTrue(asset_stage.is_dir())
+            self.assertTrue((asset_stage / "linked.bin").is_symlink())
+            self.assertEqual(outside.read_bytes(), b"keep")
+            self.assertFalse(target.exists())
+
     def test_collect_project_assets_rejects_symlinked_staging_directory(self):
         if not hasattr(os, "symlink"):
             self.skipTest("当前平台不支持符号链接")

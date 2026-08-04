@@ -35,6 +35,10 @@ def _remove_path(path: Path) -> None:
     path = Path(path)
     try:
         if path.is_dir() and not path.is_symlink():
+            try:
+                ensure_no_symlinks(path)
+            except ValueError as exc:
+                raise OSError(str(exc)) from exc
             shutil.rmtree(path)
         else:
             path.unlink(missing_ok=True)
@@ -47,6 +51,20 @@ def _cleanup_path(path: Path) -> None:
         _remove_path(path)
     except OSError:
         pass
+
+
+def _validate_transaction_artifact(path: Path, *, directory: bool) -> None:
+    path = Path(path)
+    if path.is_symlink():
+        raise ValueError("工程事务临时对象不能是符号链接")
+    if not path.exists():
+        return
+    if directory:
+        if not path.is_dir():
+            raise ValueError("工程事务目录不是普通目录")
+        ensure_no_symlinks(path)
+    elif not path.is_file():
+        raise ValueError("工程事务文件不是普通文件")
 
 
 def _validate_project_payload(raw: object) -> dict:
@@ -161,6 +179,10 @@ def save_project(project: ThemeProject, path: Path) -> Path:
     project_backed_up = False
     project_committed = False
     try:
+        _validate_transaction_artifact(asset_stage, directory=True)
+        _validate_transaction_artifact(asset_backup, directory=True)
+        _validate_transaction_artifact(temp, directory=False)
+        _validate_transaction_artifact(project_backup, directory=False)
         _cleanup_path(asset_stage)
         _cleanup_path(temp)
         _cleanup_path(asset_backup)
@@ -187,7 +209,9 @@ def save_project(project: ThemeProject, path: Path) -> Path:
         encoded = json.dumps(serialized, ensure_ascii=False, indent=2).encode("utf-8")
         if len(encoded) > MAX_PROJECT_BYTES:
             raise ValueError("保存的工程文件超过允许的大小限制")
+        _validate_transaction_artifact(temp, directory=False)
         temp.write_bytes(encoded)
+        _validate_transaction_artifact(temp, directory=False)
         asset_changed = asset_dir.exists() or asset_dir.is_symlink() or asset_stage.exists()
         if asset_changed:
             if asset_dir.exists() or asset_dir.is_symlink():
