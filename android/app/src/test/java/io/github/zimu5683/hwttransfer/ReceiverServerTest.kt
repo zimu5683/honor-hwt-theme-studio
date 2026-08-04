@@ -71,4 +71,23 @@ class ReceiverServerTest {
             root.toFile().deleteRecursively()
         }
     }
+
+    @Test
+    fun staleChunkCleanupKeepsTheFileProtectedForAnActiveCommit() {
+        val root = Files.createTempDirectory("hwt-chunk-commit-cleanup-test")
+        try {
+            val protectedFile = root.resolve("hwt_chunk_${"a".repeat(32)}.uploading").toFile()
+            val stale = root.resolve("hwt_chunk_${"b".repeat(32)}.uploading").toFile()
+            protectedFile.writeText("committing")
+            stale.writeText("stale")
+
+            val failures = cleanupStaleChunkUploadFiles(root.toFile(), protectedFile)
+
+            assertEquals(emptyList<File>(), failures)
+            assertTrue(protectedFile.isFile)
+            assertFalse(stale.exists())
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
 }

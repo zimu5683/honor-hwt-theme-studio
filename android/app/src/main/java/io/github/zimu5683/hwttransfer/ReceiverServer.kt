@@ -10,20 +10,29 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.LinkOption
+import java.util.Collections
 import java.util.LinkedHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 private val STALE_CHUNK_UPLOAD_PATTERN = Regex("^hwt_chunk_[A-Za-z0-9_-]{16,64}\\.uploading$")
+private val liveChunkCommitFiles = Collections.synchronizedSet(mutableSetOf<File>())
 
-internal fun staleChunkUploadFiles(directory: File): List<File> =
+internal fun staleChunkUploadFiles(directory: File, protectedFile: File? = null): List<File> =
+    staleChunkUploadFiles(directory, protectedFile?.let { setOf(it) } ?: emptySet())
+
+internal fun staleChunkUploadFiles(directory: File, protectedFiles: Set<File>): List<File> =
     directory.listFiles().orEmpty().filter { file ->
         STALE_CHUNK_UPLOAD_PATTERN.matches(file.name) &&
-            Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS)
+            Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS) &&
+            protectedFiles.none { protected -> file.toPath() == protected.toPath() }
     }
 
-internal fun cleanupStaleChunkUploadFiles(directory: File): List<File> =
-    staleChunkUploadFiles(directory).filterNot { it.delete() }
+internal fun cleanupStaleChunkUploadFiles(directory: File, protectedFile: File? = null): List<File> =
+    cleanupStaleChunkUploadFiles(directory, protectedFile?.let { setOf(it) } ?: emptySet())
+
+internal fun cleanupStaleChunkUploadFiles(directory: File, protectedFiles: Set<File>): List<File> =
+    staleChunkUploadFiles(directory, protectedFiles).filterNot { it.delete() }
 
 internal fun deleteParsedUploadFile(file: File): Boolean {
     val path = file.toPath()
@@ -76,6 +85,7 @@ class ReceiverServer(
     private var cancelRequested = false
     private var chunkTransfer: ChunkTransfer? = null
     private var committingTransferId: String? = null
+    private var committingTransferFile: File? = null
     private val completedTransfers = LinkedHashMap<String, InstallResult>(8, 0.75f, true)
 
     init {
@@ -84,22 +94,23 @@ class ReceiverServer(
 
     fun hasActiveRequests(): Boolean = activeRequests.get() > 0
 
-    /** Cancel transfer state and remove the partial chunk file before stopping the server. */
+    /** Cancel transfer state and clean stale chunks without touching an active commit. */
     fun shutdownTransfers() {
         stopping.set(true)
-        val abandoned = synchronized(transferLock) {
+        val (abandoned, protectedFile) = synchronized(transferLock) {
             val file = chunkTransfer?.file
             chunkTransfer = null
             activeTransferId = null
             cancelRequested = false
             if (committingTransferId == null) uploading.set(false)
-            file
+            file to committingTransferFile
         }
         abandoned?.let { file ->
             if (!deleteRegularChunkFile(file)) {
                 android.util.Log.w("ReceiverServer", "Unable to remove abandoned chunk file")
             }
         }
+        cleanupStaleChunkFiles(protectedFile)
     }
 
     override fun serve(session: IHTTPSession): Response {
@@ -439,6 +450,8 @@ class ReceiverServer(
                 throw TransferException(409, "incomplete_upload", "上传分块尚未全部收到")
             }
             committingTransferId = id
+            committingTransferFile = current.file
+            liveChunkCommitFiles.add(current.file)
             chunkTransfer = null
             activeTransferId = id
             cancelRequested = false
@@ -453,12 +466,18 @@ class ReceiverServer(
             return installResponse(result, transferId = id)
         } finally {
             state.file.delete()
-            synchronized(transferLock) {
-                if (committingTransferId == id) committingTransferId = null
+            val cleanupAfterCommit = synchronized(transferLock) {
+                if (committingTransferId == id) {
+                    committingTransferId = null
+                    committingTransferFile = null
+                }
                 if (activeTransferId == id) activeTransferId = null
                 cancelRequested = false
                 uploading.set(false)
+                liveChunkCommitFiles.remove(state.file)
+                stopping.get()
             }
+            if (cleanupAfterCommit) cleanupStaleChunkFiles()
         }
     }
 
@@ -535,8 +554,13 @@ class ReceiverServer(
         }
     }
 
-    private fun cleanupStaleChunkFiles() {
-        runCatching { cleanupStaleChunkUploadFiles(appContext.cacheDir) }
+    private fun cleanupStaleChunkFiles(protectedFile: File? = null) {
+        val protectedFiles = synchronized(liveChunkCommitFiles) {
+            liveChunkCommitFiles.toMutableSet().apply {
+                protectedFile?.let(::add)
+            }
+        }
+        runCatching { cleanupStaleChunkUploadFiles(appContext.cacheDir, protectedFiles) }
             .getOrElse {
                 android.util.Log.w("ReceiverServer", "Unable to enumerate stale chunk files", it)
                 return
