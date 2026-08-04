@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from PIL import Image
@@ -160,6 +160,22 @@ class CoreTests(unittest.TestCase):
             warning_kinds = {item["kind"] for item in catalog.warnings}
             self.assertIn("nested_compression_ratio", warning_kinds)
             self.assertIn("nested_symlink_entry", warning_kinds)
+
+    def test_scan_reports_outer_crc_check_failure_without_raising(self):
+        info = ZipInfo("com.example")
+        outer = MagicMock()
+        outer.__enter__.return_value = outer
+        outer.__exit__.return_value = False
+        outer.infolist.return_value = [info]
+        outer.namelist.return_value = [info.filename]
+        outer.testzip.side_effect = OSError("外层压缩流校验失败")
+        outer.read.return_value = b"not a nested zip"
+        with (
+            patch("hwtstudio.catalog.ZipFile", return_value=outer),
+            patch("hwtstudio.catalog.sha256_file", return_value="0" * 64),
+        ):
+            catalog = scan_theme(Path("broken.hwt"))
+        self.assertIn("outer_crc_check", {item["kind"] for item in catalog.warnings})
 
     def test_scan_detects_supported_images_by_signature_and_reports_mismatch(self):
         png = BytesIO()

@@ -245,7 +245,11 @@ def _scan_module(module: str, raw: bytes, warnings: list[dict]) -> tuple[list[Re
                 warnings.append({"kind": "unsafe_nested_path", "module": module, "path": path})
             blocked_paths = set(unsafe_paths)
             blocked_paths.update(_archive_blocked_paths(infos, warnings, module=module))
-            bad = None if blocked_paths else archive.testzip()
+            try:
+                bad = None if blocked_paths else archive.testzip()
+            except (BadZipFile, OSError, RuntimeError, ValueError) as exc:
+                warnings.append({"kind": "nested_crc_check", "module": module, "message": str(exc)})
+                bad = None
             if bad:
                 warnings.append({"kind": "module_crc", "module": module, "path": bad})
                 blocked_paths.add(bad)
@@ -272,6 +276,8 @@ def _scan_module(module: str, raw: bytes, warnings: list[dict]) -> tuple[list[Re
                     stats[f"{kind}_slots"] += 1
     except BadZipFile:
         warnings.append({"kind": "bad_module_zip", "module": module})
+    except (OSError, RuntimeError, ValueError) as exc:
+        warnings.append({"kind": "module_read", "module": module, "message": str(exc)})
     return resources, dict(stats)
 
 
@@ -351,7 +357,11 @@ def scan_theme(path: Path) -> ThemeCatalog:
             warnings.append({"kind": "unsafe_path", "path": name})
         blocked_paths = set(unsafe_paths)
         blocked_paths.update(_archive_blocked_paths(outer_infos, warnings))
-        bad = None if blocked_paths else outer.testzip()
+        try:
+            bad = None if blocked_paths else outer.testzip()
+        except (BadZipFile, OSError, RuntimeError, ValueError) as exc:
+            warnings.append({"kind": "outer_crc_check", "message": str(exc)})
+            bad = None
         if bad:
             warnings.append({"kind": "outer_crc", "path": bad})
             blocked_paths.add(bad)
@@ -380,6 +390,9 @@ def scan_theme(path: Path) -> ThemeCatalog:
                 with ZipFile(BytesIO(raw)):
                     pass
             except BadZipFile:
+                continue
+            except (OSError, RuntimeError, ValueError) as exc:
+                warnings.append({"kind": "nested_zip_open", "path": name, "message": str(exc)})
                 continue
             modules += 1
             slots, module_stats = _scan_module(name, raw, warnings)
