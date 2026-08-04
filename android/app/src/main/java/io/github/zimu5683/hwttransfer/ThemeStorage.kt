@@ -1,6 +1,7 @@
 package io.github.zimu5683.hwttransfer
 
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Environment
@@ -154,6 +155,9 @@ private fun isRegularDirectThemeFile(file: File): Boolean {
 internal fun persistSafTreeUri(prefs: SharedPreferences, uri: Uri): Boolean =
     prefs.edit().putString(TREE_URI_KEY, uri.toString()).commit()
 
+internal fun safUriToRelease(previous: Uri?, selected: Uri): Uri? =
+    previous?.takeUnless { it == selected }
+
 class ThemeStorage(private val context: Context) {
     private val prefs = context.getSharedPreferences(STORAGE_PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val directDirectory = File(Environment.getExternalStorageDirectory(), "Honor/Themes")
@@ -182,6 +186,7 @@ class ThemeStorage(private val context: Context) {
     }
 
     fun validateAndPersistTree(uri: Uri) = synchronized(themeInstallLock) {
+        val previousUri = treeUri()
         val directory = DocumentFile.fromTreeUri(context, uri)
             ?: throw TransferException(503, "storage_unavailable", "无法打开所选目录")
         val documentId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()
@@ -217,6 +222,7 @@ class ThemeStorage(private val context: Context) {
         if (!persistSafTreeUri(prefs, uri)) {
             throw TransferException(503, "storage_unavailable", "无法保存 Honor/Themes 目录授权")
         }
+        safUriToRelease(previousUri, uri)?.let(::releaseSafPermission)
     }
 
     fun clearSaf() = synchronized(themeInstallLock) {
@@ -228,13 +234,17 @@ class ThemeStorage(private val context: Context) {
     }
 
     private fun discardSafUnlocked(uri: Uri) {
+        releaseSafPermission(uri)
+        if (treeUri() == uri) prefs.edit().remove(TREE_URI_KEY).apply()
+    }
+
+    private fun releaseSafPermission(uri: Uri) {
         runCatching {
             context.contentResolver.releasePersistableUriPermission(
                 uri,
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
             )
         }
-        if (treeUri() == uri) prefs.edit().remove(TREE_URI_KEY).apply()
     }
 
     fun importUri(uri: Uri): InstallResult {

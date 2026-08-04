@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -26,5 +27,15 @@ class ThemeStoragePersistenceTest {
 
         assertTrue(persistSafTreeUri(prefs, uri))
         assertEquals(uri, ThemeStorage(context).treeUri())
+    }
+
+    @Test
+    fun replacingSafSelectionReleasesOnlyThePreviousDifferentUri() {
+        val previous = Uri.parse("content://provider/tree/old")
+        val selected = Uri.parse("content://provider/tree/new")
+
+        assertEquals(previous, safUriToRelease(previous, selected))
+        assertNull(safUriToRelease(previous, previous))
+        assertNull(safUriToRelease(null, selected))
     }
 }
