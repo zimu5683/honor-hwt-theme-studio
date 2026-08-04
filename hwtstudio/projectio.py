@@ -34,6 +34,8 @@ _CUSTOM_RESOURCE_OPTIONAL_TEXT_FIELDS = ("status", "risk", "mode", "actual_forma
 def _remove_path(path: Path) -> None:
     path = Path(path)
     try:
+        if path.is_symlink():
+            raise OSError("拒绝删除工程事务符号链接")
         if path.is_dir() and not path.is_symlink():
             try:
                 ensure_no_symlinks(path)
