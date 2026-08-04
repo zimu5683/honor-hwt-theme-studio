@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from hwtstudio.updater import (
+    _sha256,
+    _fetch_json,
     ReleaseAsset,
     download_asset,
     is_newer_version,
@@ -36,11 +39,59 @@ class _FakeResponse:
         return block
 
 
+class _CancelAtEofResponse(_FakeResponse):
+    def __init__(self, payload: bytes, cancelled: threading.Event):
+        super().__init__(payload)
+        self.cancelled = cancelled
+
+    def read(self, size: int = -1) -> bytes:
+        block = super().read(size)
+        if not block:
+            self.cancelled.set()
+        return block
+
+
 class UpdaterTests(unittest.TestCase):
+    def test_cached_update_hashing_honors_cancellation(self):
+        cancelled = threading.Event()
+        cancelled.set()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cached.exe"
+            path.write_bytes(b"cached update")
+            with self.assertRaisesRegex(RuntimeError, "取消"):
+                _sha256(path, cancelled=cancelled)
+
+    def test_cancelled_update_is_rejected_before_network_work(self):
+        cancelled = threading.Event()
+        cancelled.set()
+        release = release_from_payload(
+            {
+                "version": "v0.2.0",
+                "assets": [
+                    {
+                        "name": "HwtThemeStudio-v0.2.0-win64.exe",
+                        "url": "https://example.test/studio.exe",
+                        "sha256": "a" * 64,
+                    }
+                ],
+            }
+        )
+        with patch("hwtstudio.updater.urllib.request.urlopen") as urlopen:
+            with self.assertRaisesRegex(RuntimeError, "取消"):
+                download_asset(release, download_dir=Path(tempfile.gettempdir()), cancelled=cancelled)
+        urlopen.assert_not_called()
+
     def test_numeric_version_comparison(self):
         self.assertTrue(is_newer_version("v0.1.10", "0.1.9"))
         self.assertFalse(is_newer_version("0.1.9", "0.1.10"))
         self.assertFalse(is_newer_version("0.1.10-beta.1", "0.1.10"))
+
+    def test_release_text_is_bounded_for_ui(self):
+        release = release_from_payload({"version": "v0.2.0", "body": "x" * 20_000})
+        self.assertLessEqual(len(release.body), 12_030)
+        self.assertTrue(release.body.endswith("（更新说明过长，已截断）"))
+        with self.assertRaisesRegex(ValueError, "版本号过长"):
+            release_from_payload({"version": "v" + "1" * 64})
 
     def test_release_payload_selects_desktop_asset_and_checksum(self):
         release = release_from_payload(
@@ -95,11 +146,31 @@ class UpdaterTests(unittest.TestCase):
         )
         self.assertEqual(release.asset.url, "https://github.com/download/studio.exe")
 
+    def test_update_metadata_rejects_oversized_response(self):
+        payload = b"{}" + b"x" * (2 * 1024 * 1024)
+        with patch(
+            "hwtstudio.updater.urllib.request.urlopen", return_value=_FakeResponse(payload)
+        ):
+            with self.assertRaisesRegex(ValueError, "响应过大"):
+                _fetch_json("https://example.test/latest.json")
+
     def test_safe_asset_name_rejects_path_traversal(self):
         with self.assertRaises(ValueError):
             safe_asset_name("..\\outside.exe")
         with self.assertRaises(ValueError):
             safe_asset_name("C:\\outside.exe")
+        with self.assertRaises(ValueError):
+            safe_asset_name("studio.exe\n")
+        with self.assertRaises(ValueError):
+            safe_asset_name(" studio.exe")
+        with self.assertRaisesRegex(ValueError, "过长"):
+            safe_asset_name("a" * 197 + ".exe")
+
+    def test_update_requests_reject_insecure_http(self):
+        from hwtstudio.updater import _request
+
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            _request("http://example.test/studio.exe")
 
     def test_download_asset_verifies_sha256_before_commit(self):
         payload = b"verified update payload"
@@ -121,7 +192,51 @@ class UpdaterTests(unittest.TestCase):
         ):
             path = download_asset(release, download_dir=Path(directory))
             self.assertEqual(path.read_bytes(), payload)
-            self.assertFalse(path.with_name(path.name + ".part").exists())
+            self.assertEqual(list(Path(directory).glob(".*.part")), [])
+
+    def test_download_asset_rejects_truncated_declared_response(self):
+        payload = b"truncated update payload"
+        checksum = hashlib.sha256(payload).hexdigest()
+        release = release_from_payload(
+            {
+                "version": "v0.2.0",
+                "assets": [{
+                    "name": "HwtThemeStudio-v0.2.0-win64.exe",
+                    "url": "https://example.test/studio.exe",
+                    "sha256": checksum,
+                }],
+            }
+        )
+        response = _FakeResponse(payload)
+        response.headers = {"Content-Length": str(len(payload) + 1)}
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "hwtstudio.updater.urllib.request.urlopen", return_value=response
+        ):
+            with self.assertRaisesRegex(ValueError, "长度与声明不一致"):
+                download_asset(release, download_dir=Path(directory))
+            self.assertEqual(list(Path(directory).glob(".*.part")), [])
+
+    def test_cancelled_after_download_cleans_private_partial(self):
+        payload = b"cancelled update payload"
+        cancelled = threading.Event()
+        checksum = hashlib.sha256(payload).hexdigest()
+        release = release_from_payload(
+            {
+                "version": "v0.2.0",
+                "assets": [{
+                    "name": "HwtThemeStudio-v0.2.0-win64.exe",
+                    "url": "https://example.test/studio.exe",
+                    "sha256": checksum,
+                }],
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "hwtstudio.updater.urllib.request.urlopen",
+            return_value=_CancelAtEofResponse(payload, cancelled),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "取消"):
+                download_asset(release, download_dir=Path(directory), cancelled=cancelled)
+            self.assertEqual(list(Path(directory).glob(".*.part")), [])
 
 
 if __name__ == "__main__":

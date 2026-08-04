@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from pathlib import Path
 
 
@@ -23,6 +24,11 @@ def data_dir() -> Path:
     path = root / "HwtThemeStudio"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def unique_temp_path(path: Path, suffix: str = ".tmp") -> Path:
+    path = Path(path)
+    return path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}{suffix}")
 
 
 def bundled_catalog() -> Path:

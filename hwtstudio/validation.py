@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 import re
+import stat
+import struct
 from collections import Counter
 from io import BytesIO
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
-from lxml import etree
-
 from .catalog import detect_format
+from .common import (
+    MAX_ARCHIVE_COMPRESSION_RATIO,
+    MAX_ARCHIVE_ENTRIES,
+    MAX_ARCHIVE_ENTRY_BYTES,
+    MAX_ARCHIVE_UNCOMPRESSED_BYTES,
+    is_safe_archive_path,
+    normalize_archive_path,
+)
 from .models import ResourceSlot
+from .xmlutil import parse_xml
 
 
 COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
@@ -30,13 +39,6 @@ def normalize_color(value: str) -> str:
         raise ValueError("颜色必须是 #RRGGBB 或 #AARRGGBB")
     # HWT files conventionally use #AARRGGBB; retain explicitly supplied RGB values.
     return value.upper()
-
-
-def is_safe_archive_path(value: str) -> bool:
-    if not value or "\\" in value or ":" in value or value.startswith("/") or "\x00" in value:
-        return False
-    path = PurePosixPath(value)
-    return not path.is_absolute() and all(part not in {"", ".", ".."} for part in path.parts)
 
 
 def validate_change_value(resource_type: str, value: str) -> str:
@@ -76,9 +78,64 @@ def _duplicate_names(infos) -> list[str]:
     return sorted(name for name, count in counts.items() if count > 1)
 
 
+def _duplicate_normalized_names(infos) -> list[str]:
+    counts = Counter(normalize_archive_path(info.filename) for info in infos)
+    return sorted(name for name, count in counts.items() if count > 1)
+
+
+def _is_symlink(info) -> bool:
+    try:
+        mode = (int(info.external_attr) >> 16) & 0xFFFF
+    except (TypeError, ValueError):
+        return False
+    return stat.S_ISLNK(mode)
+
+
+def _compression_ratio(info) -> float | None:
+    compressed_size = getattr(info, "compress_size", None)
+    file_size = getattr(info, "file_size", None)
+    if not isinstance(compressed_size, int) or not isinstance(file_size, int):
+        return None
+    if compressed_size <= 0 or file_size <= 0:
+        return None
+    return file_size / compressed_size
+
+
+def _zip64_values(info) -> tuple[int, ...]:
+    extra = getattr(info, "extra", b"")
+    if not isinstance(extra, (bytes, bytearray)):
+        return ()
+    offset = 0
+    while offset + 4 <= len(extra):
+        field_id, field_size = struct.unpack_from("<HH", extra, offset)
+        offset += 4
+        field_end = offset + field_size
+        if field_end > len(extra):
+            return ()
+        if field_id == 0x0001:
+            payload = extra[offset:field_end]
+            if len(payload) not in {8, 16, 24}:
+                return ()
+            return tuple(struct.unpack_from("<" + "Q" * (len(payload) // 8), payload))
+        offset = field_end
+    return ()
+
+
+def _zip64_inconsistencies(info) -> list[str]:
+    values = _zip64_values(info)
+    if not values:
+        return []
+    issues = []
+    if values[0] != info.file_size:
+        issues.append(f"uncompressed_size={values[0]} (header={info.file_size})")
+    if len(values) >= 16 and values[1] != info.compress_size:
+        issues.append(f"compressed_size={values[1]} (header={info.compress_size})")
+    return issues
+
+
 def _validate_resource_xml(raw: bytes, *, module: str, path: str, errors: list[dict]) -> None:
     try:
-        root = etree.fromstring(raw)
+        root = parse_xml(raw)
     except Exception as exc:
         errors.append({"kind": "nested_xml", "module": module, "path": path, "message": str(exc)})
         return
@@ -112,15 +169,55 @@ def validate_theme(path: Path) -> dict:
     resources = 0
     try:
         with ZipFile(path) as outer:
-            bad = outer.testzip()
-            if bad:
-                errors.append({"kind": "crc", "path": bad})
+            outer_infos = outer.infolist()
+            outer_size_blocked = False
+            outer_expanded = 0
+            if len(outer_infos) > MAX_ARCHIVE_ENTRIES:
+                errors.append({"kind": "too_many_entries", "path": str(path), "limit": MAX_ARCHIVE_ENTRIES})
+                outer_size_blocked = True
+            for info in outer_infos:
+                if info.is_dir():
+                    continue
+                if info.file_size > MAX_ARCHIVE_ENTRY_BYTES:
+                    errors.append({"kind": "oversized_entry", "path": info.filename})
+                    outer_size_blocked = True
+                    continue
+                outer_expanded += info.file_size
+            if outer_expanded > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                errors.append({"kind": "archive_too_large", "path": str(path)})
+                outer_size_blocked = True
             names = set(outer.namelist())
+            unsafe_outer_paths = set()
             for duplicate in _duplicate_names(outer.infolist()):
                 errors.append({"kind": "duplicate_zip_entry", "path": duplicate})
+            for duplicate in _duplicate_normalized_names(outer.infolist()):
+                errors.append({"kind": "duplicate_normalized_zip_entry", "path": duplicate})
             for name in outer.namelist():
                 if not is_safe_archive_path(name.rstrip("/")):
                     errors.append({"kind": "unsafe_path", "path": name})
+                    unsafe_outer_paths.add(name)
+            outer_read_blocked = False
+            for info in outer_infos:
+                if info.is_dir():
+                    continue
+                ratio = _compression_ratio(info)
+                if ratio is not None and ratio > MAX_ARCHIVE_COMPRESSION_RATIO:
+                    errors.append({
+                        "kind": "compression_ratio",
+                        "path": info.filename,
+                        "ratio": ratio,
+                        "limit": MAX_ARCHIVE_COMPRESSION_RATIO,
+                    })
+                    outer_read_blocked = True
+                if _is_symlink(info):
+                    errors.append({"kind": "symlink_entry", "path": info.filename})
+                    outer_read_blocked = True
+                for issue in _zip64_inconsistencies(info):
+                    errors.append({"kind": "zip64_inconsistent", "path": info.filename, "message": issue})
+                    outer_read_blocked = True
+            bad = None if outer_size_blocked or outer_read_blocked or unsafe_outer_paths else outer.testzip()
+            if bad:
+                errors.append({"kind": "crc", "path": bad})
             required = {
                 "description.xml",
                 "unlock/theme.xml",
@@ -134,13 +231,17 @@ def validate_theme(path: Path) -> dict:
             }
             for missing in sorted(required - names):
                 errors.append({"kind": "missing_required", "path": missing})
-            for info in outer.infolist():
+            for info in outer_infos:
                 if info.is_dir():
+                    continue
+                if info.filename in unsafe_outer_paths:
+                    continue
+                if outer_size_blocked or outer_read_blocked or info.file_size > MAX_ARCHIVE_ENTRY_BYTES or outer_expanded > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
                     continue
                 raw = outer.read(info)
                 if info.filename.endswith(".xml"):
                     try:
-                        etree.fromstring(raw)
+                        parse_xml(raw)
                     except Exception as exc:
                         errors.append({"kind": "xml", "path": info.filename, "message": str(exc)})
                 suffix = Path(info.filename).suffix.lower()
@@ -152,20 +253,75 @@ def validate_theme(path: Path) -> dict:
                 try:
                     with ZipFile(BytesIO(raw)) as module:
                         modules += 1
-                        for duplicate in _duplicate_names(module.infolist()):
-                            errors.append({"kind": "duplicate_nested_entry", "module": info.filename, "path": duplicate})
-                        nested_bad = module.testzip()
-                        if nested_bad:
-                            errors.append({"kind": "nested_crc", "module": info.filename, "path": nested_bad})
-                        for child in module.infolist():
+                        nested_infos = module.infolist()
+                        nested_size_blocked = False
+                        nested_expanded = 0
+                        if len(nested_infos) > MAX_ARCHIVE_ENTRIES:
+                            errors.append({"kind": "too_many_nested_entries", "module": info.filename, "limit": MAX_ARCHIVE_ENTRIES})
+                            nested_size_blocked = True
+                        for child in nested_infos:
                             if child.is_dir():
                                 continue
-                            child_raw = module.read(child)
+                            if child.file_size > MAX_ARCHIVE_ENTRY_BYTES:
+                                errors.append({"kind": "oversized_nested_entry", "module": info.filename, "path": child.filename})
+                                nested_size_blocked = True
+                                continue
+                            nested_expanded += child.file_size
+                        if nested_expanded > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                            errors.append({"kind": "nested_archive_too_large", "module": info.filename})
+                            nested_size_blocked = True
+                        unsafe_nested_paths = set()
+                        for child in nested_infos:
                             if not is_safe_archive_path(child.filename.rstrip("/")):
                                 errors.append({"kind": "unsafe_nested_path", "module": info.filename, "path": child.filename})
+                                unsafe_nested_paths.add(child.filename)
+                        for duplicate in _duplicate_names(nested_infos):
+                            errors.append({"kind": "duplicate_nested_entry", "module": info.filename, "path": duplicate})
+                        for duplicate in _duplicate_normalized_names(nested_infos):
+                            errors.append({"kind": "duplicate_normalized_nested_entry", "module": info.filename, "path": duplicate})
+                        nested_read_blocked = False
+                        for child in nested_infos:
+                            if child.is_dir():
+                                continue
+                            ratio = _compression_ratio(child)
+                            if ratio is not None and ratio > MAX_ARCHIVE_COMPRESSION_RATIO:
+                                errors.append({
+                                    "kind": "nested_compression_ratio",
+                                    "module": info.filename,
+                                    "path": child.filename,
+                                    "ratio": ratio,
+                                    "limit": MAX_ARCHIVE_COMPRESSION_RATIO,
+                                })
+                                nested_read_blocked = True
+                            if _is_symlink(child):
+                                errors.append({
+                                    "kind": "nested_symlink_entry",
+                                    "module": info.filename,
+                                    "path": child.filename,
+                                })
+                                nested_read_blocked = True
+                            for issue in _zip64_inconsistencies(child):
+                                errors.append({
+                                    "kind": "nested_zip64_inconsistent",
+                                    "module": info.filename,
+                                    "path": child.filename,
+                                    "message": issue,
+                                })
+                                nested_read_blocked = True
+                        nested_bad = None if nested_size_blocked or nested_read_blocked or unsafe_nested_paths else module.testzip()
+                        if nested_bad:
+                            errors.append({"kind": "nested_crc", "module": info.filename, "path": nested_bad})
+                        for child in nested_infos:
+                            if child.is_dir():
+                                continue
+                            if child.filename in unsafe_nested_paths:
+                                continue
+                            if nested_size_blocked or nested_read_blocked or child.file_size > MAX_ARCHIVE_ENTRY_BYTES or nested_expanded > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                                continue
+                            child_raw = module.read(child)
                             if Path(child.filename).suffix.lower() == ".xml":
                                 try:
-                                    parsed = etree.fromstring(child_raw)
+                                    parsed = parse_xml(child_raw)
                                     resources += len(parsed)
                                 except Exception:
                                     pass

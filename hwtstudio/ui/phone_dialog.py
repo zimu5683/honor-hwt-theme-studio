@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import ipaddress
+import threading
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, Signal
 from PySide6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PySide6.QtWidgets import (
     QComboBox,
@@ -25,13 +27,18 @@ LOGGER = logging.getLogger(__name__)
 
 
 class DiscoveryWorker(QObject):
-    found = Signal(object)
-    failed = Signal(str)
+    found = Signal(object, int)
+    failed = Signal(str, int)
     finished = Signal()
 
-    def __init__(self, registry: PhoneRegistry):
+    def __init__(self, registry: PhoneRegistry, *, task_id: int = 0):
         super().__init__()
         self.registry = registry
+        self.task_id = task_id
+        self.cancelled = threading.Event()
+
+    def cancel(self):
+        self.cancelled.set()
 
     def run(self):
         try:
@@ -41,10 +48,13 @@ class DiscoveryWorker(QObject):
                     broadcast = entry.broadcast()
                     if not broadcast.isNull() and broadcast.protocol() == QAbstractSocket.IPv4Protocol:
                         targets.append(broadcast.toString())
-            self.found.emit(discover_phones(registry=self.registry, targets=targets))
+            self.found.emit(
+                discover_phones(registry=self.registry, targets=targets, cancelled=self.cancelled),
+                self.task_id,
+            )
         except Exception:
             LOGGER.exception("搜索手机失败")
-            self.failed.emit("搜索失败")
+            self.failed.emit("搜索失败", self.task_id)
         finally:
             self.finished.emit()
 
@@ -62,6 +72,11 @@ class PhoneTransferDialog(QDialog):
         self.use_ssh = False
         self.purpose = purpose
         self.discovery_thread: QThread | None = None
+        self._discovery_worker: DiscoveryWorker | None = None
+        self._discovery_stopping = False
+        self._discovery_generation = 0
+        self._pending_done: int | None = None
+        self._pending_close = False
         self._devices: dict[str, PhoneDevice] = self.registry.load()
         self._build_ui()
         self._render_devices()
@@ -94,7 +109,7 @@ class PhoneTransferDialog(QDialog):
         form.addRow("发现的手机", device_row)
 
         self.manual = QLineEdit()
-        self.manual.setPlaceholderText("可选，例如 10.71.175.15 或 10.71.175.15:48621")
+        self.manual.setPlaceholderText("可选，例如 10.71.175.15:48621 或 [fe80::1]:48621")
         form.addRow("手动地址", self.manual)
         self.code = QLineEdit()
         self.code.setPlaceholderText("已配对设备可留空")
@@ -131,25 +146,36 @@ class PhoneTransferDialog(QDialog):
         self.forget_button.setEnabled(self.devices.count() > 0)
 
     def refresh(self):
+        if self._discovery_stopping:
+            return
         if self.discovery_thread and self.discovery_thread.isRunning():
             return
+        if self.discovery_thread:
+            self.discovery_thread = None
+            self._discovery_worker = None
         self.refresh_button.setEnabled(False)
         self.status.setText("正在搜索同一局域网内的手机……")
+        self._discovery_generation += 1
+        generation = self._discovery_generation
         thread = QThread(self)
-        worker = DiscoveryWorker(self.registry)
+        worker = DiscoveryWorker(self.registry, task_id=generation)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.found.connect(self._discovery_found)
         worker.failed.connect(self._discovery_failed)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
+        thread.setProperty("hwt_generation", generation)
         thread.finished.connect(self._discovery_finished)
         thread.finished.connect(thread.deleteLater)
         self.discovery_thread = thread
         self._discovery_worker = worker
+        self._discovery_stopping = False
         thread.start()
 
-    def _discovery_found(self, devices: list[PhoneDevice]):
+    def _discovery_found(self, devices: list[PhoneDevice], generation: int):
+        if self._discovery_stopping or generation != self._discovery_generation:
+            return
         for device in devices:
             self._devices[device.device_id] = device
         self._render_devices()
@@ -160,14 +186,31 @@ class PhoneTransferDialog(QDialog):
             self.status.setText("没有发现手机。请确认 APK 已开始接收，或填写手动地址。")
             set_state(self.status, "warning")
 
-    def _discovery_failed(self, _message: str):
+    def _discovery_failed(self, _message: str, generation: int):
+        if self._discovery_stopping or generation != self._discovery_generation:
+            return
         self.status.setText("搜索失败，请检查网络连接后重试。")
         self.status.setToolTip("")
         set_state(self.status, "error")
 
-    def _discovery_finished(self):
-        self.refresh_button.setEnabled(True)
+    def _discovery_finished(self, generation: int | None = None):
+        if generation is None:
+            sender = self.sender()
+            generation = sender.property("hwt_generation") if sender is not None else None
+        if generation != self._discovery_generation or self.discovery_thread is None:
+            return
         self.discovery_thread = None
+        self._discovery_worker = None
+        if self._discovery_stopping:
+            if self._pending_close:
+                self._pending_close = False
+                QTimer.singleShot(0, self.close)
+            elif self._pending_done is not None:
+                result = self._pending_done
+                self._pending_done = None
+                QTimer.singleShot(0, lambda result=result: self.done(result))
+            return
+        self.refresh_button.setEnabled(True)
 
     def forget_selected(self):
         device = self.devices.currentData()
@@ -182,12 +225,35 @@ class PhoneTransferDialog(QDialog):
     @staticmethod
     def _manual_device(value: str) -> PhoneDevice:
         value = value.strip()
+        if not value:
+            raise ValueError("手动地址格式不正确")
         host = value
         port = HTTP_PORT
-        if value.count(":") == 1:
-            maybe_host, maybe_port = value.rsplit(":", 1)
-            if maybe_port.isdigit():
+        if value.startswith("["):
+            closing = value.find("]")
+            if closing <= 1:
+                raise ValueError("手动地址格式不正确")
+            host = value[1:closing]
+            suffix = value[closing + 1:]
+            if suffix:
+                if not suffix.startswith(":") or not suffix[1:].isdigit():
+                    raise ValueError("手动地址格式不正确")
+                port = int(suffix[1:])
+            try:
+                ipaddress.IPv6Address(host)
+            except ValueError as exc:
+                raise ValueError("手动地址格式不正确") from exc
+        elif ":" in value:
+            if value.count(":") == 1:
+                maybe_host, maybe_port = value.rsplit(":", 1)
+                if not maybe_host or not maybe_port.isdigit():
+                    raise ValueError("手动地址格式不正确")
                 host, port = maybe_host, int(maybe_port)
+            else:
+                try:
+                    ipaddress.IPv6Address(value)
+                except ValueError as exc:
+                    raise ValueError("手动地址格式不正确") from exc
         if not host or not 1 <= port <= 65535:
             raise ValueError("手动地址格式不正确")
         return PhoneDevice(device_id=f"manual:{host}:{port}", name="手动连接的荣耀手机", host=host, port=port)
@@ -215,14 +281,39 @@ class PhoneTransferDialog(QDialog):
         self.accept()
 
     def closeEvent(self, event):
-        self._finish_discovery()
+        if not self._finish_discovery():
+            self._pending_done = None
+            self._pending_close = True
+            self.refresh_button.setEnabled(False)
+            self.send_button.setEnabled(False)
+            self.ssh_button.setEnabled(False)
+            event.ignore()
+            return
         super().closeEvent(event)
 
     def done(self, result):
-        self._finish_discovery()
+        if not self._finish_discovery():
+            self._pending_done = result
+            self._pending_close = False
+            self.refresh_button.setEnabled(False)
+            self.send_button.setEnabled(False)
+            self.ssh_button.setEnabled(False)
+            return
         super().done(result)
 
     def _finish_discovery(self):
-        if self.discovery_thread and self.discovery_thread.isRunning():
-            self.discovery_thread.quit()
-            self.discovery_thread.wait(2500)
+        self._discovery_stopping = True
+        if not self.discovery_thread:
+            return True
+        thread = self.discovery_thread
+        worker = self._discovery_worker
+        if worker is not None:
+            worker.cancel()
+        if thread.isRunning():
+            thread.quit()
+            thread.wait(2500)
+        if not thread.isRunning():
+            self.discovery_thread = None
+            self._discovery_worker = None
+            return True
+        return False

@@ -76,6 +76,13 @@ class PreviewTests(unittest.TestCase):
             )
             self.assertIsNotNone(missing)
 
+    def test_to_pixmap_preserves_rgba_pixels_without_file_round_trip(self):
+        image = Image.new("RGBA", (3, 2), (12, 34, 56, 78))
+        pixmap = PreviewRepository.to_pixmap(image)
+        self.assertEqual((pixmap.width(), pixmap.height()), (3, 2))
+        color = pixmap.toImage().pixelColor(0, 0)
+        self.assertEqual((color.red(), color.green(), color.blue(), color.alpha()), (12, 34, 56, 78))
+
     @staticmethod
     def _preview_slots() -> list[ResourceSlot]:
         return [

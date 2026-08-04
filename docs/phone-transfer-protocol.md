@@ -16,7 +16,7 @@
   "name": "ELP-AN00",
   "http_port": 48621,
   "app_version": "0.1.5",
-  "features": ["device_profile"]
+  "features": ["device_profile", "transfer_cancel", "transfer_prepare", "transfer_chunked"]
 }
 ```
 
@@ -49,8 +49,10 @@
 
 ### `POST /api/v1/pair`
 
-请求 JSON：`{"code":"123456","client_name":"大雪主题编辑器"}`。配对码有效期 5 分钟，
+请求必须包含 `Content-Length`，请求体不超过 16 KiB。请求 JSON：`{"code":"123456","client_name":"大雪主题编辑器"}`，其中两个字段均为字符串（`client_name` 可省略）；手机端会折叠空白、移除控制字符并限制为 60 个 Unicode 代码点。配对码有效期 5 分钟，
 一分钟内连续失败 5 次后限速。成功返回设备信息和随机 256 位 `token`；每次成功配对后立即刷新配对码。
+
+缺少 JSON、JSON 格式错误或字段类型错误时返回 `400`，不会创建配对记录。
 
 ### `PUT /api/v1/themes/{urlencoded_filename}`
 
@@ -60,8 +62,10 @@
 - `Content-Type: application/octet-stream`
 - `Content-Length: <bytes>`
 - `X-Content-SHA256: <64 lowercase hex>`
+- `X-HWT-Transfer-Id: <16-64 ASCII characters>`（可选；支持取消的桌面端会发送随机会话标识）
 
-请求体是原始 HWT，最大 1 GiB。APK 只接受包含根目录 `description.xml` 的有效 ZIP，
+请求体是原始 HWT，最大 1 GiB。文件名会清理为安全的 `.hwt` 文件名，最终 UTF-8 长度不超过 200 字节。
+APK 只接受包含根目录 `description.xml` 文件的有效 ZIP，并在读取 ZIP 中心目录时限制条目数量不超过 20,000、单个条目不超过 256 MiB、所有条目累计解压量不超过 512 MiB，
 校验 SHA-256 后才以临时文件方式替换目标文件。成功返回：
 
 ```json
@@ -75,5 +79,96 @@
 }
 ```
 
+`overwritten` 和 `theme_app_opened` 是必需的布尔字段。接收服务在仍有 HTTP 请求处理时不会因 30 分钟空闲计时而停止。
+一次安装开始后会固定当时选定的 SAF 目录；授权切换不会把同一文件拆分写入不同存储位置。
+
+桌面端会拒绝超过 2 MiB、声明长度非法、声明长度与实际读取长度不一致，或 JSON 顶层结构/协议字段类型错误的手机响应；状态/profile/上传响应文本字段超过 512 个字符或包含控制字符时拒绝，远端错误文案会压缩为单行并限长。
+
 错误响应统一包含 `code` 和中文 `message`。主要状态码为 `400` 请求错误、`401` 未配对、
-`409` 正在上传、`413` 文件过大、`422` HWT/摘要校验失败、`503` 目录授权失效、`507` 空间不足。
+`409` 正在上传、`413` 文件或配对请求过大、`422` HWT/摘要校验失败、`499` 上传已取消、`503` 目录授权失效、`507` 空间不足。
+
+### `GET /api/v1/transfers/{id}`（可选状态扩展）
+
+请求头为 `Authorization: Bearer <token>`。手机返回 `202 receiving` 表示会话仍在接收，返回
+`202 committing` 表示文件已收齐、正在校验并安装，返回 `200 completed` 时附带原上传结果；不存在或旧版助手不支持时返回 `404`。
+`receiving` 响应包含 `received`、`total`、`next_offset`，三者均为非负字节数，其中 `next_offset` 是下一块的写入偏移量；桌面端会在连接中断后先查询该接口，
+避免对已经完成的主题重复发送文件。
+
+### `POST /api/v1/transfers/{id}/prepare`（可选元数据预检）
+
+当手机在 `features` 中声明 `transfer_prepare` 时，桌面端在发送任何 HWT 字节前提交一个不超过 16 KiB 的 JSON：
+
+```json
+{
+  "file_name": "主题.hwt",
+  "size": 64875407,
+  "sha256": "..."
+}
+```
+
+请求使用 `Authorization: Bearer <token>`，`{id}` 是随后完整 PUT 或分块上传复用的会话 ID。手机会先校验
+文件名、大小、总 SHA-256、存储授权和当前忙状态，成功返回 `200 prepared` 并回显规范化后的元数据：
+
+```json
+{
+  "state": "prepared",
+  "transfer_id": "same-session-id",
+  "file_name": "主题.hwt",
+  "size": 64875407,
+  "sha256": "..."
+}
+```
+
+预检只是一阶段校验，不预先占用接收会话；真正上传时仍会再次检查会话、长度、摘要和 HWT 内容。
+因此预检与上传之间的并发变化不会绕过现有校验。旧版助手返回 `404` 时桌面端直接回退到原始 PUT，
+不会把能力声明当成必需的协议升级。
+
+### 分块上传（`transfer_chunked`）
+
+当手机在 `features` 中声明 `transfer_chunked` 时，桌面端使用固定不超过 4 MiB 的分块，
+而未声明该能力的旧版手机继续使用上一节的完整 `PUT`。分块上传不使用文件名路径，使用同一个会话 ID：
+
+#### `PUT /api/v1/transfers/{id}`
+
+请求头为：
+
+- `Authorization: Bearer <token>`
+- `Content-Type: application/octet-stream`
+- `Content-Length: <chunk_bytes>`
+- `X-Content-SHA256: <whole_file_sha256>`
+- `X-HWT-Transfer-Id: <same id>`
+- `X-HWT-Total-Size: <whole_file_bytes>`
+- `X-HWT-Chunk-Offset: <non-negative byte offset>`
+- `X-HWT-Chunk-SHA256: <chunk_sha256>`
+- `X-HWT-File-Name: <urlencoded UTF-8 filename>`
+
+手机严格要求分块从当前 `next_offset` 开始，单块不超过 4 MiB，并在写入临时文件前校验该块摘要。
+成功接收返回 `202`：
+
+```json
+{
+  "state": "receiving",
+  "transfer_id": "random-session-id",
+  "received": 4194304,
+  "total": 64875407,
+  "next_offset": 4194304
+}
+```
+
+#### `POST /api/v1/transfers/{id}/complete`
+
+所有分块成功后，桌面端发送带 Bearer Token 的空请求体。手机再次校验整个临时文件的大小和 SHA-256，
+然后复用完整上传路径的 HWT 校验、存储空间检查及原子安装逻辑。提交期间状态为 `committing`；
+安装完成后返回与完整 `PUT` 相同的 `stored_name`、`destination`、`size`、`sha256`、`overwritten` 和
+`theme_app_opened` 字段。提交响应丢失时，桌面端查询状态并等待 `completed`，不会重新追加最后一个分块。
+
+### `DELETE /api/v1/transfers/{id}`（可选取消扩展）
+
+请求头为 `Authorization: Bearer <token>`。`{id}` 必须是上传时的
+`X-HWT-Transfer-Id`，手机在请求体解析完成、提交到 `Honor/Themes` 之前检查取消标记。
+匹配活动会话时返回 `202`，会话不存在或已经进入安装提交阶段时返回 `404`。桌面端会忽略旧版助手
+对该可选接口返回的 `404`，因此不影响只实现原始 Bearer v1 PUT 的手机端。
+
+支持会话扩展的桌面端在连接中断时最多重试一次，并复用相同的 `X-HWT-Transfer-Id`、文件大小和 SHA-256。
+Android 会在内存中保留最近 8 个成功会话；重试内容一致时直接返回原安装结果，若会话 ID 对应不同文件则返回
+`409 transfer_id_reused`。缓存不跨应用重启持久化，旧版助手仍按原始 PUT 行为处理。

@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from io import BytesIO
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QVBoxLayout
 
 from ..imageops import enhance_image, fit_image
@@ -166,10 +165,9 @@ class PreviewRepository:
 
     @staticmethod
     def to_pixmap(image: Image.Image, size: tuple[int, int] | None = None) -> QPixmap:
-        output = BytesIO()
-        image.save(output, "PNG", optimize=True)
-        pixmap = QPixmap()
-        pixmap.loadFromData(output.getvalue(), "PNG")
+        raw = image.tobytes("raw", "RGBA")
+        qimage = QImage(raw, image.width, image.height, image.width * 4, QImage.Format.Format_RGBA8888)
+        pixmap = QPixmap.fromImage(qimage, Qt.ImageConversionFlag.NoFormatConversion)
         if size:
             pixmap = pixmap.scaled(*size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         return pixmap

@@ -24,10 +24,12 @@ class ReceiverService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var pairing: PairingManager
     private lateinit var storage: ThemeStorage
-    private var httpServer: ReceiverServer? = null
+    @Volatile private var httpServer: ReceiverServer? = null
     private var discoveryServer: DiscoveryServer? = null
     private var timeoutJob: Job? = null
     private val lastActivity = AtomicLong(0L)
+    private val receiverGeneration = AtomicLong(0L)
+    private val lifecycleLock = Any()
 
     override fun onCreate() {
         super.onCreate()
@@ -38,24 +40,41 @@ class ReceiverService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action ?: ACTION_START) {
-            ACTION_STOP -> stopSelf()
-            ACTION_REGENERATE_CODE -> {
-                pairing.regenerateCode()
-                publishState()
-            }
+            ACTION_STOP -> stopReceiver()
+            ACTION_REGENERATE_CODE -> regenerateCode()
             else -> startReceiver()
         }
         return START_NOT_STICKY
     }
 
+    private fun regenerateCode() {
+        synchronized(lifecycleLock) {
+            if (httpServer == null) {
+                stopSelf()
+                return
+            }
+            pairing.regenerateCode()
+            publishState()
+        }
+    }
+
     private fun startReceiver() {
-        if (httpServer != null) return
+        val generation = synchronized(lifecycleLock) {
+            if (httpServer != null) return
+            receiverGeneration.incrementAndGet()
+        }
         if (!storage.isAvailable()) {
             ReceiverState.update { it.copy(error = "请先授权 Honor/Themes 目录") }
-            stopSelf()
+            stopReceiver()
             return
         }
-        startForeground(RECEIVER_NOTIFICATION_ID, receiverNotification())
+        try {
+            startForeground(RECEIVER_NOTIFICATION_ID, receiverNotification())
+        } catch (_: Exception) {
+            ReceiverState.update { it.copy(error = "接收服务启动失败，请检查通知权限和系统设置") }
+            stopReceiver()
+            return
+        }
         lastActivity.set(System.currentTimeMillis())
         try {
             httpServer = ReceiverServer(this, pairing, storage, ::touch, ::onTransfer).also {
@@ -63,16 +82,27 @@ class ReceiverService : Service() {
             }
             discoveryServer = DiscoveryServer(pairing).also { it.start() }
         } catch (exc: Exception) {
-            ReceiverState.update { it.copy(error = "接收服务启动失败：${exc.message}") }
-            stopSelf()
+            android.util.Log.e("ReceiverService", "Receiver service start failed", exc)
+            ReceiverState.update { it.copy(error = "接收服务启动失败，请检查通知权限、网络端口和目录授权") }
+            stopReceiver()
             return
         }
         publishState()
         timeoutJob = scope.launch {
             while (isActive) {
                 delay(30_000L)
-                if (System.currentTimeMillis() - lastActivity.get() >= Protocol.IDLE_TIMEOUT_MS) {
-                    stopSelf()
+                if (receiverGeneration.get() != generation) break
+                val server = httpServer
+                if (server?.hasActiveRequests() == true) {
+                    lastActivity.set(System.currentTimeMillis())
+                    continue
+                }
+                if (Protocol.shouldStopForIdle(System.currentTimeMillis(), lastActivity.get(), 0)) {
+                    val stoppingGeneration = generation + 1L
+                    if (receiverGeneration.compareAndSet(generation, stoppingGeneration)) {
+                        clearReceiverResources(stoppingGeneration)
+                        stopSelf()
+                    }
                     break
                 }
             }
@@ -81,6 +111,40 @@ class ReceiverService : Service() {
 
     private fun touch() {
         lastActivity.set(System.currentTimeMillis())
+    }
+
+    private fun stopReceiver() {
+        receiverGeneration.incrementAndGet()
+        clearReceiverResources()
+        stopSelf()
+    }
+
+    private fun clearReceiverResources(expectedGeneration: Long? = null) {
+        synchronized(lifecycleLock) {
+            if (expectedGeneration != null && receiverGeneration.get() != expectedGeneration) return
+            timeoutJob?.cancel()
+            timeoutJob = null
+            val http = httpServer
+            val discovery = discoveryServer
+            httpServer = null
+            discoveryServer = null
+            try {
+                http?.stop()
+            } catch (exc: Exception) {
+                android.util.Log.e("ReceiverService", "HTTP receiver stop failed", exc)
+            }
+            try {
+                discovery?.stop()
+            } catch (exc: Exception) {
+                android.util.Log.e("ReceiverService", "Discovery receiver stop failed", exc)
+            }
+            try {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } catch (exc: Exception) {
+                android.util.Log.e("ReceiverService", "Foreground notification cleanup failed", exc)
+            }
+            ReceiverState.update { it.copy(running = false, pairCode = "------", codeExpiresAt = 0L, addresses = emptyList()) }
+        }
     }
 
     private fun publishState() {
@@ -153,12 +217,7 @@ class ReceiverService : Service() {
     }
 
     override fun onDestroy() {
-        timeoutJob?.cancel()
-        httpServer?.stop()
-        discoveryServer?.stop()
-        httpServer = null
-        discoveryServer = null
-        ReceiverState.update { it.copy(running = false, pairCode = "------", codeExpiresAt = 0L, addresses = emptyList()) }
+        clearReceiverResources()
         scope.cancel()
         super.onDestroy()
     }

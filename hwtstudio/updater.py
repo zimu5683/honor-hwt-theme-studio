@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -23,7 +24,16 @@ DEFAULT_LATEST_JSON_URL = (
 )
 DEFAULT_RELEASES_API_URL = f"https://api.github.com/repos/{DEFAULT_REPOSITORY}/releases/latest"
 MAX_DOWNLOAD_SIZE = 512 * 1024 * 1024
+MAX_METADATA_BYTES = 2 * 1024 * 1024
+MAX_ASSET_NAME_BYTES = 200
+MAX_RELEASE_VERSION_CHARS = 64
+MAX_RELEASE_BODY_CHARS = 12_000
 ProgressCallback = Callable[[int, int, str], None]
+
+
+def _check_cancelled(cancelled: threading.Event | None):
+    if cancelled and cancelled.is_set():
+        raise RuntimeError("更新任务已取消")
 
 
 @dataclass(frozen=True)
@@ -93,13 +103,19 @@ def release_from_payload(payload: dict[str, Any]) -> Release:
     version = payload.get("version") or payload.get("tag_name")
     if not isinstance(version, str) or not version.strip():
         raise ValueError("更新清单缺少 version/tag_name")
+    version = version.strip()
+    if len(version) > MAX_RELEASE_VERSION_CHARS:
+        raise ValueError("更新清单版本号过长")
     url = payload.get("url") or payload.get("html_url") or ""
     body = payload.get("body") or payload.get("release_summary") or payload.get("notes") or ""
+    body = body.strip() if isinstance(body, str) else ""
+    if len(body) > MAX_RELEASE_BODY_CHARS:
+        body = body[:MAX_RELEASE_BODY_CHARS].rstrip() + "\n\n（更新说明过长，已截断）"
     assets = _payload_assets(payload)
     return Release(
-        version=version.strip(),
+        version=version,
         url=url.strip() if isinstance(url, str) else "",
-        body=body.strip() if isinstance(body, str) else "",
+        body=body,
         asset=select_update_asset(assets),
     )
 
@@ -128,8 +144,8 @@ def is_windows_installer_asset(name: str) -> bool:
 
 
 def _request(url: str, *, accept: str = "application/json") -> urllib.request.Request:
-    if not url.startswith(("https://", "http://")):
-        raise ValueError(f"不支持的更新地址：{url}")
+    if not url.startswith("https://"):
+        raise ValueError(f"更新地址必须使用 HTTPS：{url}")
     return urllib.request.Request(
         url,
         headers={
@@ -139,26 +155,48 @@ def _request(url: str, *, accept: str = "application/json") -> urllib.request.Re
     )
 
 
-def _fetch_json(url: str) -> dict[str, Any]:
+def _read_metadata(response, *, limit: int, context: str) -> bytes:
+    raw_length = response.headers.get("Content-Length", "")
+    declared_length: int | None = None
+    if raw_length:
+        if not raw_length.isdigit():
+            raise ValueError(f"{context}响应长度无效")
+        declared_length = int(raw_length)
+        if declared_length > limit:
+            raise ValueError(f"{context}响应过大")
+    body = response.read(limit + 1)
+    if len(body) > limit:
+        raise ValueError(f"{context}响应过大")
+    if declared_length is not None and len(body) != declared_length:
+        raise ValueError(f"{context}响应长度与声明不一致")
+    return body
+
+
+def _fetch_json(url: str, *, cancelled: threading.Event | None = None) -> dict[str, Any]:
+    _check_cancelled(cancelled)
     with urllib.request.urlopen(_request(url), timeout=20) as response:
-        payload = json.loads(response.read(2 * 1024 * 1024).decode("utf-8"))
+        payload = json.loads(_read_metadata(response, limit=MAX_METADATA_BYTES, context="更新清单").decode("utf-8"))
+    _check_cancelled(cancelled)
     if not isinstance(payload, dict):
         raise ValueError("更新接口返回的不是 JSON 对象")
     return payload
 
 
-def fetch_latest_release() -> Release:
+def fetch_latest_release(*, cancelled: threading.Event | None = None) -> Release:
     errors: list[str] = []
     for endpoint in (DEFAULT_LATEST_JSON_URL, DEFAULT_RELEASES_API_URL):
         try:
-            return release_from_payload(_fetch_json(endpoint))
+            return release_from_payload(_fetch_json(endpoint, cancelled=cancelled))
+        except RuntimeError:
+            raise
         except Exception as exc:  # pragma: no cover - network failures vary by machine
             errors.append(f"{endpoint}: {exc}")
     raise RuntimeError("无法读取 GitHub Release 更新信息：" + "；".join(errors))
 
 
-def check_for_update(current_version: str = __version__) -> UpdateCheck:
-    release = fetch_latest_release()
+def check_for_update(current_version: str = __version__, *, cancelled: threading.Event | None = None) -> UpdateCheck:
+    release = fetch_latest_release(cancelled=cancelled)
+    _check_cancelled(cancelled)
     available = is_newer_version(release.version, current_version)
     return UpdateCheck(
         current_version=current_version,
@@ -169,10 +207,18 @@ def check_for_update(current_version: str = __version__) -> UpdateCheck:
 
 
 def safe_asset_name(name: str) -> str:
-    if not name.strip() or any(token in name for token in ("/", "\\", ":", "\x00")):
+    if (
+        not isinstance(name, str)
+        or not name.strip()
+        or name != name.strip()
+        or any(ord(character) < 32 or ord(character) == 127 for character in name)
+        or any(token in name for token in ("/", "\\", ":", "\x00"))
+    ):
         raise ValueError(f"非法更新文件名：{name}")
     if name in {".", ".."}:
         raise ValueError(f"非法更新文件名：{name}")
+    if len(name.encode("utf-8")) > MAX_ASSET_NAME_BYTES:
+        raise ValueError("更新文件名过长")
     return name
 
 
@@ -186,25 +232,37 @@ def _extract_sha256(text: str) -> str:
     return match.group(0) if match else ""
 
 
-def _fetch_checksum(url: str) -> str:
+def _fetch_checksum(url: str, *, cancelled: threading.Event | None = None) -> str:
     try:
+        _check_cancelled(cancelled)
         with urllib.request.urlopen(_request(url, accept="text/plain"), timeout=20) as response:
-            return _extract_sha256(response.read(4096).decode("utf-8", errors="replace"))
+            value = _extract_sha256(
+                _read_metadata(response, limit=4096, context="校验文件").decode("utf-8", errors="replace")
+            )
+        _check_cancelled(cancelled)
+        return value
+    except RuntimeError:
+        raise
     except (OSError, ValueError, urllib.error.URLError):
         return ""
 
 
-def _asset_checksum(asset: ReleaseAsset) -> str:
+def _asset_checksum(asset: ReleaseAsset, *, cancelled: threading.Event | None = None) -> str:
+    _check_cancelled(cancelled)
     checksum = _valid_sha256(asset.sha256)
     if checksum:
         return checksum
-    return _fetch_checksum(asset.url + ".sha256")
+    return _fetch_checksum(asset.url + ".sha256", cancelled=cancelled)
 
 
-def _sha256(path: Path) -> str:
+def _sha256(path: Path, *, cancelled: threading.Event | None = None) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
+        while True:
+            _check_cancelled(cancelled)
+            block = handle.read(1024 * 1024)
+            if not block:
+                break
             digest.update(block)
     return digest.hexdigest()
 
@@ -214,34 +272,42 @@ def download_asset(
     download_dir: Path | None = None,
     *,
     progress: ProgressCallback | None = None,
+    cancelled: threading.Event | None = None,
 ) -> Path:
     asset = release.asset
     if asset is None:
         raise ValueError("该 Release 没有适用于 Windows 的桌面安装包")
-    expected = _asset_checksum(asset)
+    expected = _asset_checksum(asset, cancelled=cancelled)
     if not expected:
         raise ValueError("发布包缺少有效 SHA-256 校验值，已拒绝自动更新")
 
     target_dir = download_dir or data_dir() / "updates"
+    _check_cancelled(cancelled)
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / safe_asset_name(asset.name)
-    if target.is_file() and _sha256(target) == expected:
+    if target.is_file() and _sha256(target, cancelled=cancelled) == expected:
         if progress:
             progress(target.stat().st_size, target.stat().st_size, "已复用已校验的更新包")
         return target
 
-    partial = target.with_name(target.name + ".part")
+    partial = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.part")
     partial.unlink(missing_ok=True)
     digest = hashlib.sha256()
     received = 0
     try:
         with urllib.request.urlopen(_request(asset.url, accept="application/octet-stream"), timeout=60) as response:
             raw_total = response.headers.get("Content-Length", "")
-            total = int(raw_total) if raw_total.isdigit() else 0
-            if total > MAX_DOWNLOAD_SIZE:
+            declared_total: int | None = None
+            if raw_total:
+                if not raw_total.isdigit():
+                    raise ValueError("更新包响应长度无效")
+                declared_total = int(raw_total)
+            total = declared_total or 0
+            if declared_total is not None and declared_total > MAX_DOWNLOAD_SIZE:
                 raise ValueError("更新包超过允许的大小限制")
             with partial.open("wb") as handle:
                 while True:
+                    _check_cancelled(cancelled)
                     block = response.read(1024 * 1024)
                     if not block:
                         break
@@ -252,14 +318,20 @@ def download_asset(
                     handle.write(block)
                     if progress:
                         progress(received, total, "正在下载更新包…")
+            if declared_total is not None and received != declared_total:
+                raise ValueError("更新包响应长度与声明不一致")
     except Exception:
         partial.unlink(missing_ok=True)
         raise
     actual = digest.hexdigest()
-    if actual != expected:
+    try:
+        _check_cancelled(cancelled)
+        if actual != expected:
+            raise ValueError(f"更新包 SHA-256 校验失败：期望 {expected}，实际 {actual}")
+        os.replace(partial, target)
+    except Exception:
         partial.unlink(missing_ok=True)
-        raise ValueError(f"更新包 SHA-256 校验失败：期望 {expected}，实际 {actual}")
-    os.replace(partial, target)
+        raise
     if progress:
         progress(received, total or received, "更新包校验完成")
     return target

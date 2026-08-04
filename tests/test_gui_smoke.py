@@ -17,6 +17,7 @@ from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
 from hwtstudio.semantic import SIMPLE_BY_ID
 from hwtstudio.ui.dialogs import resolve_missing_assets
 from hwtstudio.ui.design_system import Colors, STYLE_SHEET
+from hwtstudio.ui.phone_dialog import PhoneTransferDialog
 from hwtstudio.updater import UpdateCheck
 
 
@@ -72,6 +73,17 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertIn("broken image header", "\n".join(window._log_lines))
         window.close()
 
+    def test_profile_error_detail_is_bounded_and_single_line(self):
+        window = MainWindow()
+        window._profile_generation = 1
+        detail = "x" * 1000 + "\n第二行不应显示"
+        with patch("hwtstudio.app.QMessageBox.warning") as warning:
+            window._profile_failed(detail, "remote_error", 1)
+        message = warning.call_args.args[2]
+        self.assertLessEqual(len(message), 243)
+        self.assertNotIn("第二行不应显示", message)
+        window.close()
+
     def test_update_check_ui_callback_runs_on_gui_thread(self):
         window = MainWindow()
         result = UpdateCheck(
@@ -98,6 +110,27 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertEqual(callback_threads, [self.app.thread()])
         window.close()
 
+    def test_close_requests_cancellation_before_releasing_active_thread(self):
+        window = MainWindow()
+        window.project.dirty = False
+        thread = MagicMock()
+        thread.isRunning.return_value = True
+        worker = MagicMock()
+        window.transfer_thread = thread
+        window._transfer_worker = worker
+
+        window.close()
+
+        worker.cancel.assert_called_once_with()
+        thread.requestInterruption.assert_called_once_with()
+        thread.quit.assert_called_once_with()
+        self.assertTrue(window._closing)
+
+        thread.isRunning.return_value = False
+        window._transfer_thread_finished()
+        self.app.processEvents()
+        self.assertIsNone(window.transfer_thread)
+
     def test_silent_update_check_suppresses_latest_version_dialog(self):
         window = MainWindow()
         result = UpdateCheck(
@@ -112,6 +145,121 @@ class GuiSmokeTests(unittest.TestCase):
             window._update_checked(result, silent=False)
             information.assert_called_once()
         window.close()
+
+    def test_closing_window_does_not_start_update_work(self):
+        window = MainWindow()
+        window._closing = True
+        with patch("hwtstudio.ui.workers.check_for_update") as check:
+            window.check_for_updates()
+            check.assert_not_called()
+        self.assertIsNone(window.update_thread)
+        window.close()
+
+    def test_theme_file_dialog_remembers_portable_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            window = MainWindow()
+            settings = MagicMock()
+            settings.value.return_value = ""
+            window.settings = settings
+            window.last_export = folder / "exported.hwt"
+
+            self.assertEqual(window._theme_file_dialog_directory(), folder)
+            window._remember_theme_file_directory(folder)
+
+            settings.setValue.assert_called_once_with("paths/theme_directory", str(folder))
+            window.close()
+
+    def test_theme_file_dialog_uses_persisted_directory_after_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            window = MainWindow()
+            settings = MagicMock()
+            settings.value.return_value = str(folder)
+            window.settings = settings
+
+            self.assertEqual(window._theme_file_dialog_directory(), folder)
+            window.close()
+
+    def test_stale_phone_discovery_completion_does_not_clear_new_thread(self):
+        dialog = PhoneTransferDialog.__new__(PhoneTransferDialog)
+        dialog.discovery_thread = object()
+        dialog._discovery_worker = object()
+        dialog._discovery_stopping = False
+        dialog._discovery_generation = 2
+        dialog.refresh_button = MagicMock()
+
+        dialog._discovery_finished(1)
+        self.assertIsNotNone(dialog.discovery_thread)
+        dialog._discovery_finished(2)
+        self.assertIsNone(dialog.discovery_thread)
+        self.assertIsNone(dialog._discovery_worker)
+        dialog.refresh_button.setEnabled.assert_called_once_with(True)
+
+    def test_stale_main_window_task_callbacks_cannot_clear_new_generation(self):
+        window = MainWindow()
+        window._update_generation = 2
+        window.update_thread = MagicMock()
+        window.update_thread.isRunning.return_value = False
+        window.update_worker = MagicMock()
+        window._update_thread_finished(1)
+        self.assertIsNotNone(window.update_thread)
+        self.assertIsNotNone(window.update_worker)
+
+        window._transfer_generation = 2
+        window.transfer_thread = MagicMock()
+        window.transfer_thread.isRunning.return_value = False
+        window._transfer_worker = MagicMock()
+        window._transfer_thread_finished(1)
+        self.assertIsNotNone(window.transfer_thread)
+        self.assertIsNotNone(window._transfer_worker)
+        window.close()
+
+    def test_finished_background_tasks_release_progress_dialogs(self):
+        window = MainWindow()
+        window._update_generation = 1
+        update_progress = MagicMock()
+        window.update_progress = update_progress
+        with patch("hwtstudio.app.QMessageBox.information"):
+            window._update_download_failed("更新下载已取消", 1)
+        self.assertIsNone(window.update_progress)
+        update_progress.close.assert_called_once_with()
+
+        transfer_progress = MagicMock()
+        window._transfer_generation = 1
+        window.progress = transfer_progress
+        with patch("hwtstudio.app.QMessageBox.information"):
+            window._transfer_failed("发送已取消", "cancelled", 1)
+        self.assertIsNone(window.progress)
+        transfer_progress.close.assert_called_once_with()
+        window.close()
+
+    def test_phone_discovery_stop_reports_running_thread_without_destroying_it(self):
+        dialog = PhoneTransferDialog.__new__(PhoneTransferDialog)
+        thread = MagicMock()
+        thread.isRunning.return_value = True
+        worker = MagicMock()
+        dialog.discovery_thread = thread
+        dialog._discovery_worker = worker
+        dialog._discovery_stopping = False
+
+        self.assertFalse(dialog._finish_discovery())
+        worker.cancel.assert_called_once_with()
+        thread.quit.assert_called_once_with()
+        thread.wait.assert_called_once_with(2500)
+        self.assertIs(dialog.discovery_thread, thread)
+
+    def test_manual_phone_address_supports_ipv6_and_rejects_bad_port(self):
+        device = PhoneTransferDialog._manual_device("[fe80::1]:48622")
+        self.assertEqual((device.host, device.port), ("fe80::1", 48622))
+        self.assertIn("[fe80::1]:48622", device.label)
+
+        default_port = PhoneTransferDialog._manual_device("2001:db8::1")
+        self.assertEqual((default_port.host, default_port.port), ("2001:db8::1", 48621))
+        with self.assertRaises(ValueError):
+            PhoneTransferDialog._manual_device("[fe80::1]:invalid")
+        with self.assertRaises(ValueError):
+            PhoneTransferDialog._manual_device("1:2:3:bad")
 
     def test_studio_tokens_titlebar_and_responsive_layout(self):
         self.assertEqual(Colors.PRIMARY, "#5645D4")

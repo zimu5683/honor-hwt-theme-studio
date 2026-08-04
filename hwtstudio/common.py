@@ -1,6 +1,86 @@
 from __future__ import annotations
 
 import re
+import unicodedata
+from pathlib import PurePosixPath
+
+
+MAX_ARCHIVE_ENTRY_BYTES = 256 * 1024 * 1024
+MAX_ARCHIVE_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+MAX_ARCHIVE_ENTRIES = 20_000
+# HWT commonly stores small, uniform JPEG previews; their legitimate ratio can
+# exceed safezip's generic 200:1 default. Keep a domain-specific margin while
+# still rejecting high-ratio compression bombs before they are read.
+MAX_ARCHIVE_COMPRESSION_RATIO = 500.0
+MAX_CATALOG_BYTES = 32 * 1024 * 1024
+MAX_PROJECT_BYTES = 16 * 1024 * 1024
+
+
+# Mappings confirmed by the Huawei-to-Honor converter reference project. They
+# apply to scanned source resources during export; custom resources keep the
+# exact names chosen by the user.
+HONOR_MODULE_ALIASES = {
+    "com.huawei.android.launcher": "com.hihonor.android.launcher",
+    "com.huawei.phone.recorder": "com.hihonor.phone.recorder",
+    "com.huawei.aod": "com.hihonor.aod",
+    "framework-res-hwext": "framework-res-hnext",
+}
+
+# The reference converter applies these aliases to icon and nested resource
+# paths, where the package name is part of the filename rather than the outer
+# HWT module name. Keep the longest aliases first to avoid a broad replacement
+# shadowing a more specific migration.
+HONOR_PATH_ALIASES = {
+    "com.huawei.android.totemweather": "com.hihonor.android.totemweather",
+    "com.huawei.music": "com.google.android.apps.youtube.music",
+    "com.hihonor.tipsove": "com.hihonor.tips",
+    "com.android.deskclock": "com.hihonor.deskclock",
+    "com.huawei.deskclock": "com.hihonor.deskclock",
+    "com.huawei": "com.hihonor",
+    "com.hicloud": "com.hihonor",
+}
+_HONOR_PATH_ALIASES_SORTED = tuple(
+    sorted(HONOR_PATH_ALIASES.items(), key=lambda item: len(item[0]), reverse=True),
+)
+
+
+def honor_module_name(value: str) -> str:
+    return HONOR_MODULE_ALIASES.get(value, value)
+
+
+def honor_resource_name(value: str) -> str:
+    if value.startswith("emui"):
+        return "magic" + value[4:]
+    if value.startswith("hw"):
+        return "hn" + value[2:]
+    return value
+
+
+def honor_resource_path(value: str) -> str:
+    parts = value.split("/")
+    converted: list[str] = []
+    for index, part in enumerate(parts):
+        if part == "framework-res-hwext":
+            part = "framework-res-hnext"
+        for old, new in _HONOR_PATH_ALIASES_SORTED:
+            part = part.replace(old, new)
+        if index == len(parts) - 1 and part.lower().endswith(".png"):
+            part = part.replace("emui", "magic")
+        converted.append(part)
+    return "/".join(converted)
+
+
+def normalize_archive_path(value: str) -> str:
+    """Return the canonical Unicode form used for archive path checks."""
+    return unicodedata.normalize("NFC", value)
+
+
+def is_safe_archive_path(value: str) -> bool:
+    value = normalize_archive_path(value)
+    if not value or "\\" in value or ":" in value or value.startswith("/") or "\x00" in value:
+        return False
+    path = PurePosixPath(value)
+    return not path.is_absolute() and all(part not in {"", ".", ".."} for part in path.parts)
 
 
 MODULE_CATEGORIES = {
@@ -142,4 +222,3 @@ COMMON_BACKGROUND_TARGETS = {
     ],
     "联系人背景": ["com.hihonor.contacts", "com.android.contacts", "com.huawei.contacts"],
 }
-

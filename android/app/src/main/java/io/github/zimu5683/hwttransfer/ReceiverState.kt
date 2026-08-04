@@ -3,6 +3,7 @@ package io.github.zimu5683.hwttransfer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 data class ReceiverUiState(
     val running: Boolean = false,
@@ -21,6 +22,6 @@ object ReceiverState {
     @Volatile var activityVisible: Boolean = false
 
     fun update(transform: (ReceiverUiState) -> ReceiverUiState) {
-        mutable.value = transform(mutable.value)
+        mutable.update(transform)
     }
 }

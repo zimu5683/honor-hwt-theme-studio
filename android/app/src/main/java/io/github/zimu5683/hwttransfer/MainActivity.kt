@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
@@ -57,8 +58,12 @@ class MainActivity : ComponentActivity() {
     private lateinit var storage: ThemeStorage
     private lateinit var pairing: PairingManager
 
-    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
-        startReceiverNow()
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            startReceiverNow()
+        } else {
+            toast("未授予通知权限，无法启动后台接收服务")
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -131,7 +136,7 @@ class MainActivity : ComponentActivity() {
                 ReceiverState.update { it.copy(lastTransfer = "${result.storedName}（${ReceiverService.formatSize(result.size)}）") }
                 toast("已保存到 ${result.destination}")
             } catch (exc: Exception) {
-                toast(exc.message ?: "导入失败")
+                toast(if (exc is TransferException) exc.message else "导入失败")
             }
         }
     }
@@ -149,14 +154,29 @@ class MainActivity : ComponentActivity() {
         val directoryPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) {
                 val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                runCatching { contentResolver.takePersistableUriPermission(uri, flags) }
-                lifecycleScope.launch {
-                    try {
-                        withContext(Dispatchers.IO) { storage.validateAndPersistTree(uri) }
-                        refreshState()
-                        toast("Honor/Themes 目录授权成功")
-                    } catch (exc: Exception) {
-                        toast(exc.message ?: "目录授权失败")
+                val alreadyPersisted = contentResolver.persistedUriPermissions.any {
+                    it.uri == uri && it.isReadPermission && it.isWritePermission
+                }
+                val permissionGranted = alreadyPersisted || runCatching {
+                    contentResolver.takePersistableUriPermission(uri, flags)
+                }.isSuccess
+                if (!permissionGranted) {
+                    toast("系统未授予长期目录权限，请重新选择 Honor/Themes")
+                } else {
+                    lifecycleScope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { storage.validateAndPersistTree(uri) }
+                            refreshState()
+                            toast("Honor/Themes 目录授权成功")
+                        } catch (exc: CancellationException) {
+                            if (!alreadyPersisted) storage.discardSaf(uri)
+                            throw exc
+                        } catch (exc: Exception) {
+                            if (!alreadyPersisted) {
+                                storage.discardSaf(uri)
+                            }
+                            toast(if (exc is TransferException) exc.message else "目录授权失败")
+                        }
                     }
                 }
             }

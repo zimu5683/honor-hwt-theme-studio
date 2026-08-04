@@ -12,9 +12,21 @@ from zipfile import BadZipFile, ZipFile
 
 from PIL import Image
 
-from .common import COMMON_BACKGROUND_TARGETS, friendly_label, module_category, risk_for
+from .common import (
+    COMMON_BACKGROUND_TARGETS,
+    MAX_ARCHIVE_ENTRIES,
+    MAX_ARCHIVE_ENTRY_BYTES,
+    MAX_ARCHIVE_UNCOMPRESSED_BYTES,
+    MAX_CATALOG_BYTES,
+    friendly_label,
+    is_safe_archive_path,
+    module_category,
+    risk_for,
+)
 from .models import ResourceSlot, ThemeCatalog
+from .paths import unique_temp_path
 from .pngmeta import extract_android_chunks
+from .xmlutil import parse_xml
 
 
 VALUE_PATTERN = re.compile(
@@ -22,6 +34,8 @@ VALUE_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+_RESOURCE_STRING_FIELDS = ("id", "module", "container", "resource_type", "name", "path", "category", "label")
+_RESOURCE_OPTIONAL_STRING_FIELDS = ("status", "risk", "mode", "actual_format", "extension")
 
 
 def sha256_file(path: Path) -> str:
@@ -77,9 +91,7 @@ def _scan_xml(module: str, container: str, raw: bytes, warnings: list[dict]) -> 
             )
     # Record strict XML failures without losing values recoverable by the token scanner.
     try:
-        from lxml import etree
-
-        etree.fromstring(raw)
+        parse_xml(raw)
     except Exception as exc:
         warnings.append({"kind": "nonstandard_xml", "module": module, "path": container, "message": str(exc)})
     return resources
@@ -120,11 +132,25 @@ def _scan_module(module: str, raw: bytes, warnings: list[dict]) -> tuple[list[Re
     stats = Counter()
     try:
         with ZipFile(BytesIO(raw)) as archive:
-            bad = archive.testzip()
+            infos = archive.infolist()
+            if len(infos) > MAX_ARCHIVE_ENTRIES:
+                raise ValueError(f"主题模块条目数量超过 {MAX_ARCHIVE_ENTRIES} 条")
+            if any(info.file_size > MAX_ARCHIVE_ENTRY_BYTES for info in infos if not info.is_dir()):
+                raise ValueError(f"主题模块条目超过 {MAX_ARCHIVE_ENTRY_BYTES} 字节")
+            if sum(info.file_size for info in infos if not info.is_dir()) > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                raise ValueError("主题模块解压总量超过限制")
+            unsafe_paths = {
+                info.filename for info in infos if not is_safe_archive_path(info.filename.rstrip("/"))
+            }
+            for path in sorted(unsafe_paths):
+                warnings.append({"kind": "unsafe_nested_path", "module": module, "path": path})
+            bad = None if unsafe_paths else archive.testzip()
             if bad:
                 warnings.append({"kind": "module_crc", "module": module, "path": bad})
-            for info in archive.infolist():
+            for info in infos:
                 if info.is_dir():
+                    continue
+                if info.filename in unsafe_paths:
                     continue
                 path = info.filename
                 data = archive.read(info)
@@ -205,11 +231,25 @@ def scan_theme(path: Path) -> ThemeCatalog:
     stats = Counter()
     modules = 0
     with ZipFile(path) as outer:
-        bad = outer.testzip()
+        outer_infos = outer.infolist()
+        if len(outer_infos) > MAX_ARCHIVE_ENTRIES:
+            raise ValueError(f"主题条目数量超过 {MAX_ARCHIVE_ENTRIES} 条")
+        if any(info.file_size > MAX_ARCHIVE_ENTRY_BYTES for info in outer_infos if not info.is_dir()):
+            raise ValueError(f"主题条目超过 {MAX_ARCHIVE_ENTRY_BYTES} 字节")
+        if sum(info.file_size for info in outer_infos if not info.is_dir()) > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+            raise ValueError("主题解压总量超过限制")
+        unsafe_paths = {
+            info.filename for info in outer_infos if not is_safe_archive_path(info.filename.rstrip("/"))
+        }
+        for name in sorted(unsafe_paths):
+            warnings.append({"kind": "unsafe_path", "path": name})
+        bad = None if unsafe_paths else outer.testzip()
         if bad:
             warnings.append({"kind": "outer_crc", "path": bad})
-        for info in outer.infolist():
+        for info in outer_infos:
             if info.is_dir():
+                continue
+            if info.filename in unsafe_paths:
                 continue
             name = info.filename
             raw = outer.read(info)
@@ -249,13 +289,74 @@ def scan_theme(path: Path) -> ThemeCatalog:
 
 def save_catalog(catalog: ThemeCatalog, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + ".tmp")
+    temp = unique_temp_path(path)
     try:
-        temp.write_text(json.dumps(catalog.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        encoded = json.dumps(catalog.to_dict(), ensure_ascii=False, indent=2).encode("utf-8")
+        if len(encoded) > MAX_CATALOG_BYTES:
+            raise ValueError("保存的资源目录文件超过允许的大小限制")
+        temp.write_bytes(encoded)
         os.replace(temp, path)
     finally:
         temp.unlink(missing_ok=True)
 
 
 def load_catalog(path: Path) -> ThemeCatalog:
-    return ThemeCatalog.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+    path = Path(path)
+    with path.open("rb") as stream:
+        encoded = stream.read(MAX_CATALOG_BYTES + 1)
+    if len(encoded) > MAX_CATALOG_BYTES:
+        raise ValueError("资源目录文件超过允许的大小限制")
+    try:
+        raw = json.loads(encoded.decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        raise ValueError("资源目录文件不是有效的 UTF-8 文本") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError("资源目录文件不是有效的 JSON") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("资源目录顶层必须是 JSON 对象")
+    schema = raw.get("schema", 1)
+    if isinstance(schema, bool) or not isinstance(schema, int) or schema != 1:
+        raise ValueError(f"不支持的资源目录格式版本：{schema}")
+    resources = raw.get("resources", [])
+    if not isinstance(resources, list):
+        raise ValueError("资源目录字段 resources 必须是对象列表")
+    required = {"id", "module", "container", "resource_type", "name", "path", "category", "label"}
+    if any(not isinstance(item, dict) or not required.issubset(item) for item in resources):
+        raise ValueError("资源目录中的资源记录格式无效")
+    for resource in resources:
+        if any(not isinstance(resource[field], str) for field in _RESOURCE_STRING_FIELDS):
+            raise ValueError("资源目录中的资源文字字段类型无效")
+        for field in _RESOURCE_OPTIONAL_STRING_FIELDS:
+            if field in resource and resource[field] is not None and not isinstance(resource[field], str):
+                raise ValueError(f"资源目录中的资源字段 {field} 类型无效")
+        for field in ("ninepatch", "synthetic"):
+            if field in resource and not isinstance(resource[field], bool):
+                raise ValueError(f"资源目录中的资源字段 {field} 类型无效")
+        for field in ("width", "height"):
+            if field in resource and resource[field] is not None and (
+                isinstance(resource[field], bool) or not isinstance(resource[field], int) or resource[field] < 1
+            ):
+                raise ValueError(f"资源目录中的资源字段 {field} 类型无效")
+        if "occurrences" in resource and (
+            isinstance(resource["occurrences"], bool)
+            or not isinstance(resource["occurrences"], int)
+            or resource["occurrences"] < 1
+        ):
+            raise ValueError("资源目录中的资源字段 occurrences 类型无效")
+        chunks = resource.get("png_chunks", {})
+        if not isinstance(chunks, dict) or any(not isinstance(key, str) or not isinstance(value, str) for key, value in chunks.items()):
+            raise ValueError("资源目录中的资源字段 png_chunks 类型无效")
+        targets = resource.get("targets", [])
+        if not isinstance(targets, list) or any(
+            not isinstance(target, dict)
+            or not isinstance(target.get("module"), str)
+            or not isinstance(target.get("path"), str)
+            for target in targets
+        ):
+            raise ValueError("资源目录中的资源字段 targets 类型无效")
+    for field in ("source_path", "source_sha256", "generated_at"):
+        if field in raw and not isinstance(raw[field], str):
+            raise ValueError(f"资源目录字段 {field} 必须是文字")
+    if not isinstance(raw.get("stats", {}), dict) or not isinstance(raw.get("warnings", []), list):
+        raise ValueError("资源目录的统计或警告字段格式无效")
+    return ThemeCatalog.from_dict(raw)

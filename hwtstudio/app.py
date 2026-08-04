@@ -6,7 +6,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSize, Qt, QThread, QTimer, QUrl
+from PySide6.QtCore import QEvent, QSettings, QSize, QStandardPaths, Qt, QThread, QTimer, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QMouseEvent, QPixmap, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
@@ -66,6 +66,13 @@ from .ui.workers import ProfileWorker, TransferWorker, UpdateWorker
 from .updater import Release, UpdateCheck, launch_update, release_page_url
 
 
+def _compact_error_detail(detail: str, fallback: str, *, limit: int = 240) -> str:
+    first_line = next((line.strip() for line in detail.splitlines() if line.strip()), "")
+    if not first_line:
+        return fallback
+    return first_line if len(first_line) <= limit else first_line[:limit] + "..."
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         app = QApplication.instance()
@@ -78,10 +85,14 @@ class MainWindow(QMainWindow):
         self.catalog = self._load_initial_catalog()
         self.project = ThemeProject()
         self.undo_stack = QUndoStack(self)
+        self.settings = QSettings("子木", APP_NAME)
         self.last_export: Path | None = None
         self.transfer_thread: QThread | None = None
+        self._transfer_worker: TransferWorker | None = None
+        self._transfer_generation = 0
         self.update_thread: QThread | None = None
         self.update_worker: UpdateWorker | None = None
+        self._update_generation = 0
         self.update_info: UpdateCheck | None = None
         self.update_progress: QProgressDialog | None = None
         cached_profiles = [device.profile for device in PhoneRegistry().load().values() if device.profile]
@@ -90,6 +101,9 @@ class MainWindow(QMainWindow):
             set(self.phone_profile.installed_packages) if self.phone_profile else None
         )
         self.profile_thread: QThread | None = None
+        self._profile_worker: ProfileWorker | None = None
+        self._profile_generation = 0
+        self._closing = False
         self._log_lines: list[str] = []
         self._resize_margin = 6
         self.simple_resolved = resolve_all(self.catalog)
@@ -545,13 +559,17 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def check_for_updates(self, silent: bool = False):
+        if self._closing:
+            return
         if self.update_thread and self.update_thread.isRunning():
             if not silent:
                 self.statusBar().showMessage("正在检查更新……")
             return
         self.statusBar().showMessage("正在检查 GitHub Release 更新……")
+        self._update_generation += 1
+        generation = self._update_generation
         self.update_thread = QThread(self)
-        worker = UpdateWorker(silent=silent)
+        worker = UpdateWorker(silent=silent, task_id=generation)
         worker.moveToThread(self.update_thread)
         self.update_thread.started.connect(worker.run_check)
         worker.checked.connect(self._update_checked, Qt.ConnectionType.QueuedConnection)
@@ -559,11 +577,17 @@ class MainWindow(QMainWindow):
         worker.checked.connect(self.update_thread.quit)
         worker.check_failed.connect(self.update_thread.quit)
         self.update_thread.finished.connect(worker.deleteLater)
+        self.update_thread.setProperty("hwt_generation", generation)
         self.update_thread.finished.connect(self._update_thread_finished)
+        self.update_thread.finished.connect(self.update_thread.deleteLater)
         self.update_worker = worker
         self.update_thread.start()
 
-    def _update_checked(self, info: UpdateCheck, silent: bool):
+    def _update_checked(self, info: UpdateCheck, silent: bool, generation: int | None = None):
+        if generation is not None and generation != self._update_generation:
+            return
+        if self._closing:
+            return
         self.update_info = info
         latest = info.latest_version or "未知"
         if hasattr(self, "update_action"):
@@ -580,7 +604,11 @@ class MainWindow(QMainWindow):
         self.log(f"发现 GitHub Release 更新：{info.current_version} → {release.version}。")
         self._show_update_prompt(release)
 
-    def _update_check_failed(self, detail: str, silent: bool):
+    def _update_check_failed(self, detail: str, silent: bool, generation: int | None = None):
+        if generation is not None and generation != self._update_generation:
+            return
+        if self._closing:
+            return
         message = "暂时无法检查更新，请确认网络连接后稍后重试。"
         self.log(f"检查更新失败：{detail}")
         self.statusBar().showMessage(message, 8000)
@@ -608,16 +636,20 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl(release_page_url(release)))
 
     def _start_update_download(self, release: Release):
+        if self._closing:
+            return
         if self.update_thread and self.update_thread.isRunning():
             QMessageBox.information(self, "请稍候", "更新检查或下载任务仍在进行中。")
             return
+        self._update_generation += 1
+        generation = self._update_generation
         self.update_progress = QProgressDialog("正在准备下载更新包……", "取消", 0, 1000, self)
         self.update_progress.setWindowTitle("更新大雪主题编辑器")
         self.update_progress.setMinimumDuration(0)
         self.update_progress.setValue(0)
         self.update_progress.show()
         self.update_thread = QThread(self)
-        worker = UpdateWorker(release=release)
+        worker = UpdateWorker(release=release, task_id=generation)
         worker.moveToThread(self.update_thread)
         self.update_thread.started.connect(worker.run_download)
         worker.progress.connect(self._update_download_progress, Qt.ConnectionType.QueuedConnection)
@@ -626,13 +658,17 @@ class MainWindow(QMainWindow):
         worker.downloaded.connect(self.update_thread.quit)
         worker.failed.connect(self.update_thread.quit)
         self.update_thread.finished.connect(worker.deleteLater)
+        self.update_thread.setProperty("hwt_generation", generation)
         self.update_thread.finished.connect(self._update_thread_finished)
+        self.update_thread.finished.connect(self.update_thread.deleteLater)
         self.update_progress.canceled.connect(worker.cancel, Qt.DirectConnection)
         self.update_worker = worker
         self.update_thread.start()
 
-    def _update_download_progress(self, received: int, total: int, stage: str):
-        if self.update_progress is None:
+    def _update_download_progress(self, received: int, total: int, stage: str, generation: int | None = None):
+        if generation is not None and generation != self._update_generation:
+            return
+        if self._closing or self.update_progress is None:
             return
         self.update_progress.setLabelText(stage)
         if total > 0:
@@ -641,9 +677,15 @@ class MainWindow(QMainWindow):
         else:
             self.update_progress.setRange(0, 0)
 
-    def _update_downloaded(self, path: Path):
-        if self.update_progress is not None:
-            self.update_progress.close()
+    def _update_downloaded(self, path: Path, generation: int | None = None):
+        if generation is not None and generation != self._update_generation:
+            return
+        if self._closing:
+            return
+        progress = self.update_progress
+        self.update_progress = None
+        if progress is not None:
+            progress.close()
         self.log(f"更新包已下载并通过 SHA-256 校验：{path}")
         try:
             should_exit = launch_update(path)
@@ -657,9 +699,15 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.information(self, "更新包已准备好", f"更新包已下载：\n{path}\n\n已打开新版本程序。")
 
-    def _update_download_failed(self, detail: str):
-        if self.update_progress is not None:
-            self.update_progress.close()
+    def _update_download_failed(self, detail: str, generation: int | None = None):
+        if generation is not None and generation != self._update_generation:
+            return
+        if self._closing:
+            return
+        progress = self.update_progress
+        self.update_progress = None
+        if progress is not None:
+            progress.close()
         message = "取消" if "取消" in detail else "更新包下载或校验失败，请稍后重试。"
         self.log(f"下载更新失败：{detail}")
         if "取消" in message:
@@ -667,9 +715,15 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.critical(self, "下载更新失败", message)
 
-    def _update_thread_finished(self):
+    def _update_thread_finished(self, generation: int | None = None):
+        if generation is None:
+            sender = self.sender()
+            generation = sender.property("hwt_generation") if sender is not None else None
+        if generation is not None and generation != self._update_generation:
+            return
         self.update_thread = None
         self.update_worker = None
+        self._maybe_close_after_threads()
 
     def connect_phone_profile(self):
         if self.profile_thread and self.profile_thread.isRunning():
@@ -679,8 +733,10 @@ class MainWindow(QMainWindow):
             return
         self.connect_phone_button.setEnabled(False)
         self.phone_status.setText("正在读取手机适配信息……")
+        self._profile_generation += 1
+        generation = self._profile_generation
         thread = QThread(self)
-        worker = ProfileWorker(dialog.device, dialog.pair_code)
+        worker = ProfileWorker(dialog.device, dialog.pair_code, task_id=generation)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._profile_finished)
@@ -688,12 +744,18 @@ class MainWindow(QMainWindow):
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
+        thread.setProperty("hwt_generation", generation)
         thread.finished.connect(self._profile_thread_finished)
+        thread.finished.connect(thread.deleteLater)
         self.profile_thread = thread
         self._profile_worker = worker
         thread.start()
 
-    def _profile_finished(self, _device, profile):
+    def _profile_finished(self, _device, profile, generation: int | None = None):
+        if generation is not None and generation != self._profile_generation:
+            return
+        if self._closing:
+            return
         self.phone_profile = profile
         self.installed_packages = set(profile.installed_packages)
         self.resource_model.set_installed_packages(self.installed_packages)
@@ -701,13 +763,17 @@ class MainWindow(QMainWindow):
         self.refresh_views()
         self.log(f"已识别手机：{profile.manufacturer} {profile.model}，适用应用 {len(profile.installed_packages)} 个。")
 
-    def _profile_failed(self, detail: str, code: str):
+    def _profile_failed(self, detail: str, code: str, generation: int | None = None):
+        if generation is not None and generation != self._profile_generation:
+            return
+        if self._closing:
+            return
         messages = {
             "profile_unsupported": "手机助手版本过低，无法读取适配信息，请先更新手机助手。",
             "no_device": "没有找到可用手机，请确认手机助手已打开并已配对。",
             "unexpected": "读取手机信息失败，请确认手机和电脑处于同一网络。",
         }
-        message = messages.get(code, detail if detail and "\n" not in detail else "无法读取手机信息")
+        message = messages.get(code) or _compact_error_detail(detail, "无法读取手机信息")
         self.log(f"手机识别原始异常：{detail}")
         self._update_phone_ui(cached=bool(self.phone_profile))
         self.phone_status.setText(message)
@@ -717,10 +783,16 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "识别失败", message)
 
-    def _profile_thread_finished(self):
+    def _profile_thread_finished(self, generation: int | None = None):
+        if generation is None:
+            sender = self.sender()
+            generation = sender.property("hwt_generation") if sender is not None else None
+        if generation is not None and generation != self._profile_generation:
+            return
         self.profile_thread = None
         self._profile_worker = None
         self.connect_phone_button.setEnabled(True)
+        self._maybe_close_after_threads()
 
     def _update_phone_ui(self, *, cached: bool):
         if not hasattr(self, "phone_status"):
@@ -740,7 +812,8 @@ class MainWindow(QMainWindow):
     def _bind_project(self):
         self.resource_model.project = self.project
         resources = [*self.catalog.resources, *self.project.custom_resources]
-        self.resource_model.set_resources(resources)
+        if [slot.id for slot in self.resource_model.resources] != [slot.id for slot in resources]:
+            self.resource_model.set_resources(resources)
         self._replace_combo_items(self.category_combo, ["全部"] + sorted({x.category for x in resources}))
         self._replace_type_items(resources)
         self.name_edit.setText(self.project.name)
@@ -1127,12 +1200,11 @@ class MainWindow(QMainWindow):
         )
         if QMessageBox.question(self, "导出预检通过", summary) != QMessageBox.Yes:
             return
-        start = Path(r"D:\HONOR Share\Honor Share")
-        if not start.exists():
-            start = Path.home()
+        start = self._theme_file_dialog_directory()
         filename, _ = QFileDialog.getSaveFileName(self, "导出 HWT", str(start / default_export_name(self.project)), "荣耀主题 (*.hwt)")
         if not filename:
             return
+        self._remember_theme_file_directory(Path(filename).parent)
         try:
             path, report = export_theme(self.project, self.catalog, Path(filename))
             self.last_export = path
@@ -1158,10 +1230,13 @@ class MainWindow(QMainWindow):
     def send_phone(self):
         path = self.last_export
         if not path or not path.is_file():
-            filename, _ = QFileDialog.getOpenFileName(self, "选择要发送的主题", r"D:\HONOR Share\Honor Share", "荣耀主题 (*.hwt)")
+            filename, _ = QFileDialog.getOpenFileName(
+                self, "选择要发送的主题", str(self._theme_file_dialog_directory()), "荣耀主题 (*.hwt)"
+            )
             if not filename:
                 return
             path = Path(filename)
+            self._remember_theme_file_directory(path.parent)
         dialog = PhoneTransferDialog(self)
         if dialog.exec() != QDialog.Accepted:
             return
@@ -1176,17 +1251,51 @@ class MainWindow(QMainWindow):
         path = self.last_export
         if not path or not path.is_file():
             filename, _ = QFileDialog.getOpenFileName(
-                self, "选择要发送的主题", r"D:\HONOR Share\Honor Share", "荣耀主题 (*.hwt)"
+                self, "选择要发送的主题", str(self._theme_file_dialog_directory()), "荣耀主题 (*.hwt)"
             )
             if not filename:
                 return
             path = Path(filename)
+            self._remember_theme_file_directory(path.parent)
         self._start_phone_transfer(path, use_ssh=True)
+
+    def _theme_file_dialog_directory(self) -> Path:
+        remembered = self.settings.value("paths/theme_directory", "", type=str)
+        documents = Path(
+            QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+        )
+        downloads = Path(
+            QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+        )
+        candidates = []
+        if self.last_export is not None:
+            candidates.append(self.last_export.parent)
+        if remembered:
+            candidates.append(Path(remembered))
+        candidates.extend(
+            (
+                documents / "HONOR Share" / "Honor Share",
+                downloads,
+                documents,
+                Path.home(),
+            )
+        )
+        for candidate in candidates:
+            if candidate.is_dir():
+                return candidate
+        return Path.home()
+
+    def _remember_theme_file_directory(self, directory: Path):
+        directory = Path(directory).expanduser()
+        if directory.is_dir():
+            self.settings.setValue("paths/theme_directory", str(directory))
 
     def _start_phone_transfer(self, path: Path, *, device=None, pair_code: str = "", use_ssh: bool = False):
         if self.transfer_thread and self.transfer_thread.isRunning():
             QMessageBox.warning(self, "正在发送", "已有一个发送任务正在运行。")
             return
+        self._transfer_generation += 1
+        generation = self._transfer_generation
         initial = "正在通过 Termux/SSH 上传并校验……" if use_ssh else "正在准备发送到手机……"
         self.progress = QProgressDialog(initial, "取消", 0, 1000, self)
         self.progress.setWindowTitle("发送到手机")
@@ -1194,7 +1303,9 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         self.progress.show()
         self.transfer_thread = QThread(self)
-        worker = TransferWorker(path, device=device, pair_code=pair_code, use_ssh=use_ssh)
+        worker = TransferWorker(
+            path, device=device, pair_code=pair_code, use_ssh=use_ssh, task_id=generation
+        )
         worker.moveToThread(self.transfer_thread)
         self.transfer_thread.started.connect(worker.run)
         worker.finished.connect(self._transfer_finished)
@@ -1204,12 +1315,16 @@ class MainWindow(QMainWindow):
         worker.finished.connect(self.transfer_thread.quit)
         worker.failed.connect(self.transfer_thread.quit)
         self.transfer_thread.finished.connect(worker.deleteLater)
+        self.transfer_thread.setProperty("hwt_generation", generation)
         self.transfer_thread.finished.connect(self._transfer_thread_finished)
+        self.transfer_thread.finished.connect(self.transfer_thread.deleteLater)
         self.transfer_thread.start()
         self._transfer_worker = worker
 
-    def _transfer_progress(self, sent: int, total: int, stage: str):
-        if not getattr(self, "progress", None):
+    def _transfer_progress(self, sent: int, total: int, stage: str, generation: int | None = None):
+        if generation is not None and generation != self._transfer_generation:
+            return
+        if self._closing or not getattr(self, "progress", None):
             return
         self.progress.setLabelText(stage)
         if total > 0:
@@ -1218,12 +1333,25 @@ class MainWindow(QMainWindow):
         else:
             self.progress.setRange(0, 0)
 
-    def _transfer_thread_finished(self):
+    def _transfer_thread_finished(self, generation: int | None = None):
+        if generation is None:
+            sender = self.sender()
+            generation = sender.property("hwt_generation") if sender is not None else None
+        if generation is not None and generation != self._transfer_generation:
+            return
         self.transfer_thread = None
         self._transfer_worker = None
+        self._maybe_close_after_threads()
 
-    def _transfer_finished(self, result: dict):
-        self.progress.close()
+    def _transfer_finished(self, result: dict, generation: int | None = None):
+        if generation is not None and generation != self._transfer_generation:
+            return
+        if self._closing:
+            return
+        progress = getattr(self, "progress", None)
+        self.progress = None
+        if progress is not None:
+            progress.close()
         self.log(f"发送成功：{result['remote']}\nSHA-256：{result['sha256']}")
         if result.get("transport") == "apk":
             opened = "手机端会显示打开荣耀‘主题’的通知。"
@@ -1239,12 +1367,20 @@ class MainWindow(QMainWindow):
             f"{warning_text}\n请进入‘我的→下载→主题’查找；如页面已经打开，请返回后重新进入一次。",
         )
 
-    def _transfer_failed(self, detail: str, code: str = "unexpected"):
-        self.progress.close()
+    def _transfer_failed(self, detail: str, code: str = "unexpected", generation: int | None = None):
+        if generation is not None and generation != self._transfer_generation:
+            return
+        if self._closing:
+            return
+        progress = getattr(self, "progress", None)
+        self.progress = None
+        if progress is not None:
+            progress.close()
         self.log(detail)
         messages = {
             "cancelled": "发送已取消。",
             "no_device": "没有选择手机，请先连接并识别手机。",
+            "file_changed": "主题文件在发送过程中发生变化，请重新选择或重新导出后再试。",
             "unexpected": "发送失败，请检查手机助手、网络连接和主题文件。",
         }
         message = messages.get(code, "发送失败，请检查手机助手、网络连接和主题文件。")
@@ -1276,11 +1412,50 @@ class MainWindow(QMainWindow):
         answer = QMessageBox.question(self, "未保存修改", "当前工程尚未保存，是否放弃修改？")
         return answer == QMessageBox.Yes
 
+    def _background_threads(self) -> list[QThread]:
+        return [
+            thread
+            for thread in (self.update_thread, self.profile_thread, self.transfer_thread)
+            if thread is not None
+        ]
+
+    def _has_running_background_threads(self) -> bool:
+        return any(thread.isRunning() for thread in self._background_threads())
+
+    def _cancel_background_tasks(self):
+        for worker in (self.update_worker, self._profile_worker, self._transfer_worker):
+            if worker is not None:
+                worker.cancel()
+        for thread in self._background_threads():
+            thread.requestInterruption()
+            thread.quit()
+        for dialog_name in ("update_progress", "progress"):
+            dialog = getattr(self, dialog_name, None)
+            if dialog is not None:
+                dialog.close()
+                setattr(self, dialog_name, None)
+
+    def _maybe_close_after_threads(self):
+        if self._closing and not self._has_running_background_threads():
+            QTimer.singleShot(0, self.close)
+
     def closeEvent(self, event):
-        if self._confirm_discard():
-            event.accept()
-        else:
+        if self._closing:
+            if self._has_running_background_threads():
+                event.ignore()
+            else:
+                event.accept()
+            return
+        if not self._confirm_discard():
             event.ignore()
+            return
+        self._closing = True
+        self._cancel_background_tasks()
+        if self._has_running_background_threads():
+            self.statusBar().showMessage("正在停止后台任务……")
+            event.ignore()
+        else:
+            event.accept()
 
     def _resize_edges_at(self, global_pos):
         if self.isMaximized() or self.isFullScreen():

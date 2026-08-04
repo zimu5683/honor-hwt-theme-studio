@@ -11,13 +11,40 @@ import java.util.UUID
 data class PairedClient(val name: String, val tokenHash: String, val pairedAt: Long)
 data class PairResult(val token: String, val client: PairedClient)
 
+private fun normalizeClientName(value: String): String {
+    val normalized = StringBuilder()
+    var pendingSpace = false
+    var index = 0
+    while (index < value.length) {
+        val codePoint = value.codePointAt(index)
+        index += Character.charCount(codePoint)
+        if (Character.isWhitespace(codePoint) || Character.isSpaceChar(codePoint) || Character.isISOControl(codePoint)) {
+            pendingSpace = normalized.isNotEmpty()
+            continue
+        }
+        if (pendingSpace) normalized.append(' ')
+        normalized.appendCodePoint(codePoint)
+        pendingSpace = false
+    }
+    val valueWithoutTrailingSpace = normalized.toString().trim()
+    var end = 0
+    var count = 0
+    while (end < valueWithoutTrailingSpace.length && count < Protocol.MAX_CLIENT_NAME_CODE_POINTS) {
+        end += Character.charCount(valueWithoutTrailingSpace.codePointAt(end))
+        count += 1
+    }
+    return valueWithoutTrailingSpace.substring(0, end)
+}
+
 class PairingManager(context: Context, private val clock: () -> Long = System::currentTimeMillis) {
     private val prefs = context.getSharedPreferences("pairing", Context.MODE_PRIVATE)
     private val random = SecureRandom()
     private val failedAttempts = ArrayDeque<Long>()
 
-    val deviceId: String = prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also {
-        prefs.edit().putString("device_id", it).apply()
+    val deviceId: String = synchronized(storageLock) {
+        prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also {
+            prefs.edit().putString("device_id", it).apply()
+        }
     }
 
     @Volatile var code: String = ""
@@ -31,7 +58,7 @@ class PairingManager(context: Context, private val clock: () -> Long = System::c
 
     @Synchronized
     fun regenerateCode(): String {
-        code = "%06d".format(random.nextInt(1_000_000))
+        code = random.nextInt(1_000_000).toString().padStart(6, '0')
         codeExpiresAt = clock() + Protocol.PAIR_CODE_TTL_MS
         failedAttempts.clear()
         return code
@@ -40,13 +67,13 @@ class PairingManager(context: Context, private val clock: () -> Long = System::c
     @Synchronized
     fun pair(inputCode: String, clientName: String): PairResult {
         val now = clock()
-        while (failedAttempts.isNotEmpty() && now - failedAttempts.first() > 60_000L) {
+        while (failedAttempts.isNotEmpty() && now - failedAttempts.first() >= 60_000L) {
             failedAttempts.removeFirst()
         }
         if (failedAttempts.size >= 5) {
             throw TransferException(429, "pair_rate_limited", "配对失败次数过多，请一分钟后重试")
         }
-        if (now > codeExpiresAt) {
+        if (now >= codeExpiresAt) {
             throw TransferException(401, "pair_code_expired", "配对码已过期，请在手机上刷新")
         }
         if (inputCode != code) {
@@ -55,10 +82,12 @@ class PairingManager(context: Context, private val clock: () -> Long = System::c
         }
         val tokenBytes = ByteArray(32).also(random::nextBytes)
         val token = Base64.encodeToString(tokenBytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val safeName = clientName.trim().take(60).ifBlank { "大雪主题编辑器" }
+        val safeName = normalizeClientName(clientName).ifBlank { "大雪主题编辑器" }
         val client = PairedClient(safeName, hashToken(token), now)
-        val clients = clients().filterNot { it.name == safeName }.toMutableList().apply { add(client) }
-        saveClients(clients)
+        synchronized(storageLock) {
+            val clients = readClients().filterNot { it.name == safeName }.toMutableList().apply { add(client) }
+            saveClients(clients)
+        }
         regenerateCode()
         return PairResult(token, client)
     }
@@ -70,26 +99,55 @@ class PairingManager(context: Context, private val clock: () -> Long = System::c
     }
 
     fun clients(): List<PairedClient> {
-        val raw = prefs.getString("clients", "[]") ?: "[]"
-        return try {
-            val array = JSONArray(raw)
-            buildList {
+        return synchronized(storageLock) { readClients() }
+    }
+
+    companion object {
+        private val storageLock = Any()
+
+        internal fun parseClients(raw: String): List<PairedClient> {
+            val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
+            return buildList {
                 for (index in 0 until array.length()) {
-                    val item = array.getJSONObject(index)
-                    add(PairedClient(item.getString("name"), item.getString("token_hash"), item.optLong("paired_at")))
+                    val item = array.optJSONObject(index) ?: continue
+                    val rawName = item.opt("name")
+                    val rawTokenHash = item.opt("token_hash")
+                    val rawPairedAt = item.opt("paired_at")
+                    if (rawName !is String || rawTokenHash !is String || rawPairedAt !is Number) continue
+                    val name = rawName.trim()
+                    val tokenHash = rawTokenHash.lowercase()
+                    val pairedAt = rawPairedAt.toLong()
+                    if (
+                        name.isBlank() ||
+                        name != normalizeClientName(name) ||
+                        !TOKEN_HASH_PATTERN.matches(tokenHash) ||
+                        pairedAt < 0L ||
+                        rawPairedAt is Double && (!rawPairedAt.isFinite() || rawPairedAt != pairedAt.toDouble()) ||
+                        rawPairedAt is Float && (!rawPairedAt.isFinite() || rawPairedAt != pairedAt.toFloat())
+                    ) continue
+                    add(PairedClient(name, tokenHash, pairedAt))
                 }
             }
-        } catch (_: Exception) {
-            emptyList()
         }
+
+        private val TOKEN_HASH_PATTERN = Regex("[0-9a-f]{64}")
     }
 
     fun revoke(tokenHash: String) {
-        saveClients(clients().filterNot { it.tokenHash == tokenHash })
+        synchronized(storageLock) {
+            saveClients(readClients().filterNot { it.tokenHash == tokenHash })
+        }
     }
 
     fun revokeAll() {
-        saveClients(emptyList())
+        synchronized(storageLock) {
+            saveClients(emptyList())
+        }
+    }
+
+    private fun readClients(): List<PairedClient> {
+        val raw = prefs.getString("clients", "[]") ?: "[]"
+        return parseClients(raw)
     }
 
     private fun saveClients(clients: List<PairedClient>) {
@@ -103,4 +161,5 @@ class PairingManager(context: Context, private val clock: () -> Long = System::c
     private fun hashToken(token: String): String = MessageDigest.getInstance("SHA-256")
         .digest(token.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
+
 }

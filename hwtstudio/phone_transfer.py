@@ -3,25 +3,41 @@ from __future__ import annotations
 import hashlib
 import http.client
 import json
+import os
 import re
 import socket
 import threading
 import time
+import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 from urllib.parse import quote
 
 from .paths import data_dir
 
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
+
 
 PROTOCOL_VERSION = 1
+FEATURE_TRANSFER_CHUNKED = "transfer_chunked"
+FEATURE_TRANSFER_PREPARE = "transfer_prepare"
 DISCOVERY_PORT = 48620
 HTTP_PORT = 48621
 DISCOVERY_REQUEST = b"HWTSTUDIO_DISCOVER_V1"
 MAX_FILE_SIZE = 1024 * 1024 * 1024
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_REGISTRY_BYTES = 2 * 1024 * 1024
+MAX_REMOTE_TEXT_CHARS = 512
+MAX_REMOTE_ERROR_CHARS = 512
+MAX_FILENAME_BYTES = 200
 CHUNK_SIZE = 1024 * 1024
+REGISTRY_LOCK_TIMEOUT = 5.0
 
 
 class PhoneTransferError(RuntimeError):
@@ -33,6 +49,25 @@ class PhoneTransferError(RuntimeError):
 class TransferCancelled(PhoneTransferError):
     def __init__(self):
         super().__init__("发送已取消", code="cancelled")
+
+
+def _saved_text(value: object, default: str = "") -> str:
+    if not isinstance(value, str):
+        return default
+    normalized = "".join(" " if ord(character) < 32 or ord(character) == 127 else character for character in value)
+    normalized = " ".join(normalized.split())
+    if not normalized:
+        return default
+    return normalized[:MAX_REMOTE_TEXT_CHARS]
+
+
+def _saved_token(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = value.strip()
+    if len(normalized) > MAX_REMOTE_TEXT_CHARS or any(ord(character) < 32 or ord(character) == 127 for character in normalized):
+        return ""
+    return normalized
 
 
 @dataclass(slots=True)
@@ -66,62 +101,184 @@ class PhoneDevice:
     @property
     def label(self) -> str:
         state = "已配对" if self.paired else "未配对"
-        return f"{self.name}（{self.host}:{self.port}，{state}）"
+        display_host = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
+        return f"{self.name}（{display_host}:{self.port}，{state}）"
 
 
 class PhoneRegistry:
-    """Persist paired phones outside project files and logs."""
+    """Persist paired phones with thread- and process-level serialization."""
+
+    _lock_guard = threading.Lock()
+    _locks: dict[Path, threading.RLock] = {}
 
     def __init__(self, path: Path | None = None):
         self.path = Path(path) if path else data_dir() / "paired_phones.json"
+        lock_path = self.path.resolve()
+        with self._lock_guard:
+            self._lock = self._locks.setdefault(lock_path, threading.RLock())
 
     def load(self) -> dict[str, PhoneDevice]:
+        with self._lock:
+            try:
+                with _interprocess_lock(self.path):
+                    return self._load_unlocked()
+            except OSError:
+                return {}
+
+    def _load_unlocked(self) -> dict[str, PhoneDevice]:
         try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            with self.path.open("rb") as stream:
+                encoded = stream.read(MAX_REGISTRY_BYTES + 1)
+            if len(encoded) > MAX_REGISTRY_BYTES:
+                return {}
+            raw = json.loads(encoded.decode("utf-8"))
+        except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError, OSError):
+            return {}
+        if not isinstance(raw, dict) or not isinstance(raw.get("devices"), list):
             return {}
         devices: dict[str, PhoneDevice] = {}
         for item in raw.get("devices", []):
+            if not isinstance(item, dict):
+                continue
             try:
+                raw_port = item.get("port", HTTP_PORT)
+                if isinstance(raw_port, bool) or not isinstance(raw_port, int):
+                    continue
+                port = raw_port
+                if not 1 <= port <= 65535:
+                    continue
+                raw_protocol = item.get("protocol", PROTOCOL_VERSION)
+                if isinstance(raw_protocol, bool) or not isinstance(raw_protocol, int):
+                    continue
+                protocol = raw_protocol
+                if protocol != PROTOCOL_VERSION:
+                    continue
+                device_id = item.get("device_id")
+                host = item.get("host")
+                token = item.get("token", "")
+                if (
+                    not isinstance(device_id, str)
+                    or not device_id.strip()
+                    or not isinstance(host, str)
+                    or not host.strip()
+                    or not isinstance(token, str)
+                    or len(device_id.strip()) > MAX_REMOTE_TEXT_CHARS
+                    or len(host.strip()) > MAX_REMOTE_TEXT_CHARS
+                    or any(ord(character) < 32 or ord(character) == 127 for character in device_id + host)
+                ):
+                    continue
+                profile_data = item.get("profile")
+                profile = None
+                if isinstance(profile_data, dict):
+                    raw_sdk = profile_data.get("sdk_int", 0)
+                    sdk_int = raw_sdk if isinstance(raw_sdk, int) and not isinstance(raw_sdk, bool) else 0
+                    sdk_int = max(0, sdk_int)
+                    packages = profile_data.get("installed_packages", [])
+                    if not isinstance(packages, (list, tuple, set)):
+                        packages = []
+                    profile = PhoneProfile(
+                        manufacturer=_saved_text(profile_data.get("manufacturer")),
+                        model=_saved_text(profile_data.get("model")),
+                        android_release=_saved_text(profile_data.get("android_release")),
+                        sdk_int=sdk_int,
+                        os_name=_saved_text(profile_data.get("os_name")),
+                        build_display=_saved_text(profile_data.get("build_display")),
+                        installed_packages=_payload_strings(packages),
+                        updated_at=_saved_text(profile_data.get("updated_at")),
+                    )
                 device = PhoneDevice(
-                    device_id=str(item["device_id"]),
-                    name=str(item.get("name") or "荣耀手机"),
-                    host=str(item.get("host") or ""),
-                    port=int(item.get("port", HTTP_PORT)),
-                    protocol=int(item.get("protocol", PROTOCOL_VERSION)),
-                    app_version=str(item.get("app_version") or ""),
-                    token=str(item.get("token") or ""),
-                    features=[str(value) for value in item.get("features", [])],
-                    profile=PhoneProfile(**{
-                        key: value for key, value in (item.get("profile") or {}).items()
-                        if key in PhoneProfile.__dataclass_fields__
-                    }) if item.get("profile") else None,
+                    device_id=device_id.strip(),
+                    name=_saved_text(item.get("name"), "荣耀手机") or "荣耀手机",
+                    host=host.strip(),
+                    port=port,
+                    protocol=protocol,
+                    app_version=_saved_text(item.get("app_version")),
+                        token=_saved_token(token),
+                    features=_payload_strings(item.get("features", [])),
+                    profile=profile,
                 )
             except (KeyError, TypeError, ValueError):
                 continue
-            if device.device_id:
+            if device.device_id and device.host:
                 devices[device.device_id] = device
         return devices
 
     def save(self, devices: dict[str, PhoneDevice]) -> None:
+        with self._lock:
+            with _interprocess_lock(self.path):
+                self._save_unlocked(devices)
+
+    def _save_unlocked(self, devices: dict[str, PhoneDevice]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"version": 1, "devices": [asdict(item) for item in devices.values()]}
-        temp = self.path.with_suffix(self.path.suffix + ".tmp")
-        temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp.replace(self.path)
+        temp = self.path.with_name(f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        try:
+            encoded = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+            if len(encoded) > MAX_REGISTRY_BYTES:
+                raise ValueError("手机记录文件超过允许的大小限制")
+            temp.write_bytes(encoded)
+            os.replace(temp, self.path)
+        finally:
+            temp.unlink(missing_ok=True)
 
     def update(self, device: PhoneDevice) -> None:
-        devices = self.load()
-        previous = devices.get(device.device_id)
-        if previous and not device.token:
-            device.token = previous.token
-        devices[device.device_id] = device
-        self.save(devices)
+        with self._lock:
+            with _interprocess_lock(self.path):
+                devices = self._load_unlocked()
+                previous = devices.get(device.device_id)
+                if previous and not device.token:
+                    device.token = previous.token
+                devices[device.device_id] = device
+                self._save_unlocked(devices)
 
     def forget(self, device_id: str) -> None:
-        devices = self.load()
-        if devices.pop(device_id, None) is not None:
-            self.save(devices)
+        with self._lock:
+            with _interprocess_lock(self.path):
+                devices = self._load_unlocked()
+                if devices.pop(device_id, None) is not None:
+                    self._save_unlocked(devices)
+
+
+@contextmanager
+def _interprocess_lock(path: Path) -> Iterator[None]:
+    path = path.resolve()
+    lock_path = path.with_name(f".{path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        locked = False
+        deadline = time.monotonic() + REGISTRY_LOCK_TIMEOUT
+        try:
+            if os.name == "nt":
+                while not locked:
+                    try:
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                        locked = True
+                    except OSError as exc:
+                        if time.monotonic() >= deadline:
+                            raise OSError("手机记录锁等待超时") from exc
+                        time.sleep(0.05)
+            else:
+                while not locked:
+                    try:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        locked = True
+                    except OSError as exc:
+                        if time.monotonic() >= deadline:
+                            raise OSError("手机记录锁等待超时") from exc
+                        time.sleep(0.05)
+            yield
+        finally:
+            if locked:
+                handle.seek(0)
+                if os.name == "nt":
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _decode_json(data: bytes, context: str) -> dict:
@@ -132,6 +289,98 @@ def _decode_json(data: bytes, context: str) -> dict:
     if not isinstance(result, dict):
         raise PhoneTransferError(f"手机返回了无效的{context}响应", code="bad_response")
     return result
+
+
+def _read_response(response, context: str) -> bytes:
+    headers = getattr(response, "headers", {})
+    raw_length = headers.get("Content-Length", "")
+    if raw_length:
+        try:
+            declared_length = int(raw_length)
+        except (TypeError, ValueError) as exc:
+            raise PhoneTransferError(f"手机返回了无效的{context}响应长度", code="bad_response") from exc
+    else:
+        declared_length = None
+    if declared_length is not None and declared_length < 0:
+        raise PhoneTransferError(f"手机返回的{context}响应长度无效", code="bad_response")
+    if declared_length is not None and declared_length > MAX_RESPONSE_BYTES:
+        raise PhoneTransferError(f"手机返回的{context}响应过大", code="bad_response")
+    body = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(body) > MAX_RESPONSE_BYTES:
+        raise PhoneTransferError(f"手机返回的{context}响应过大", code="bad_response")
+    if declared_length is not None and len(body) != declared_length:
+        raise PhoneTransferError(f"手机返回的{context}响应长度与声明不一致", code="bad_response")
+    return body
+
+
+def _payload_protocol(payload: dict, context: str) -> int:
+    value = payload.get("protocol", 0)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PhoneTransferError(f"手机返回了无效的{context}协议版本", code="bad_response")
+    return value
+
+
+def _payload_text(payload: dict, key: str, context: str, *, required: bool = False, default: str = "") -> str:
+    value = payload.get(key)
+    if value is None and not required:
+        return default
+    if not isinstance(value, str) or (required and not value.strip()):
+        raise PhoneTransferError(f"手机返回了无效的{context}{key}", code="bad_response")
+    normalized = value.strip()
+    if len(normalized) > MAX_REMOTE_TEXT_CHARS or any(ord(character) < 32 or ord(character) == 127 for character in normalized):
+        raise PhoneTransferError(f"手机返回的{context}{key}过长或包含控制字符", code="bad_response")
+    return normalized
+
+
+def _payload_port(value: object, context: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PhoneTransferError(f"手机返回了无效的{context}端口", code="bad_response")
+    port = value
+    if not 1 <= port <= 65535:
+        raise PhoneTransferError(f"手机返回了无效的{context}端口", code="bad_response")
+    return port
+
+
+def _payload_bool(payload: dict, key: str, context: str, *, required: bool = False, default: bool = False) -> bool:
+    value = payload.get(key)
+    if value is None:
+        if required:
+            raise PhoneTransferError(f"手机返回了无效的{context}{key}", code="bad_response")
+        return default
+    if not isinstance(value, bool):
+        raise PhoneTransferError(f"手机返回了无效的{context}{key}", code="bad_response")
+    return value
+
+
+def _payload_int(payload: dict, key: str, context: str, *, minimum: int = 0) -> int:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise PhoneTransferError(f"手机返回了无效的{context}{key}", code="bad_response")
+    return value
+
+
+def _payload_strings(value: object, *, context: str = "", strict: bool = False) -> list[str]:
+    if not isinstance(value, (list, tuple, set)):
+        if strict:
+            raise PhoneTransferError(f"手机返回了无效的{context}列表", code="bad_response")
+        return []
+    result = set()
+    for item in value:
+        if not isinstance(item, str):
+            if strict:
+                raise PhoneTransferError(f"手机返回了无效的{context}列表", code="bad_response")
+            continue
+        normalized = item.strip()
+        if (
+            len(normalized) > MAX_REMOTE_TEXT_CHARS
+            or any(ord(character) < 32 or ord(character) == 127 for character in normalized)
+        ):
+            if strict:
+                raise PhoneTransferError(f"手机返回了无效的{context}列表", code="bad_response")
+            continue
+        if normalized:
+            result.add(normalized)
+    return sorted(result)
 
 
 def _merge_saved(device: PhoneDevice, saved: dict[str, PhoneDevice]) -> PhoneDevice:
@@ -145,7 +394,8 @@ def _merge_saved(device: PhoneDevice, saved: dict[str, PhoneDevice]) -> PhoneDev
 
 
 def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
-                    targets: list[str] | None = None) -> list[PhoneDevice]:
+                    targets: list[str] | None = None,
+                    cancelled: threading.Event | None = None) -> list[PhoneDevice]:
     registry = registry or PhoneRegistry()
     saved = registry.load()
     found: dict[str, PhoneDevice] = {}
@@ -156,12 +406,16 @@ def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
         sock.bind(("", 0))
         sock.settimeout(0.2)
         for target in dict.fromkeys(targets or ["255.255.255.255"]):
+            if cancelled and cancelled.is_set():
+                return []
             try:
                 sock.sendto(DISCOVERY_REQUEST, (target, DISCOVERY_PORT))
             except OSError:
                 continue
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            if cancelled and cancelled.is_set():
+                return []
             try:
                 data, address = sock.recvfrom(4096)
             except socket.timeout:
@@ -170,54 +424,64 @@ def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
                 break
             try:
                 raw = json.loads(data.decode("utf-8"))
-                if raw.get("service") != "hwtstudio" or int(raw.get("protocol", 0)) != PROTOCOL_VERSION:
+                if not isinstance(raw, dict):
+                    continue
+                protocol = _payload_protocol(raw, "发现响应")
+                if raw.get("service") != "hwtstudio" or protocol != PROTOCOL_VERSION:
                     continue
                 device = PhoneDevice(
-                    device_id=str(raw["device_id"]),
-                    name=str(raw.get("name") or "荣耀手机"),
+                    device_id=_payload_text(raw, "device_id", "发现响应", required=True),
+                    name=_payload_text(raw, "name", "发现响应", default="荣耀手机") or "荣耀手机",
                     host=address[0],
-                    port=int(raw.get("http_port", HTTP_PORT)),
-                    protocol=int(raw["protocol"]),
-                    app_version=str(raw.get("app_version") or ""),
-                    features=[str(value) for value in raw.get("features", [])],
+                    port=_payload_port(raw.get("http_port", HTTP_PORT), "发现响应"),
+                    protocol=protocol,
+                    app_version=_payload_text(raw, "app_version", "发现响应"),
+                    features=_payload_strings(raw.get("features", [])),
                 )
-            except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError, PhoneTransferError):
                 continue
             found[device.device_id] = _merge_saved(device, saved)
     finally:
         sock.close()
 
+    if cancelled and cancelled.is_set():
+        return []
     for device in found.values():
         registry.update(device)
     return sorted(found.values(), key=lambda item: (item.name.casefold(), item.device_id))
 
 
 def probe_phone(host: str, port: int = HTTP_PORT, timeout: float = 5.0,
-                registry: PhoneRegistry | None = None) -> PhoneDevice:
+                registry: PhoneRegistry | None = None,
+                cancelled: threading.Event | None = None) -> PhoneDevice:
+    if cancelled and cancelled.is_set():
+        raise TransferCancelled()
     connection = http.client.HTTPConnection(host, port, timeout=timeout)
     try:
         connection.request("GET", "/api/v1/status")
         response = connection.getresponse()
-        payload = _decode_json(response.read(), "状态")
+        payload = _decode_json(_read_response(response, "状态"), "状态")
     except (OSError, http.client.HTTPException) as exc:
         raise PhoneTransferError(f"无法连接手机 {host}:{port}：{exc}", code="connect_failed") from exc
     finally:
         connection.close()
+    if cancelled and cancelled.is_set():
+        raise TransferCancelled()
     if response.status != 200:
-        raise PhoneTransferError(str(payload.get("message") or "手机接收服务不可用"), code="status_failed")
-    protocol = int(payload.get("protocol", 0))
+        raise PhoneTransferError(_compact_remote_error(payload.get("message"), "手机接收服务不可用"), code="status_failed")
+    protocol = _payload_protocol(payload, "状态")
     if protocol != PROTOCOL_VERSION:
         raise PhoneTransferError(
             f"协议版本不兼容：电脑 {PROTOCOL_VERSION}，手机 {protocol}", code="protocol_mismatch"
         )
     device = PhoneDevice(
-        device_id=str(payload["device_id"]),
-        name=str(payload.get("name") or "荣耀手机"),
+        device_id=_payload_text(payload, "device_id", "状态响应", required=True),
+        name=_payload_text(payload, "name", "状态响应", default="荣耀手机") or "荣耀手机",
         host=host,
         port=port,
         protocol=protocol,
-        app_version=str(payload.get("app_version") or ""),
-        features=[str(value) for value in payload.get("features", [])],
+        app_version=_payload_text(payload, "app_version", "状态响应"),
+        features=_payload_strings(payload.get("features", [])),
     )
     registry = registry or PhoneRegistry()
     device = _merge_saved(device, registry.load())
@@ -226,7 +490,10 @@ def probe_phone(host: str, port: int = HTTP_PORT, timeout: float = 5.0,
 
 
 def pair_phone(device: PhoneDevice, code: str, *, client_name: str = "大雪主题编辑器",
-               timeout: float = 10.0, registry: PhoneRegistry | None = None) -> PhoneDevice:
+               timeout: float = 10.0, registry: PhoneRegistry | None = None,
+               cancelled: threading.Event | None = None) -> PhoneDevice:
+    if cancelled and cancelled.is_set():
+        raise TransferCancelled()
     if not re.fullmatch(r"\d{6}", code):
         raise PhoneTransferError("请输入手机显示的 6 位配对码", code="invalid_pair_code")
     body = json.dumps({"code": code, "client_name": client_name}, ensure_ascii=False).encode("utf-8")
@@ -237,27 +504,32 @@ def pair_phone(device: PhoneDevice, code: str, *, client_name: str = "大雪主�
             headers={"Content-Type": "application/json; charset=utf-8", "Content-Length": str(len(body))},
         )
         response = connection.getresponse()
-        payload = _decode_json(response.read(), "配对")
+        payload = _decode_json(_read_response(response, "配对"), "配对")
     except (OSError, http.client.HTTPException) as exc:
         raise PhoneTransferError(f"配对连接失败：{exc}", code="connect_failed") from exc
     finally:
         connection.close()
+    if cancelled and cancelled.is_set():
+        raise TransferCancelled()
     if response.status != 200:
         raise PhoneTransferError(str(payload.get("message") or "配对失败"), code="pair_failed")
-    if int(payload.get("protocol", 0)) != PROTOCOL_VERSION:
+    if _payload_protocol(payload, "配对") != PROTOCOL_VERSION:
         raise PhoneTransferError("手机与电脑协议版本不兼容", code="protocol_mismatch")
-    token = str(payload.get("token") or "")
+    token = _payload_text(payload, "token", "配对响应", required=True)
     if not token:
         raise PhoneTransferError("手机没有返回配对令牌", code="bad_response")
+    remote_device_id = payload.get("device_id")
+    if remote_device_id is not None and (not isinstance(remote_device_id, str) or not remote_device_id.strip()):
+        raise PhoneTransferError("手机返回了无效的配对设备标识", code="bad_response")
     paired = PhoneDevice(
-        device_id=str(payload.get("device_id") or device.device_id),
-        name=str(payload.get("name") or device.name),
+        device_id=(remote_device_id.strip() if isinstance(remote_device_id, str) else device.device_id),
+        name=_payload_text(payload, "name", "配对响应", default=device.name) or device.name,
         host=device.host,
         port=device.port,
         protocol=PROTOCOL_VERSION,
-        app_version=str(payload.get("app_version") or device.app_version),
+        app_version=_payload_text(payload, "app_version", "配对响应", default=device.app_version),
         token=token,
-        features=[str(value) for value in payload.get("features", device.features)],
+        features=_payload_strings(payload.get("features", device.features)),
         profile=device.profile,
     )
     (registry or PhoneRegistry()).update(paired)
@@ -265,7 +537,10 @@ def pair_phone(device: PhoneDevice, code: str, *, client_name: str = "大雪主�
 
 
 def fetch_phone_profile(device: PhoneDevice, *, timeout: float = 10.0,
-                        registry: PhoneRegistry | None = None) -> PhoneProfile:
+                        registry: PhoneRegistry | None = None,
+                        cancelled: threading.Event | None = None) -> PhoneProfile:
+    if cancelled and cancelled.is_set():
+        raise TransferCancelled()
     if not device.token:
         raise PhoneTransferError("手机尚未配对，无法读取适配信息", code="not_paired")
     if "device_profile" not in device.features:
@@ -274,21 +549,28 @@ def fetch_phone_profile(device: PhoneDevice, *, timeout: float = 10.0,
     try:
         connection.request("GET", "/api/v1/profile", headers={"Authorization": f"Bearer {device.token}"})
         response = connection.getresponse()
-        payload = _decode_json(response.read(), "手机配置")
+        payload = _decode_json(_read_response(response, "手机配置"), "手机配置")
     except (OSError, http.client.HTTPException) as exc:
         raise PhoneTransferError(f"无法读取手机适配信息：{exc}", code="connect_failed") from exc
     finally:
         connection.close()
+    if cancelled and cancelled.is_set():
+        raise TransferCancelled()
     if response.status != 200:
         raise _error_from_response(response.status, payload)
+    sdk_value = payload.get("sdk_int", 0)
+    if isinstance(sdk_value, bool) or not isinstance(sdk_value, int) or sdk_value < 0:
+        raise PhoneTransferError("手机返回了无效的 SDK 版本", code="bad_response")
     profile = PhoneProfile(
-        manufacturer=str(payload.get("manufacturer") or ""),
-        model=str(payload.get("model") or device.name),
-        android_release=str(payload.get("android_release") or ""),
-        sdk_int=int(payload.get("sdk_int") or 0),
-        os_name=str(payload.get("os_name") or ""),
-        build_display=str(payload.get("build_display") or ""),
-        installed_packages=sorted({str(value) for value in payload.get("installed_packages", []) if value}),
+        manufacturer=_payload_text(payload, "manufacturer", "手机配置"),
+        model=_payload_text(payload, "model", "手机配置", default=device.name) or device.name,
+        android_release=_payload_text(payload, "android_release", "手机配置"),
+        sdk_int=sdk_value,
+        os_name=_payload_text(payload, "os_name", "手机配置"),
+        build_display=_payload_text(payload, "build_display", "手机配置"),
+        installed_packages=_payload_strings(
+            payload.get("installed_packages", []), context="已安装应用", strict=True,
+        ),
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
     device.profile = profile
@@ -300,7 +582,18 @@ def safe_hwt_filename(name: str) -> str:
     filename = re.sub(r"[^\w.\-]+", "_", Path(name).name, flags=re.UNICODE).strip("._")
     if not filename.lower().endswith(".hwt"):
         filename = f"{filename or 'theme'}.hwt"
-    return filename
+    extension = filename[-4:]
+    stem = filename[:-4]
+    max_stem_bytes = MAX_FILENAME_BYTES - len(extension.encode("utf-8"))
+    result: list[str] = []
+    used_bytes = 0
+    for character in stem:
+        encoded = character.encode("utf-8")
+        if used_bytes + len(encoded) > max_stem_bytes:
+            break
+        result.append(character)
+        used_bytes += len(encoded)
+    return "".join(result) + extension
 
 
 def sha256_file(path: Path, *, cancelled: threading.Event | None = None) -> str:
@@ -313,8 +606,22 @@ def sha256_file(path: Path, *, cancelled: threading.Event | None = None) -> str:
     return digest.hexdigest()
 
 
+def _file_signature(path: Path) -> tuple[int, int, int, int]:
+    stat = Path(path).stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
+
+
+def _ensure_file_signature(path: Path, expected: tuple[int, int, int, int], stage: str) -> None:
+    try:
+        current = _file_signature(path)
+    except OSError as exc:
+        raise PhoneTransferError(f"主题文件在{stage}时不可用，请重新选择文件", code="file_changed") from exc
+    if current != expected:
+        raise PhoneTransferError(f"主题文件在{stage}时发生变化，请重新选择文件", code="file_changed")
+
+
 def _error_from_response(status: int, payload: dict) -> PhoneTransferError:
-    message = str(payload.get("message") or f"手机返回错误 HTTP {status}")
+    message = _compact_remote_error(payload.get("message"), f"手机返回错误 HTTP {status}")
     codes = {
         400: "invalid_request", 401: "unauthorized", 409: "busy", 413: "too_large",
         422: "validation_failed", 507: "no_space", 503: "storage_unavailable",
@@ -322,21 +629,398 @@ def _error_from_response(status: int, payload: dict) -> PhoneTransferError:
     return PhoneTransferError(message, code=str(payload.get("code") or codes.get(status, "transfer_failed")))
 
 
-def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event | None = None,
-                 progress: Callable[[int, int, str], None] | None = None,
-                 timeout: float = 1800.0) -> dict:
+def _cancel_remote_transfer(device: PhoneDevice, transfer_id: str, *, timeout: float) -> None:
+    """Best-effort cancellation for peers that implement the optional v1 extension."""
+    connection = None
+    try:
+        connection = http.client.HTTPConnection(device.host, device.port, timeout=timeout)
+        target = "/api/v1/transfers/" + quote(transfer_id, safe="")
+        connection.request("DELETE", target, headers={"Authorization": f"Bearer {device.token}"})
+        response = connection.getresponse()
+        _read_response(response, "取消上传")
+    except (OSError, http.client.HTTPException, PhoneTransferError):
+        pass
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def _remote_transfer_status(device: PhoneDevice, transfer_id: str, *, timeout: float) -> dict | None:
+    """Return the current state payload when the optional endpoint is supported."""
+    connection = None
+    try:
+        connection = http.client.HTTPConnection(device.host, device.port, timeout=timeout)
+        target = "/api/v1/transfers/" + quote(transfer_id, safe="")
+        connection.request("GET", target, headers={"Authorization": f"Bearer {device.token}"})
+        response = connection.getresponse()
+        body = _read_response(response, "传输状态")
+        if response.status == 404:
+            return {"state": "not_found"}
+        if response.status not in (200, 202):
+            return None
+        payload = _decode_json(body, "传输状态")
+        state = _payload_text(payload, "state", "传输状态", required=True)
+        if state in {"completed", "receiving", "committing"}:
+            return payload
+        return None
+    except (OSError, http.client.HTTPException, PhoneTransferError):
+        return None
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def _wait_for_remote_commit(device: PhoneDevice, transfer_id: str, *, cancelled: threading.Event | None,
+                            timeout: float) -> dict | None:
+    for _ in range(40):
+        if cancelled and cancelled.is_set():
+            raise TransferCancelled()
+        status_payload = _remote_transfer_status(device, transfer_id, timeout=timeout)
+        if not status_payload or status_payload.get("state") != "committing":
+            return status_payload
+        if cancelled and cancelled.wait(0.25):
+            raise TransferCancelled()
+    raise PhoneTransferError("手机提交主题超时，请查询手机中的主题文件", code="commit_pending")
+
+
+def _compact_remote_error(value: object, fallback: str) -> str:
+    if not isinstance(value, str):
+        return fallback
+    cleaned = "".join(" " if ord(character) < 32 or ord(character) == 127 else character for character in value)
+    cleaned = " ".join(cleaned.split())
+    if not cleaned:
+        return fallback
+    if len(cleaned) > MAX_REMOTE_ERROR_CHARS:
+        return cleaned[:MAX_REMOTE_ERROR_CHARS].rstrip() + "..."
+    return cleaned
+
+
+def _upload_result_from_payload(payload: dict, *, path: Path, device: PhoneDevice,
+                                digest: str, size: int, filename: str) -> dict:
+    remote_sha = _payload_text(payload, "sha256", "上传响应", required=True).lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", remote_sha):
+        raise PhoneTransferError("手机返回了无效的上传 SHA-256", code="bad_response")
+    if remote_sha != digest.lower():
+        raise PhoneTransferError(
+            f"手机校验结果不一致：本机 {digest}，手机 {remote_sha or '无结果'}", code="hash_mismatch"
+        )
+    remote_size = payload.get("size")
+    if isinstance(remote_size, bool) or not isinstance(remote_size, int) or remote_size != size:
+        raise PhoneTransferError("手机返回的上传文件大小不一致", code="bad_response")
+    remote = (
+        _payload_text(payload, "destination", "上传响应")
+        or _payload_text(payload, "stored_name", "上传响应")
+        or filename
+    )
+    return {
+        "local": str(path),
+        "remote": remote,
+        "sha256": digest,
+        "overwritten": _payload_bool(payload, "overwritten", "上传响应", required=True),
+        "device": device.name,
+        "transport": "apk",
+        "theme_app_opened": _payload_bool(payload, "theme_app_opened", "上传响应", required=True),
+    }
+
+
+def _send_chunk(device: PhoneDevice, transfer_id: str, block: bytes, *, total_size: int,
+                offset: int, digest: str, chunk_digest: str, filename: str,
+                timeout: float) -> dict:
+    connection = http.client.HTTPConnection(device.host, device.port, timeout=timeout)
+    target = "/api/v1/transfers/" + quote(transfer_id, safe="")
+    try:
+        connection.putrequest("PUT", target)
+        connection.putheader("Authorization", f"Bearer {device.token}")
+        connection.putheader("Content-Type", "application/octet-stream")
+        connection.putheader("Content-Length", str(len(block)))
+        connection.putheader("X-Content-SHA256", digest)
+        connection.putheader("X-HWT-Transfer-Id", transfer_id)
+        connection.putheader("X-HWT-Total-Size", str(total_size))
+        connection.putheader("X-HWT-Chunk-Offset", str(offset))
+        connection.putheader("X-HWT-Chunk-SHA256", chunk_digest)
+        connection.putheader("X-HWT-File-Name", quote(filename, safe=""))
+        connection.endheaders()
+        connection.send(block)
+        response = connection.getresponse()
+        payload = _decode_json(_read_response(response, "分块上传"), "分块上传")
+    except (OSError, http.client.HTTPException) as exc:
+        raise PhoneTransferError(f"分块上传连接中断：{exc}", code="connect_failed") from exc
+    finally:
+        connection.close()
+    if response.status not in (200, 202):
+        raise _error_from_response(response.status, payload)
+    return payload
+
+
+def _prepare_transfer(device: PhoneDevice, transfer_id: str, *, filename: str, size: int,
+                      digest: str, timeout: float) -> bool:
+    connection = http.client.HTTPConnection(device.host, device.port, timeout=timeout)
+    target = "/api/v1/transfers/" + quote(transfer_id, safe="") + "/prepare"
+    body = json.dumps(
+        {"file_name": filename, "size": size, "sha256": digest},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    try:
+        connection.request(
+            "POST",
+            target,
+            body=body,
+            headers={
+                "Authorization": f"Bearer {device.token}",
+                "Content-Type": "application/json; charset=utf-8",
+                "Content-Length": str(len(body)),
+            },
+        )
+        response = connection.getresponse()
+        body = _read_response(response, "上传预检")
+    except (OSError, http.client.HTTPException) as exc:
+        raise PhoneTransferError(f"上传预检连接中断：{exc}", code="connect_failed") from exc
+    finally:
+        connection.close()
+    if response.status == 404:
+        return False
+    payload = _decode_json(body, "上传预检")
+    if response.status not in (200, 201):
+        raise _error_from_response(response.status, payload)
+    state = _payload_text(payload, "state", "上传预检", required=True)
+    prepared_id = _payload_text(payload, "transfer_id", "上传预检", required=True)
+    prepared_name = _payload_text(payload, "file_name", "上传预检", required=True)
+    prepared_size = _payload_int(payload, "size", "上传预检")
+    prepared_hash = _payload_text(payload, "sha256", "上传预检", required=True).lower()
+    if (
+        state != "prepared"
+        or prepared_id != transfer_id
+        or prepared_name != filename
+        or prepared_size != size
+        or prepared_hash != digest.lower()
+    ):
+        raise PhoneTransferError("手机返回的上传预检信息不一致", code="bad_response")
+    return True
+
+
+def _commit_chunk(device: PhoneDevice, transfer_id: str, *, timeout: float) -> dict:
+    connection = http.client.HTTPConnection(device.host, device.port, timeout=timeout)
+    target = "/api/v1/transfers/" + quote(transfer_id, safe="") + "/complete"
+    try:
+        connection.request(
+            "POST",
+            target,
+            body=b"",
+            headers={"Authorization": f"Bearer {device.token}", "Content-Length": "0"},
+        )
+        response = connection.getresponse()
+        payload = _decode_json(_read_response(response, "分块提交"), "分块提交")
+    except (OSError, http.client.HTTPException) as exc:
+        raise PhoneTransferError(f"分块提交连接中断：{exc}", code="connect_failed") from exc
+    finally:
+        connection.close()
+    if response.status not in (200, 201):
+        raise _error_from_response(response.status, payload)
+    return payload
+
+
+def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threading.Event | None,
+                          progress: Callable[[int, int, str], None] | None,
+                          timeout: float) -> dict:
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(path)
-    size = path.stat().st_size
+    initial_signature = _file_signature(path)
+    size = initial_signature[2]
+    if size > MAX_FILE_SIZE:
+        raise PhoneTransferError("HWT 文件超过 1 GiB 上限", code="too_large")
+    if not device.token:
+        raise PhoneTransferError("手机尚未配对", code="not_paired")
+    callback = progress or (lambda _sent, _total, _stage: None)
+    transfer_id = uuid.uuid4().hex
+    callback(0, size, "正在计算 SHA-256")
+    try:
+        digest = sha256_file(path, cancelled=cancelled)
+    except OSError as exc:
+        raise PhoneTransferError("主题文件在校验时不可用，请重新选择文件", code="file_changed") from exc
+    _ensure_file_signature(path, initial_signature, "校验后")
+    filename = safe_hwt_filename(path.name)
+    if FEATURE_TRANSFER_PREPARE in device.features:
+        if cancelled and cancelled.is_set():
+            raise TransferCancelled()
+        _prepare_transfer(
+            device, transfer_id, filename=filename, size=size, digest=digest, timeout=timeout,
+        )
+    offset = 0
+    recovery_attempts = 0
+    while True:
+        while offset < size:
+            if cancelled and cancelled.is_set():
+                _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
+                raise TransferCancelled()
+            _ensure_file_signature(path, initial_signature, "发送中")
+            with path.open("rb") as stream:
+                stream.seek(offset)
+                block = stream.read(min(CHUNK_SIZE, size - offset))
+            if not block:
+                raise PhoneTransferError("主题文件在分块读取时被截断，请重新选择文件", code="file_changed")
+            chunk_digest = hashlib.sha256(block).hexdigest()
+            try:
+                payload = _send_chunk(
+                    device,
+                    transfer_id,
+                    block,
+                    total_size=size,
+                    offset=offset,
+                    digest=digest,
+                    chunk_digest=chunk_digest,
+                    filename=filename,
+                    timeout=timeout,
+                )
+            except PhoneTransferError as exc:
+                if exc.code != "connect_failed":
+                    raise
+                recovery_attempts += 1
+                if recovery_attempts > 3:
+                    raise
+                if cancelled and cancelled.is_set():
+                    _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
+                    raise TransferCancelled()
+                status_payload = _remote_transfer_status(device, transfer_id, timeout=min(timeout, 5.0))
+                if status_payload and status_payload.get("state") == "completed":
+                    _ensure_file_signature(path, initial_signature, "状态确认后")
+                    return _upload_result_from_payload(
+                        status_payload,
+                        path=path,
+                        device=device,
+                        digest=digest,
+                        size=size,
+                        filename=filename,
+                    )
+                if status_payload and status_payload.get("state") == "committing":
+                    status_payload = _wait_for_remote_commit(
+                        device, transfer_id, cancelled=cancelled, timeout=min(timeout, 5.0),
+                    )
+                    if status_payload and status_payload.get("state") == "completed":
+                        _ensure_file_signature(path, initial_signature, "状态确认后")
+                        return _upload_result_from_payload(
+                            status_payload,
+                            path=path,
+                            device=device,
+                            digest=digest,
+                            size=size,
+                            filename=filename,
+                        )
+                    raise PhoneTransferError("手机提交主题的状态无效", code="bad_response")
+                if status_payload and status_payload.get("state") == "receiving":
+                    remote_total = _payload_int(status_payload, "total", "传输状态")
+                    remote_offset = _payload_int(status_payload, "next_offset", "传输状态")
+                    if remote_total != size or remote_offset < 0 or remote_offset > size:
+                        raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response")
+                    offset = remote_offset
+                else:
+                    offset = 0
+                continue
+            state = _payload_text(payload, "state", "分块上传", required=True)
+            if state == "completed":
+                _ensure_file_signature(path, initial_signature, "状态确认后")
+                return _upload_result_from_payload(
+                    payload,
+                    path=path,
+                    device=device,
+                    digest=digest,
+                    size=size,
+                    filename=filename,
+                )
+            if state != "receiving":
+                raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response")
+            remote_total = _payload_int(payload, "total", "分块上传")
+            received = _payload_int(payload, "received", "分块上传")
+            next_offset = _payload_int(payload, "next_offset", "分块上传")
+            expected_offset = offset + len(block)
+            if remote_total != size or received != expected_offset or next_offset != received:
+                raise PhoneTransferError("手机返回的分块偏移量不一致", code="bad_response")
+            offset = next_offset
+            callback(offset, size, "正在分块发送到手机")
+        _ensure_file_signature(path, initial_signature, "提交前")
+        try:
+            payload = _commit_chunk(device, transfer_id, timeout=timeout)
+        except PhoneTransferError as exc:
+            if exc.code != "connect_failed":
+                raise
+            recovery_attempts += 1
+            if recovery_attempts > 3:
+                raise
+            if cancelled and cancelled.is_set():
+                _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
+                raise TransferCancelled()
+            status_payload = _remote_transfer_status(device, transfer_id, timeout=min(timeout, 5.0))
+            if status_payload and status_payload.get("state") == "completed":
+                return _upload_result_from_payload(
+                    status_payload,
+                    path=path,
+                    device=device,
+                    digest=digest,
+                    size=size,
+                    filename=filename,
+                )
+            if status_payload and status_payload.get("state") == "committing":
+                status_payload = _wait_for_remote_commit(
+                    device, transfer_id, cancelled=cancelled, timeout=min(timeout, 5.0),
+                )
+                if status_payload and status_payload.get("state") == "completed":
+                    _ensure_file_signature(path, initial_signature, "状态确认后")
+                    return _upload_result_from_payload(
+                        status_payload,
+                        path=path,
+                        device=device,
+                        digest=digest,
+                        size=size,
+                        filename=filename,
+                    )
+                raise PhoneTransferError("手机提交主题的状态无效", code="bad_response")
+            if status_payload and status_payload.get("state") == "receiving":
+                remote_total = _payload_int(status_payload, "total", "传输状态")
+                offset = _payload_int(status_payload, "next_offset", "传输状态")
+                if remote_total != size or offset < 0 or offset > size:
+                    raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response")
+                continue
+            offset = 0
+            continue
+        return _upload_result_from_payload(
+            payload,
+            path=path,
+            device=device,
+            digest=digest,
+            size=size,
+            filename=filename,
+        )
+
+
+def _upload_theme_once(path: Path, device: PhoneDevice, *, transfer_id: str,
+                       cancelled: threading.Event | None = None,
+                       progress: Callable[[int, int, str], None] | None = None,
+                       timeout: float = 1800.0) -> dict:
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    initial_signature = _file_signature(path)
+    size = initial_signature[2]
     if size > MAX_FILE_SIZE:
         raise PhoneTransferError("HWT 文件超过 1 GiB 上限", code="too_large")
     if not device.token:
         raise PhoneTransferError("手机尚未配对", code="not_paired")
     progress = progress or (lambda _sent, _total, _stage: None)
     progress(0, size, "正在计算 SHA-256")
-    digest = sha256_file(path, cancelled=cancelled)
+    try:
+        digest = sha256_file(path, cancelled=cancelled)
+    except OSError as exc:
+        raise PhoneTransferError("主题文件在校验时不可用，请重新选择文件", code="file_changed") from exc
+    _ensure_file_signature(path, initial_signature, "校验后")
+    _ensure_file_signature(path, initial_signature, "发送前")
     filename = safe_hwt_filename(path.name)
+    if FEATURE_TRANSFER_PREPARE in device.features:
+        if cancelled and cancelled.is_set():
+            raise TransferCancelled()
+        _prepare_transfer(
+            device, transfer_id, filename=filename, size=size, digest=digest, timeout=timeout,
+        )
     target = "/api/v1/themes/" + quote(filename, safe="")
     connection = http.client.HTTPConnection(device.host, device.port, timeout=timeout)
     try:
@@ -345,21 +1029,28 @@ def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event 
         connection.putheader("Content-Type", "application/octet-stream")
         connection.putheader("Content-Length", str(size))
         connection.putheader("X-Content-SHA256", digest)
+        connection.putheader("X-HWT-Transfer-Id", transfer_id)
         connection.endheaders()
         sent = 0
         with path.open("rb") as stream:
-            while True:
+            remaining = size
+            while remaining:
                 if cancelled and cancelled.is_set():
                     raise TransferCancelled()
-                block = stream.read(CHUNK_SIZE)
+                block = stream.read(min(CHUNK_SIZE, remaining))
                 if not block:
-                    break
+                    raise PhoneTransferError("主题文件在发送时被截断，请重新选择文件", code="file_changed")
                 connection.send(block)
                 sent += len(block)
+                remaining -= len(block)
                 progress(sent, size, "正在发送到手机")
+        _ensure_file_signature(path, initial_signature, "发送后")
+        if cancelled and cancelled.is_set():
+            raise TransferCancelled()
         response = connection.getresponse()
-        payload = _decode_json(response.read(), "上传")
+        payload = _decode_json(_read_response(response, "上传"), "上传")
     except TransferCancelled:
+        _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
         raise
     except (OSError, http.client.HTTPException) as exc:
         raise PhoneTransferError(f"上传连接中断：{exc}", code="connect_failed") from exc
@@ -367,34 +1058,97 @@ def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event 
         connection.close()
     if response.status not in (200, 201):
         raise _error_from_response(response.status, payload)
-    remote_sha = str(payload.get("sha256") or "").lower()
-    if remote_sha != digest.lower():
-        raise PhoneTransferError(
-            f"手机校验结果不一致：本机 {digest}，手机 {remote_sha or '无结果'}", code="hash_mismatch"
+    return _upload_result_from_payload(
+        payload,
+        path=path,
+        device=device,
+        digest=digest,
+        size=size,
+        filename=filename,
+    )
+
+
+def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event | None = None,
+                 progress: Callable[[int, int, str], None] | None = None,
+                 timeout: float = 1800.0) -> dict:
+    """Upload once, retrying one connection failure with the same idempotency key."""
+    if FEATURE_TRANSFER_CHUNKED in device.features:
+        return _upload_theme_chunked(
+            path,
+            device,
+            cancelled=cancelled,
+            progress=progress,
+            timeout=timeout,
         )
-    return {
-        "local": str(path),
-        "remote": str(payload.get("destination") or payload.get("stored_name") or filename),
-        "sha256": digest,
-        "overwritten": bool(payload.get("overwritten", False)),
-        "device": device.name,
-        "transport": "apk",
-        "theme_app_opened": bool(payload.get("theme_app_opened", False)),
-    }
+    transfer_id = uuid.uuid4().hex
+    callback = progress or (lambda _sent, _total, _stage: None)
+    try:
+        return _upload_theme_once(
+            path,
+            device,
+            transfer_id=transfer_id,
+            cancelled=cancelled,
+            progress=callback,
+            timeout=timeout,
+        )
+    except PhoneTransferError as exc:
+        if exc.code != "connect_failed":
+            raise
+        if cancelled and cancelled.is_set():
+            _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
+            raise TransferCancelled()
+        for _attempt in range(2):
+            status_payload = _remote_transfer_status(device, transfer_id, timeout=min(timeout, 5.0))
+            if status_payload and status_payload.get("state") == "committing":
+                status_payload = _wait_for_remote_commit(
+                    device, transfer_id, cancelled=cancelled, timeout=min(timeout, 5.0),
+                )
+            if status_payload and status_payload.get("state") == "completed":
+                current_path = Path(path)
+                try:
+                    current_size = current_path.stat().st_size
+                    current_digest = sha256_file(current_path, cancelled=cancelled)
+                except OSError as exc:
+                    raise PhoneTransferError("主题文件在状态确认时不可用，请重新选择文件", code="file_changed") from exc
+                callback(current_size, current_size, "手机已完成上传，正在确认结果")
+                return _upload_result_from_payload(
+                    status_payload,
+                    path=current_path,
+                    device=device,
+                    digest=current_digest,
+                    size=current_size,
+                    filename=safe_hwt_filename(current_path.name),
+                )
+            if not status_payload or status_payload.get("state") != "receiving":
+                break
+            if cancelled and cancelled.wait(0.25):
+                _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
+                raise TransferCancelled()
+        callback(0, 0, "网络中断，正在重试上传")
+        return _upload_theme_once(
+            path,
+            device,
+            transfer_id=transfer_id,
+            cancelled=cancelled,
+            progress=callback,
+            timeout=timeout,
+        )
 
 
 def transfer_to_app(path: Path, device: PhoneDevice, *, pair_code: str = "",
                     registry: PhoneRegistry | None = None, cancelled: threading.Event | None = None,
                     progress: Callable[[int, int, str], None] | None = None) -> dict:
     registry = registry or PhoneRegistry()
+    if cancelled and cancelled.is_set():
+        raise TransferCancelled()
     if device.device_id.startswith("manual:"):
-        device = probe_phone(device.host, device.port, registry=registry)
+        device = probe_phone(device.host, device.port, registry=registry, cancelled=cancelled)
     if not device.token:
         saved = registry.load().get(device.device_id)
         if saved and saved.token:
             device.token = saved.token
     if not device.token:
-        device = pair_phone(device, pair_code, registry=registry)
+        device = pair_phone(device, pair_code, registry=registry, cancelled=cancelled)
     else:
         registry.update(device)
     try:

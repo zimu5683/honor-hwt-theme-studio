@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 from ..models import ThemeProject
+from ..paths import unique_temp_path
 
 
 PROJECT_SUFFIX = ".hwtproj.json"
@@ -54,28 +55,39 @@ def missing_project_assets(project: ThemeProject) -> list[tuple[str, Path]]:
     return missing
 
 
-def collect_project_assets(project: ThemeProject, path: Path, serialized: dict) -> dict[str, Path]:
+def collect_project_assets(
+    project: ThemeProject,
+    path: Path,
+    serialized: dict,
+    *,
+    staging_dir: Path | None = None,
+    include_disabled: bool = False,
+) -> dict[str, Path]:
     asset_dir = project_assets_dir(path)
+    copy_dir = Path(staging_dir) if staging_dir is not None else asset_dir
     collected: dict[str, Path] = {}
     for slot_id, change in project.changes.items():
-        if not change.enabled or change.source_kind != "file" or not change.source_file:
+        if (not include_disabled and not change.enabled) or change.source_kind != "file" or not change.source_file:
             continue
         source = resolve_source(change.source_file, project.project_file)
         if not source.is_file():
+            if not change.enabled:
+                continue
             raise FileNotFoundError(f"工程图片不存在：{source}")
-        asset_dir.mkdir(parents=True, exist_ok=True)
-        target = asset_dir / asset_name(slot_id, source.name)
+        copy_dir.mkdir(parents=True, exist_ok=True)
+        target = copy_dir / asset_name(slot_id, source.name)
         try:
             same_file = target.exists() and os.path.samefile(source, target)
         except OSError:
             same_file = source == target.resolve()
         if not same_file:
-            copy_temp = target.with_suffix(target.suffix + ".tmp")
+            copy_temp = unique_temp_path(target)
             try:
                 shutil.copy2(source, copy_temp)
                 os.replace(copy_temp, target)
             finally:
                 copy_temp.unlink(missing_ok=True)
-        serialized["changes"][slot_id]["source_file"] = target.relative_to(path.parent).as_posix()
-        collected[slot_id] = target.resolve()
+        final_target = asset_dir / target.name
+        serialized["changes"][slot_id]["source_file"] = final_target.relative_to(path.parent).as_posix()
+        collected[slot_id] = final_target.resolve()
     return collected

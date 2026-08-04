@@ -119,6 +119,25 @@ class CoreTests(unittest.TestCase):
         after = hashlib.sha256(source.read_bytes()).hexdigest()
         self.assertEqual(before, after)
 
+    def test_scan_skips_unsafe_outer_and_nested_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module = BytesIO()
+            with ZipFile(module, "w") as nested:
+                nested.writestr("../escape.xml", b"<resources><color name='escape'>#FFFFFFFF</color></resources>")
+                nested.writestr("theme.xml", b"<resources><color name='safe'>#FF112233</color></resources>")
+            source = Path(directory) / "unsafe.hwt"
+            with ZipFile(source, "w") as outer:
+                outer.writestr("description.xml", b"<HwTheme/>")
+                outer.writestr("../outside", module.getvalue())
+                outer.writestr("com.example", module.getvalue())
+
+            catalog = scan_theme(source)
+            self.assertTrue(any(item.name == "safe" for item in catalog.resources))
+            self.assertFalse(any(item.name == "escape" for item in catalog.resources))
+            warning_kinds = {item["kind"] for item in catalog.warnings}
+            self.assertIn("unsafe_path", warning_kinds)
+            self.assertIn("unsafe_nested_path", warning_kinds)
+
     def test_custom_resource_round_trip_and_export(self):
         slot = ResourceSlot(
             id="__custom__::test",

@@ -20,16 +20,18 @@ class ResourceTableModel(QAbstractTableModel):
         self.project = project
         self.resources: list[ResourceSlot] = []
         self.installed_packages: set[str] | None = None
+        self._friendly_labels: list[str] = []
         self._search_texts: list[str] = []
         self.set_resources(catalog.resources)
 
     def set_resources(self, resources: list[ResourceSlot]) -> None:
         self.beginResetModel()
         self.resources = list(resources)
+        self._friendly_labels = [friendly_resource_label(slot) for slot in self.resources]
         self._search_texts = [
             " ".join((slot.id, slot.module, slot.container, slot.name, slot.path, slot.category,
-                       slot.label, friendly_resource_label(slot))).lower()
-            for slot in self.resources
+                       slot.label, label)).lower()
+            for slot, label in zip(self.resources, self._friendly_labels)
         ]
         self.endResetModel()
 
@@ -56,7 +58,7 @@ class ResourceTableModel(QAbstractTableModel):
                 slot.category,
                 slot.module,
                 TYPE_LABELS.get(slot.resource_type, slot.resource_type),
-                friendly_resource_label(slot),
+                self._friendly_labels[index.row()],
                 slot.name,
                 slot.path or "—",
                 self._change_text(change),

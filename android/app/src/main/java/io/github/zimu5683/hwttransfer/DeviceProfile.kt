@@ -49,6 +49,12 @@ object DeviceProfile {
     }.isSuccess
 
     private fun systemProperty(name: String): String = runCatching {
-        ProcessBuilder("/system/bin/getprop", name).start().inputStream.bufferedReader().use { it.readLine().orEmpty() }
+        val process = ProcessBuilder("/system/bin/getprop", name).start()
+        try {
+            process.inputStream.bufferedReader().use { it.readLine().orEmpty() }
+        } finally {
+            process.destroy()
+            if (process.isAlive) process.destroyForcibly()
+        }
     }.getOrDefault("")
 }
