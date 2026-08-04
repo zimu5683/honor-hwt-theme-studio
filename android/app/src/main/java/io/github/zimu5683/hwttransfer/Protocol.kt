@@ -107,8 +107,8 @@ object Protocol {
             throw TransferException(400, "invalid_json", "配对请求 JSON 无效")
         }
         val code = body.opt("code")
-        if (code !is String) {
-            throw TransferException(400, "invalid_request", "配对请求缺少字符串 code")
+        if (code !is String || !code.matches(Regex("[0-9]{6}"))) {
+            throw TransferException(400, "invalid_request", "配对请求的 code 必须是 6 位数字")
         }
         val clientName = when {
             !body.has("client_name") || body.isNull("client_name") -> ""

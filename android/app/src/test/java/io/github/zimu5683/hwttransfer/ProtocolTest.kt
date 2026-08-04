@@ -100,6 +100,16 @@ class ProtocolTest {
     }
 
     @Test
+    fun pairRequestRejectsInvalidCodeFormatBeforePairing() {
+        listOf("12345", "1234567", "12a456").forEach { code ->
+            val error = assertThrows(TransferException::class.java) {
+                Protocol.parsePairRequest("{\"code\":\"$code\"}")
+            }
+            assertEquals("invalid_request", error.code)
+        }
+    }
+
+    @Test
     fun pairRequestKeepsOptionalNameDefault() {
         assertEquals(
             Protocol.PairRequest("123456", ""),
