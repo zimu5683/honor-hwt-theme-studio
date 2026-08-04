@@ -155,6 +155,8 @@ APK 只接受包含根目录 `description.xml` 文件的有效 ZIP，并在读�
 }
 ```
 
+服务停止、用户取消或进程重启时会清理未完成的分块状态和受控命名的 `.uploading` 缓存文件；不符合普通文件条件的缓存对象不会被删除。
+
 #### `POST /api/v1/transfers/{id}/complete`
 
 所有分块成功后，桌面端发送带 Bearer Token 的空请求体。手机再次校验整个临时文件的大小和 SHA-256，

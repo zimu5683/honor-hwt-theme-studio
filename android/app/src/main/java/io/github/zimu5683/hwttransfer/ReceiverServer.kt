@@ -8,9 +8,22 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.util.LinkedHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+
+private val STALE_CHUNK_UPLOAD_PATTERN = Regex("^hwt_chunk_[A-Za-z0-9_-]{16,64}\\.uploading$")
+
+internal fun staleChunkUploadFiles(directory: File): List<File> =
+    directory.listFiles().orEmpty().filter { file ->
+        STALE_CHUNK_UPLOAD_PATTERN.matches(file.name) &&
+            Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS)
+    }
+
+internal fun cleanupStaleChunkUploadFiles(directory: File): List<File> =
+    staleChunkUploadFiles(directory).filterNot { it.delete() }
 
 class ReceiverServer(
     context: Context,
@@ -30,6 +43,7 @@ class ReceiverServer(
 
     private val appContext = context.applicationContext
     private val uploading = AtomicBoolean(false)
+    private val stopping = AtomicBoolean(false)
     private val activeRequests = AtomicInteger(0)
     private val transferLock = Any()
     private var activeTransferId: String? = null
@@ -38,11 +52,36 @@ class ReceiverServer(
     private var committingTransferId: String? = null
     private val completedTransfers = LinkedHashMap<String, InstallResult>(8, 0.75f, true)
 
+    init {
+        cleanupStaleChunkFiles()
+    }
+
     fun hasActiveRequests(): Boolean = activeRequests.get() > 0
+
+    /** Cancel transfer state and remove the partial chunk file before stopping the server. */
+    fun shutdownTransfers() {
+        stopping.set(true)
+        val abandoned = synchronized(transferLock) {
+            val file = chunkTransfer?.file
+            chunkTransfer = null
+            activeTransferId = null
+            cancelRequested = false
+            if (committingTransferId == null) uploading.set(false)
+            file
+        }
+        abandoned?.let { file ->
+            if (!deleteRegularChunkFile(file)) {
+                android.util.Log.w("ReceiverServer", "Unable to remove abandoned chunk file")
+            }
+        }
+    }
 
     override fun serve(session: IHTTPSession): Response {
         activeRequests.incrementAndGet()
         return try {
+            if (stopping.get()) {
+                throw TransferException(503, "receiver_stopped", "接收服务正在停止")
+            }
             onActivity()
             when {
                 session.method == Method.GET && session.uri == "/api/v1/status" -> status()
@@ -216,7 +255,11 @@ class ReceiverServer(
                 false
             }
         }
-        abandonedFile?.delete()
+        abandonedFile?.let { file ->
+            if (!deleteRegularChunkFile(file)) {
+                android.util.Log.w("ReceiverServer", "Unable to remove cancelled chunk file")
+            }
+        }
         return if (accepted) {
             json(202, JSONObject().put("code", "cancel_requested").put("transfer_id", id))
         } else {
@@ -232,6 +275,7 @@ class ReceiverServer(
         offset: Long,
     ): ChunkTransfer {
         return synchronized(transferLock) {
+            if (stopping.get()) throw TransferException(503, "receiver_stopped", "接收服务正在停止")
             if (uploading.get()) throw TransferException(409, "busy", "手机正在接收另一个数据块")
             val current = chunkTransfer
             if (current == null) {
@@ -239,8 +283,10 @@ class ReceiverServer(
                     throw TransferException(409, "unexpected_offset", "上传必须从偏移量 0 开始")
                 }
                 val temporary = File(appContext.cacheDir, "hwt_chunk_$id.uploading")
-                if (temporary.exists() && !temporary.delete()) {
-                    throw TransferException(503, "storage_unavailable", "无法清理旧的分块临时文件")
+                if (Files.exists(temporary.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+                    if (!Files.isRegularFile(temporary.toPath(), LinkOption.NOFOLLOW_LINKS) || !temporary.delete()) {
+                        throw TransferException(503, "storage_unavailable", "无法清理旧的分块临时文件")
+                    }
                 }
                 ChunkTransfer(id, temporary, fileName, totalSize, expectedHash).also {
                     chunkTransfer = it
@@ -427,7 +473,7 @@ class ReceiverServer(
 
     private fun acquireFullTransfer(id: String?): Boolean {
         return synchronized(transferLock) {
-            if (uploading.get() || chunkTransfer != null || committingTransferId != null || activeTransferId != null) {
+            if (stopping.get() || uploading.get() || chunkTransfer != null || committingTransferId != null || activeTransferId != null) {
                 false
             } else {
                 uploading.set(true)
@@ -439,9 +485,10 @@ class ReceiverServer(
     }
 
     private fun claimTransferForInstall(id: String?): Boolean {
+        if (stopping.get()) return false
         if (id == null) return true
         return synchronized(transferLock) {
-            if (activeTransferId != id || cancelRequested) {
+            if (stopping.get() || activeTransferId != id || cancelRequested) {
                 if (activeTransferId == id) {
                     activeTransferId = null
                     cancelRequested = false
@@ -465,6 +512,22 @@ class ReceiverServer(
             }
             uploading.set(false)
         }
+    }
+
+    private fun cleanupStaleChunkFiles() {
+        runCatching { cleanupStaleChunkUploadFiles(appContext.cacheDir) }
+            .getOrElse {
+                android.util.Log.w("ReceiverServer", "Unable to enumerate stale chunk files", it)
+                return
+            }
+            .forEach { file ->
+                android.util.Log.w("ReceiverServer", "Unable to remove stale chunk file: ${file.name}")
+            }
+    }
+
+    private fun deleteRegularChunkFile(file: File): Boolean {
+        val path = file.toPath()
+        return Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && file.delete()
     }
 
     private fun cachedTransfer(id: String?): InstallResult? {
