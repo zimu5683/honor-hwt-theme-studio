@@ -5,8 +5,10 @@ import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.RandomAccessFile
+import java.nio.file.Files
 import java.security.MessageDigest
 import java.text.Normalizer
 import java.util.HashSet
@@ -79,26 +81,6 @@ object Protocol {
             }
             addPathAncestors(topologyName, pathAncestors)
         }
-    }
-
-    private class CountingInputStream(input: InputStream) : InputStream() {
-        private val source = input
-        var count: Long = 0
-            private set
-
-        override fun read(): Int {
-            val value = source.read()
-            if (value >= 0) count += 1
-            return value
-        }
-
-        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-            val read = source.read(buffer, offset, length)
-            if (read > 0) count += read
-            return read
-        }
-
-        override fun close() = source.close()
     }
 
     private data class CentralDirectoryLocation(
@@ -228,7 +210,15 @@ object Protocol {
                     }
                 }
                 validateArchiveBudget(sizes)
-                validateArchiveContents(archive)
+                val validationDirectory = Files.createTempDirectory(
+                    (file.parentFile ?: File(".")).toPath(),
+                    "hwt_validate_",
+                ).toFile()
+                try {
+                    validateArchiveContents(archive, validationDirectory)
+                } finally {
+                    validationDirectory.deleteRecursively()
+                }
             }
         } catch (exc: TransferException) {
             throw exc
@@ -511,7 +501,7 @@ object Protocol {
     private fun invalidArchiveData(message: String): Nothing =
         throw TransferException(422, "invalid_hwt", "HWT ZIP 本地数据区间无效：$message")
 
-    private fun validateArchiveContents(archive: ZipFile) {
+    private fun validateArchiveContents(archive: ZipFile, validationDirectory: File) {
         val buffer = ByteArray(1024 * 1024)
         var totalBytes = 0L
         try {
@@ -519,14 +509,24 @@ object Protocol {
             while (entries.hasMoreElements()) {
                 val entry = entries.nextElement()
                 if (entry.isDirectory) continue
-                val counted = CountingInputStream(archive.getInputStream(entry))
-                counted.use { source ->
-                    val input = BufferedInputStream(source)
+                BufferedInputStream(archive.getInputStream(entry)).use { input ->
                     val nestedBytes: Long
                     val entryBytes: Long
                     if (startsLikeZip(input)) {
-                        nestedBytes = validateNestedArchive(input, totalBytes + entry.size)
-                        entryBytes = source.count
+                        val nestedFile = File.createTempFile("hwt_nested_", ".zip", validationDirectory)
+                        try {
+                            entryBytes = materializeNestedArchive(
+                                input,
+                                nestedFile,
+                                totalBytes,
+                                entry.size,
+                                entry.crc,
+                            )
+                            validateArchiveDataRanges(nestedFile)
+                            nestedBytes = validateNestedArchive(nestedFile, totalBytes + entryBytes)
+                        } finally {
+                            nestedFile.delete()
+                        }
                     } else {
                         nestedBytes = 0L
                         entryBytes = drainArchiveEntry(input, buffer, totalBytes, entry.crc)
@@ -545,6 +545,38 @@ object Protocol {
                 it.addSuppressed(exc)
             }
         }
+    }
+
+    private fun materializeNestedArchive(
+        input: InputStream,
+        target: File,
+        previousTotal: Long,
+        expectedSize: Long,
+        expectedCrc: Long,
+    ): Long {
+        val buffer = ByteArray(1024 * 1024)
+        val checksum = CRC32()
+        var entryBytes = 0L
+        FileOutputStream(target).use { output ->
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                entryBytes += count
+                if (entryBytes > MAX_ARCHIVE_ENTRY_BYTES) {
+                    throw TransferException(422, "invalid_hwt", "HWT ZIP 解压总量超过限制")
+                }
+                validateArchiveExpansionBudget(previousTotal, entryBytes)
+                checksum.update(buffer, 0, count)
+                output.write(buffer, 0, count)
+            }
+        }
+        if (expectedSize >= 0L && expectedSize != entryBytes) {
+            throw TransferException(422, "invalid_hwt", "HWT 嵌套 ZIP 条目大小无效")
+        }
+        if (expectedCrc >= 0L && checksum.value != expectedCrc) {
+            throw TransferException(422, "invalid_hwt", "HWT ZIP CRC 校验失败")
+        }
+        return entryBytes
     }
 
     private fun startsLikeZip(input: BufferedInputStream): Boolean {
@@ -588,13 +620,13 @@ object Protocol {
         return entryBytes
     }
 
-    private fun validateNestedArchive(input: InputStream, previousTotal: Long): Long {
+    private fun validateNestedArchive(file: File, previousTotal: Long): Long {
         val buffer = ByteArray(1024 * 1024)
         val paths = ArchivePathTracker()
         var totalBytes = 0L
         var entryCount = 0
         try {
-            ZipInputStream(input).use { archive ->
+            ZipInputStream(FileInputStream(file)).use { archive ->
                 while (true) {
                     val entry = archive.nextEntry ?: break
                     entryCount += 1

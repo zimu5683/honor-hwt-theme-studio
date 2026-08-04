@@ -407,6 +407,50 @@ class ProtocolTest {
     }
 
     @Test
+    fun validateHwtRejectsPhysicallyOverlappingNestedZipData() {
+        val file = File.createTempFile("nested-data-overlap", ".hwt")
+        try {
+            val nestedBytes = ByteArrayOutputStream()
+            ZipOutputStream(nestedBytes).use { zip ->
+                zip.putNextEntry(ZipEntry("theme.xml"))
+                zip.write("<resources/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("preview.png"))
+                zip.write("same payload".toByteArray())
+                zip.closeEntry()
+            }
+            val encoded = nestedBytes.toByteArray()
+            val firstCentral = encoded.indexOfSignature(byteArrayOf(0x50, 0x4b, 0x01, 0x02))
+            val secondCentral = encoded.indexOfSignature(
+                byteArrayOf(0x50, 0x4b, 0x01, 0x02),
+                firstCentral + 4,
+            )
+            assertTrue(firstCentral >= 0)
+            assertTrue(secondCentral > firstCentral)
+            val firstOffset = ByteBuffer.wrap(encoded, firstCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .int
+            ByteBuffer.wrap(encoded, secondCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(firstOffset)
+
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons"))
+                zip.write(encoded)
+                zip.closeEntry()
+            }
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun validateHwtRejectsUnsafeNestedPath() {
         val file = File.createTempFile("nested-path", ".hwt")
         try {
