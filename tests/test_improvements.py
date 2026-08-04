@@ -38,7 +38,7 @@ from hwtstudio.pngmeta import extract_android_chunks, inject_android_chunks
 from hwtstudio.projectio import load_project, project_assets_dir, save_project
 from hwtstudio.phone_transfer import TransferCancelled
 from hwtstudio.ssh_transfer import preflight_phone, transfer_to_phone
-from hwtstudio.services.catalog_service import load_preferred_catalog
+from hwtstudio.services.catalog_service import load_preferred_catalog, save_user_catalog
 from hwtstudio.ui.dialogs import find_named_files
 from hwtstudio.validation import validate_custom_slot, validate_theme
 from hwtstudio.xmlutil import parse_xml
@@ -630,6 +630,23 @@ class ImprovementTests(unittest.TestCase):
                 loaded, warning = load_preferred_catalog()
                 self.assertNotEqual(loaded.source_path, "cached.hwt")
                 self.assertIn("已回退", warning)
+
+    def test_user_catalog_save_writes_source_compatibility_report(self):
+        catalog = ThemeCatalog(
+            "source.hwt",
+            "a" * 64,
+            "now",
+            {"modules": 1, "resource_slots": 0},
+            [{"kind": "nonstandard_xml", "path": "com.example/theme.xml"}],
+            [],
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("hwtstudio.services.catalog_service.data_dir", return_value=root):
+                save_user_catalog(catalog)
+            report = json.loads((root / "source_compatibility.report.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["summary"]["compatibility_warnings"], 1)
+            self.assertTrue((root / "catalog_daxue.json").is_file())
 
     def test_catalog_loader_bounds_and_validates_cache_shape(self):
         with tempfile.TemporaryDirectory() as directory:

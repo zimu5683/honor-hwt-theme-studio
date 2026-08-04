@@ -2,7 +2,7 @@
   "schema": 1,
   "source_path": "D:\\HONOR Share\\Honor Share\\30039574_大雪.hwt",
   "source_sha256": "8b74402cf233faa5693ba63d9679653fd562a9671aae0cafc55e5fd0278f17d8",
-  "generated_at": "2026-07-25T13:47:20.598173+00:00",
+  "generated_at": "2026-08-04T10:34:05.054425+00:00",
   "stats": {
     "color_slots": 10409,
     "color_declarations": 10941,
@@ -168,6 +168,27 @@
       "type": "color",
       "name": "magic_fab_icon_start",
       "occurrences": 2
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.android.deskclock",
+      "path": "res/drawable-xxhdpi/timer_first_dark.png",
+      "expected": "PNG",
+      "actual": "WEBP"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.android.deskclock",
+      "path": "res/drawable-xxhdpi/timer_first_light.png",
+      "expected": "PNG",
+      "actual": "WEBP"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.android.deskclock",
+      "path": "res/drawable-xxhdpi/timer_second_dark_unplay.png",
+      "expected": "PNG",
+      "actual": "WEBP"
     },
     {
       "kind": "duplicate_resource",
@@ -798,6 +819,783 @@
       "occurrences": 2
     },
     {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/black_clock_widget.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/black_clock_widget_hour.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/black_clock_widget_minute.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_hour_dark.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_hour_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_hour_night.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_hour_transparent.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_hourshadow_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_mintue_dark.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_mintue_night.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_mintue_white.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_minute_dark.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_minute_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_minute_transparent.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_minuteshadow_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_second.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_second_dark.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_second_transparent.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/card_secondshadow.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/clock.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/clock_black.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/clock_white.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/clock_widget.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/clock_widget_hour.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/clock_widget_hour_shadow.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/clock_widget_minute.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/clock_widget_minute_shadow.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/clock_widget_second.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/clock_widget_second_shadow.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/divider_horizontal_gray_emui_dark.9.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/hour_dark.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/hour_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/hwspinner_list_selector_background_disabled_magic.9.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clo2ck_timer_dial.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_stopw2atch_dial.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_stopwa2tch_dial_minites.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_stopwat3ch_dial_minites.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_stopwatch_dial.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_stopwatch_dial_minites.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_stopwatch_dial_minites_handle.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_timer_dial.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_black.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_hourhand_black.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_hourhand_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_hourhand_light_shadow.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_minutehand_black.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_minutehand_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_minutehand_light_shadow.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_secondhand_black.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_secondhand_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_secondhand_light_shadow.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_worldclock_honor_dial_black.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_clock_worldclock_honor_dial_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_dial_black_dark.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_dial_white_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_mainalarm_hourhand_black.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_mainalarm_hourhand_white.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_mainalarm_minutehand_black.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_mainalarm_minutehand_white.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_mainalarm_second.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_second.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_secondshadow.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_stopwatch_black_dark.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_stopwatch_dark_minutesmall.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_stopwatch_minutesmall.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_stopwatch_minutesmall_dark.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_stopwatch_minutesmall_white.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_stopwatch_white_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_widget_black.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_widget_white.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_worldclock_black_dark.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_worldclock_black_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_worldclock_hourhand_black.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_worldclock_hourhand_white.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_worldclock_minutehand_black.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_worldclock_minutehand_white.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_worldclock_white_dark.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/img_worldclock_white_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/list_divider.9.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/list_pressed_emui.9.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/list_section_divider_emui.9.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/list_section_divider_emui_dark.9.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/list_time.9.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/listitem_default_divider_emui.9.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/mark.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/miniview_bg.9.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/minute_dark.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/minute_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/quick_dial.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/second.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/second_shadow.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/second_timer_dark.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/second_timer_light.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/time_circle.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/timer_first_dark.png",
+      "expected": "PNG",
+      "actual": "WEBP"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/timer_first_light.png",
+      "expected": "PNG",
+      "actual": "WEBP"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/timer_pick_colon.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/timer_second_dark_unplay.png",
+      "expected": "PNG",
+      "actual": "WEBP"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/timer_second_light_unplay.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/widget_hour_black.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/widget_hour_transparent.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/widget_hour_white.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/widget_hourshadow.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/widget_minute_black.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/widget_minute_transparent.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/widget_minute_white.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/widget_minuteshadow.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/widget_second.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/widget_second_dark.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.deskclock",
+      "path": "res/drawable-xxhdpi/widget_secondshadow.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
       "kind": "duplicate_resource",
       "module": "com.hihonor.deskclock",
       "path": "theme.xml",
@@ -1232,6 +2030,20 @@
       "type": "color",
       "name": "share_image_bottom_color",
       "occurrences": 2
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.ouc",
+      "path": "res/drawable-xxhdpi/circle_back.jpg",
+      "expected": "JPEG",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.hihonor.ouc",
+      "path": "res/drawable-xxhdpi/circle_back_breath_effect.jpg",
+      "expected": "JPEG",
+      "actual": "PNG"
     },
     {
       "kind": "duplicate_resource",
@@ -1676,6 +2488,27 @@
       "occurrences": 2
     },
     {
+      "kind": "image_format_mismatch",
+      "module": "com.huawei.deskclock",
+      "path": "res/drawable-xxhdpi/timer_first_dark.png",
+      "expected": "PNG",
+      "actual": "WEBP"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.huawei.deskclock",
+      "path": "res/drawable-xxhdpi/timer_first_light.png",
+      "expected": "PNG",
+      "actual": "WEBP"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.huawei.deskclock",
+      "path": "res/drawable-xxhdpi/timer_second_dark_unplay.png",
+      "expected": "PNG",
+      "actual": "WEBP"
+    },
+    {
       "kind": "duplicate_resource",
       "module": "com.huawei.filemanager",
       "path": "theme.xml",
@@ -1958,6 +2791,69 @@
       "module": "com.huawei.systemmanager",
       "path": "framework-res-hwext/theme.xml",
       "message": "Comment not terminated, line 71, column 1 (<string>, line 71)"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.tencent.mm",
+      "path": "res/drawable-xxhdpi/bv1.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.tencent.mm",
+      "path": "res/drawable-xxhdpi/byu.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.tencent.mm",
+      "path": "res/drawable-xxhdpi/c2c_hongbao_icon_cn.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.tencent.mm",
+      "path": "res/drawable-xxhdpi/c2c_hongbao_icon_hk.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.tencent.mm",
+      "path": "res/drawable-xxhdpi/c4d.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.tencent.mm",
+      "path": "res/drawable-xxhdpi/cao.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.tencent.mm",
+      "path": "res/drawable-xxhdpi/cap.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.tencent.mm",
+      "path": "res/drawable-xxhdpi/redenvelope_handled_hk.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
+    },
+    {
+      "kind": "image_format_mismatch",
+      "module": "com.tencent.mm",
+      "path": "res/drawable-xxhdpi/systemmessages_hongbaoicon.webp",
+      "expected": "WEBP",
+      "actual": "PNG"
     },
     {
       "kind": "duplicate_resource",

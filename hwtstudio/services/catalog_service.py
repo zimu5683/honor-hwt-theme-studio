@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from ..catalog import load_catalog
+from ..catalog import (
+    load_catalog,
+    save_catalog,
+    save_source_compatibility_report,
+    scan_theme,
+)
 from ..models import ThemeCatalog
 from ..paths import bundled_catalog, data_dir, default_source_theme
-from ..catalog import save_catalog, scan_theme
 
 
 def load_preferred_catalog() -> tuple[ThemeCatalog, str]:
@@ -30,4 +34,6 @@ def load_preferred_catalog() -> tuple[ThemeCatalog, str]:
 
 
 def save_user_catalog(catalog: ThemeCatalog) -> None:
-    save_catalog(catalog, data_dir() / "catalog_daxue.json")
+    root = data_dir()
+    save_catalog(catalog, root / "catalog_daxue.json")
+    save_source_compatibility_report(catalog, root / "source_compatibility.report.json")

@@ -424,17 +424,87 @@ def scan_theme(path: Path) -> ThemeCatalog:
     )
 
 
-def save_catalog(catalog: ThemeCatalog, path: Path) -> None:
+SOURCE_COMPATIBILITY_WARNING_KINDS = frozenset({
+    "duplicate_resource",
+    "image_format_mismatch",
+    "nonstandard_xml",
+})
+
+
+def source_compatibility_report(catalog: ThemeCatalog) -> dict:
+    """Summarize recoverable source issues without treating them as export failures."""
+    warning_items = [dict(item) for item in catalog.warnings if isinstance(item, dict)]
+    by_kind = Counter()
+    compatibility_items: list[dict] = []
+    scan_integrity_items: list[dict] = []
+    for item in warning_items:
+        raw_kind = item.get("kind")
+        kind = raw_kind if isinstance(raw_kind, str) and raw_kind else "unknown"
+        by_kind[kind] += 1
+        if kind in SOURCE_COMPATIBILITY_WARNING_KINDS:
+            compatibility_items.append(item)
+        else:
+            scan_integrity_items.append(item)
+
+    def stat(name: str) -> int:
+        value = catalog.stats.get(name, 0)
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+    return {
+        "schema": 1,
+        "source_path": catalog.source_path,
+        "source_sha256": catalog.source_sha256,
+        "generated_at": catalog.generated_at,
+        "summary": {
+            "modules": stat("modules"),
+            "resource_slots": stat("resource_slots"),
+            "total_warnings": len(warning_items),
+            "compatibility_warnings": len(compatibility_items),
+            "scan_integrity_warnings": len(scan_integrity_items),
+            "by_kind": dict(sorted(by_kind.items())),
+        },
+        "compatibility": {
+            "warning_kinds": sorted(SOURCE_COMPATIBILITY_WARNING_KINDS),
+            "items": compatibility_items,
+        },
+        "scan_integrity": {
+            "items": scan_integrity_items,
+        },
+        "strict_export_validation": {
+            "performed": False,
+            "note": "此报告只描述源主题的只读扫描结果；最终导出文件仍需单独通过严格验证。",
+        },
+    }
+
+
+def _save_bounded_json(payload: dict, path: Path, *, too_large_message: str) -> None:
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = unique_temp_path(path)
     try:
-        encoded = json.dumps(catalog.to_dict(), ensure_ascii=False, indent=2).encode("utf-8")
+        encoded = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         if len(encoded) > MAX_CATALOG_BYTES:
-            raise ValueError("保存的资源目录文件超过允许的大小限制")
+            raise ValueError(too_large_message)
         temp.write_bytes(encoded)
         os.replace(temp, path)
     finally:
         temp.unlink(missing_ok=True)
+
+
+def save_catalog(catalog: ThemeCatalog, path: Path) -> None:
+    _save_bounded_json(
+        catalog.to_dict(),
+        path,
+        too_large_message="保存的资源目录文件超过允许的大小限制",
+    )
+
+
+def save_source_compatibility_report(catalog: ThemeCatalog, path: Path) -> None:
+    _save_bounded_json(
+        source_compatibility_report(catalog),
+        path,
+        too_large_message="源主题兼容性报告超过允许的大小限制",
+    )
 
 
 def _validate_catalog_resource(resource: dict, index: int) -> None:

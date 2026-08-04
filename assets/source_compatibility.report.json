@@ -1,0 +1,5072 @@
+{
+  "schema": 1,
+  "source_path": "D:\\HONOR Share\\Honor Share\\30039574_大雪.hwt",
+  "source_sha256": "8b74402cf233faa5693ba63d9679653fd562a9671aae0cafc55e5fd0278f17d8",
+  "generated_at": "2026-08-04T10:34:05.054425+00:00",
+  "summary": {
+    "modules": 77,
+    "resource_slots": 12904,
+    "total_warnings": 648,
+    "compatibility_warnings": 648,
+    "scan_integrity_warnings": 0,
+    "by_kind": {
+      "duplicate_resource": 511,
+      "image_format_mismatch": 128,
+      "nonstandard_xml": 9
+    }
+  },
+  "compatibility": {
+    "warning_kinds": [
+      "duplicate_resource",
+      "image_format_mismatch",
+      "nonstandard_xml"
+    ],
+    "items": [
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "hwsubtab_magic_color_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "hwsubtab_magic_subtab_text_on",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "hwsubtab_magic_subtab_text_off",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_primary",
+        "occurrences": 4
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_subheader_divider",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_divider_horizontal",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_accent",
+        "occurrences": 3
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_control_highlight",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon",
+        "occurrences": 3
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_normal",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_pressed",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_connected",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_bg_normal",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_bg_pressed",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_shadow_start",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_shadow_end",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon_end",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon_start",
+        "occurrences": 2
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.android.deskclock",
+        "path": "res/drawable-xxhdpi/timer_first_dark.png",
+        "expected": "PNG",
+        "actual": "WEBP"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.android.deskclock",
+        "path": "res/drawable-xxhdpi/timer_first_light.png",
+        "expected": "PNG",
+        "actual": "WEBP"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.android.deskclock",
+        "path": "res/drawable-xxhdpi/timer_second_dark_unplay.png",
+        "expected": "PNG",
+        "actual": "WEBP"
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_primary_text_white",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_primary_text_light_dark",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_shadow_end",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_shadow_start",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "translateColor",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "hnswitch_thumb_outline",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_fg_inverse",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon_end",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon_start",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "color_gray_one",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_gray_5",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "duoqu_bottom_menu_text_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_functional_blue",
+        "occurrences": 3
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.packageinstaller",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_color_subheader_divider",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.packageinstaller",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_color_divider_horizontal",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.packageinstaller",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_color_subheader_divider_dark",
+        "occurrences": 2
+      },
+      {
+        "kind": "nonstandard_xml",
+        "module": "com.android.settings",
+        "path": "theme.xml",
+        "message": "ParsePI: PI xmlversion space expected, line 1, column 13 (<string>, line 1)"
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.android.soundrecorder",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_color_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.android.instantshare",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "layout_main_divid_line_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.android.instantshare",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_list_separator_default",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.android.internal.app",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "备用",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.android.thememanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_gray_10",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.android.thememanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_black",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.android.thememanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "account_card_view_text",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.android.thememanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_rating_bar_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.android.thememanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_secondary",
+        "occurrences": 3
+      },
+      {
+        "kind": "nonstandard_xml",
+        "module": "com.hihonor.android.thememanager",
+        "path": "theme.xml",
+        "message": "ParsePI: PI xmlversion space expected, line 1, column 13 (<string>, line 1)"
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.android.totemweather",
+        "path": "framework-res-hnext/theme.xml",
+        "type": "color",
+        "name": "备用",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.android.totemweather",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "备用",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.android.totemweather",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "备用",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calculator",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "bt_stroke_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calculator",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "button_start_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calculator",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "button_stroke_end_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calculator",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "button_stroke_start_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calculator",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "science_normal",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calculator",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "science_operator_normal",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calculator",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "pop_menu_switch_track_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "month_view_date_area_background",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "select_calendar_empty_title_item",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "calendar_grid_line_inner_horizontal_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "calendar_grid_line_inner_vertical_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "edit_event_separator_area",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "agenda_list_item_divider",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_gray_1",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "transparent",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "today_color_white",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_accent",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_shadow_end",
+        "occurrences": 3
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_shadow_start",
+        "occurrences": 3
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_bg_pressed",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_bg_normal",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon_end",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon_start",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "app_theme_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "color_month_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "sub_tab_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "widget_address_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "hwsubtab_magic_color_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "hwsubtab_magic_subtab_text_on",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "hwsubtab_magic_subtab_text_off",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_primary",
+        "occurrences": 4
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_subheader_divider",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_divider_horizontal",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_accent",
+        "occurrences": 3
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_control_highlight",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon",
+        "occurrences": 3
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_normal",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_pressed",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_connected",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_bg_normal",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_bg_pressed",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_shadow_start",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_shadow_end",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon_end",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon_start",
+        "occurrences": 2
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/black_clock_widget.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/black_clock_widget_hour.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/black_clock_widget_minute.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_hour_dark.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_hour_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_hour_night.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_hour_transparent.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_hourshadow_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_mintue_dark.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_mintue_night.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_mintue_white.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_minute_dark.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_minute_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_minute_transparent.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_minuteshadow_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_second.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_second_dark.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_second_transparent.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/card_secondshadow.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/clock.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/clock_black.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/clock_white.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/clock_widget.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/clock_widget_hour.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/clock_widget_hour_shadow.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/clock_widget_minute.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/clock_widget_minute_shadow.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/clock_widget_second.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/clock_widget_second_shadow.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/divider_horizontal_gray_emui_dark.9.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/hour_dark.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/hour_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/hwspinner_list_selector_background_disabled_magic.9.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clo2ck_timer_dial.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_stopw2atch_dial.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_stopwa2tch_dial_minites.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_stopwat3ch_dial_minites.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_stopwatch_dial.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_stopwatch_dial_minites.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_stopwatch_dial_minites_handle.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_timer_dial.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_black.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_hourhand_black.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_hourhand_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_hourhand_light_shadow.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_minutehand_black.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_minutehand_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_minutehand_light_shadow.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_secondhand_black.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_secondhand_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_worldclock_dial_secondhand_light_shadow.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_worldclock_honor_dial_black.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_clock_worldclock_honor_dial_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_dial_black_dark.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_dial_white_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_mainalarm_hourhand_black.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_mainalarm_hourhand_white.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_mainalarm_minutehand_black.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_mainalarm_minutehand_white.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_mainalarm_second.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_second.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_secondshadow.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_stopwatch_black_dark.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_stopwatch_dark_minutesmall.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_stopwatch_minutesmall.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_stopwatch_minutesmall_dark.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_stopwatch_minutesmall_white.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_stopwatch_white_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_widget_black.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_widget_white.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_worldclock_black_dark.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_worldclock_black_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_worldclock_hourhand_black.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_worldclock_hourhand_white.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_worldclock_minutehand_black.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_worldclock_minutehand_white.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_worldclock_white_dark.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/img_worldclock_white_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/list_divider.9.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/list_pressed_emui.9.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/list_section_divider_emui.9.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/list_section_divider_emui_dark.9.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/list_time.9.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/listitem_default_divider_emui.9.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/mark.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/miniview_bg.9.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/minute_dark.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/minute_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/quick_dial.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/second.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/second_shadow.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/second_timer_dark.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/second_timer_light.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/time_circle.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/timer_first_dark.png",
+        "expected": "PNG",
+        "actual": "WEBP"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/timer_first_light.png",
+        "expected": "PNG",
+        "actual": "WEBP"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/timer_pick_colon.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/timer_second_dark_unplay.png",
+        "expected": "PNG",
+        "actual": "WEBP"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/timer_second_light_unplay.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/widget_hour_black.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/widget_hour_transparent.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/widget_hour_white.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/widget_hourshadow.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/widget_minute_black.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/widget_minute_transparent.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/widget_minute_white.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/widget_minuteshadow.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/widget_second.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/widget_second_dark.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.deskclock",
+        "path": "res/drawable-xxhdpi/widget_secondshadow.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_activated",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_primary_text_white",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_primary_text_light_dark",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_shadow_end",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_shadow_start",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "translateColor",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "hnswitch_thumb_outline",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_fg_inverse",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon_end",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.deskclock",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon_start",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.devicemanager",
+        "path": "framework-res-hnext/theme.xml",
+        "type": "color",
+        "name": "magic_accent",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.devicemanager",
+        "path": "framework-res-hnext/theme.xml",
+        "type": "color",
+        "name": "magic_color_1",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.devicemanager",
+        "path": "framework-res-hnext/theme.xml",
+        "type": "color",
+        "name": "magic_color_2",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.devicemanager",
+        "path": "framework-res-hnext/theme.xml",
+        "type": "color",
+        "name": "magic_primary_inverse",
+        "occurrences": 2
+      },
+      {
+        "kind": "nonstandard_xml",
+        "module": "com.hihonor.devicemanager",
+        "path": "framework-res-hnext/theme.xml",
+        "message": "Comment not terminated, line 72, column 1 (<string>, line 72)"
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.devicemanager",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_accent",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.devicemanager",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_primary_inverse",
+        "occurrences": 2
+      },
+      {
+        "kind": "nonstandard_xml",
+        "module": "com.hihonor.devicemanager",
+        "path": "framework-res-hwext/theme.xml",
+        "message": "Comment not terminated, line 70, column 1 (<string>, line 70)"
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.devicemanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.filemanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_gray_8",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.filemanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_text_secondary",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.filemanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_list_divider",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.filemanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_gray_4",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.filemanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "gray_white",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.filemanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "diver_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.filemanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui9_list_seletor_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.gameassistant",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "备用",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.hidisk",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_gray_8",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.hidisk",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_gray_4",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.hidisk",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "gray_white",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.hidisk",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "diver_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.hidisk",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui9_list_seletor_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "color_gray_one",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_gray_5",
+        "occurrences": 3
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "duoqu_bottom_menu_text_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_navigationbar_bg_blur",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_black_color_alpha_5",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_gray_5_adaptation_nova",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_bg_normal",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_accent",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_functional_blue",
+        "occurrences": 4
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_primary",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_black",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_fg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "rcs_talk_button_magic_white",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "rcs_talk_button_magic_color_gray_4",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon_start",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_shadow_start",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_shadow_end",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_bg_pressed",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_fab_icon",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.notepad",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_primary",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.notepad",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "hwbottomnavigationview_blur_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.notepad",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "share_image_bottom_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.ouc",
+        "path": "res/drawable-xxhdpi/circle_back.jpg",
+        "expected": "JPEG",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.hihonor.ouc",
+        "path": "res/drawable-xxhdpi/circle_back_breath_effect.jpg",
+        "expected": "JPEG",
+        "actual": "PNG"
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.ouc",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "hwoucDividerColor",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.ouc",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "main_page_version_name_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.ouc",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "warn_text_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.ouc",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "circle_line_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.ouc",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_primary_text",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.photos",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "default_background",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.photos",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "gray_title_groundcolor",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.photos",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "default_background_gray",
+        "occurrences": 2
+      },
+      {
+        "kind": "nonstandard_xml",
+        "module": "com.hihonor.smarthome",
+        "path": "theme.xml",
+        "message": "Opening and ending tag mismatch: resources line 2 and resoures, line 24, column 12 (<string>, line 24)"
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.soundrecorder",
+        "path": "framework-res-hnext/theme.xml",
+        "type": "color",
+        "name": "magic_color_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.soundrecorder",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_color_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.hihonor.systemmanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.hwouc",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "hwoucDividerColor",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.hwouc",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "main_page_version_name_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.hwouc",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "warn_text_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.hwouc",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "circle_line_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.hwouc",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_primary_text",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.instantshare",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "layout_main_divid_line_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.instantshare",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_list_separator_default",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.internal.app",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "备用",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.thememanager",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_color_gray_10",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.thememanager",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_black",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.thememanager",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "account_card_view_text",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.thememanager",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_rating_bar_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.thememanager",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_color_secondary",
+        "occurrences": 3
+      },
+      {
+        "kind": "nonstandard_xml",
+        "module": "com.huawei.android.thememanager",
+        "path": "framework-res-hwext/theme.xml",
+        "message": "ParsePI: PI xmlversion space expected, line 1, column 13 (<string>, line 1)"
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.thememanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_color_gray_10",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.thememanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_black",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.thememanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "account_card_view_text",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.thememanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_rating_bar_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.thememanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_color_secondary",
+        "occurrences": 3
+      },
+      {
+        "kind": "nonstandard_xml",
+        "module": "com.huawei.android.thememanager",
+        "path": "theme.xml",
+        "message": "Blank needed here, line 1, column 20 (<string>, line 1)"
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.totemweather",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "备用",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.android.totemweather",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "备用",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.browser",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_functional_blue",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.browser",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_color_divider_horizontal",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.browser",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_switch_bg_off",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.browser",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_text_primary",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.browser",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_primary",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "month_view_date_area_background",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "select_calendar_empty_title_item",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "calendar_grid_line_inner_horizontal_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "calendar_grid_line_inner_vertical_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "edit_event_separator_area",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "agenda_list_item_divider",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_color_gray_1",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "transparent",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_fab_shadow_end",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_fab_shadow_start",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "app_theme_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "color_month_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "sub_tab_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.calendar",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "widget_address_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_primary",
+        "occurrences": 3
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_accent",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.contacts",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_fab_icon",
+        "occurrences": 2
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.huawei.deskclock",
+        "path": "res/drawable-xxhdpi/timer_first_dark.png",
+        "expected": "PNG",
+        "actual": "WEBP"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.huawei.deskclock",
+        "path": "res/drawable-xxhdpi/timer_first_light.png",
+        "expected": "PNG",
+        "actual": "WEBP"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.huawei.deskclock",
+        "path": "res/drawable-xxhdpi/timer_second_dark_unplay.png",
+        "expected": "PNG",
+        "actual": "WEBP"
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.filemanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_color_gray_8",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.filemanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_color_gray_4",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.filemanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "gray_white",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.filemanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "diver_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.filemanager",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui9_list_seletor_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.gameassistant",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "备用",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.hidisk",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_color_gray_8",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.hidisk",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_color_gray_4",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.hidisk",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "gray_white",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.hidisk",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "diver_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.hidisk",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui9_list_seletor_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.meetime",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_gll_disable",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.meetime",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_task_jhh_background_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.meetime",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_primary",
+        "occurrences": 4
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.meetime",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_accent",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.meetime",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_fab_icon",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.meetime",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_color_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "color_gray_one",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_gray_5",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "duoqu_bottom_menu_text_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.mms",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_functional_blue",
+        "occurrences": 3
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.notepad",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "notepad_main_edit_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.notepad",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "card_main_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.notepad",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "text_todo_done",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.notepad",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "actionbar_theme_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.notepad",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "recommendatory_view_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.notepad",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "share_image_bottom_color",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.photos",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "default_background",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.photos",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "gray_title_groundcolor",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.photos",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_color_subbg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.photos",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "default_background_gray",
+        "occurrences": 2
+      },
+      {
+        "kind": "nonstandard_xml",
+        "module": "com.huawei.smarthome",
+        "path": "theme.xml",
+        "message": "Opening and ending tag mismatch: resources line 2 and resoures, line 24, column 12 (<string>, line 24)"
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.soundrecorder",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_color_bg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.systemmanager",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_accent",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.huawei.systemmanager",
+        "path": "framework-res-hwext/theme.xml",
+        "type": "color",
+        "name": "emui_primary_inverse",
+        "occurrences": 2
+      },
+      {
+        "kind": "nonstandard_xml",
+        "module": "com.huawei.systemmanager",
+        "path": "framework-res-hwext/theme.xml",
+        "message": "Comment not terminated, line 71, column 1 (<string>, line 71)"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.tencent.mm",
+        "path": "res/drawable-xxhdpi/bv1.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.tencent.mm",
+        "path": "res/drawable-xxhdpi/byu.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.tencent.mm",
+        "path": "res/drawable-xxhdpi/c2c_hongbao_icon_cn.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.tencent.mm",
+        "path": "res/drawable-xxhdpi/c2c_hongbao_icon_hk.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.tencent.mm",
+        "path": "res/drawable-xxhdpi/c4d.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.tencent.mm",
+        "path": "res/drawable-xxhdpi/cao.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.tencent.mm",
+        "path": "res/drawable-xxhdpi/cap.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.tencent.mm",
+        "path": "res/drawable-xxhdpi/redenvelope_handled_hk.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "image_format_mismatch",
+        "module": "com.tencent.mm",
+        "path": "res/drawable-xxhdpi/systemmessages_hongbaoicon.webp",
+        "expected": "WEBP",
+        "actual": "PNG"
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "b",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "c",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "d",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "e",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "f",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_0_Alpha_0_0_3",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_0_Alpha_0_0_5",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_0_Alpha_0_1",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_0_Alpha_0_1_3",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_0_Alpha_0_1_5",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_0_Alpha_0_2",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_0_Alpha_0_3",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_0_Alpha_0_5",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_0_Alpha_0_7",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_0_Alpha_0_9",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_100",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_30_Alpha_0_9",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_50",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_70",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_85",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_93",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_94",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_95",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_97",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_97_Alpha_0_9",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_98",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_BG_30",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_BG_5A",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_BG_95",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "BW_BG_98",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Blue_120",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Blue_170",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Blue_80",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Blue_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Blue_BG_110",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Blue_BG_130",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Blue_BG_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "agq",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "i",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Brand_120",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Brand_170",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Brand_80",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Brand_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Brand_BG_110",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Brand_BG_130",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Brand_BG_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "FG_0",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "FG_0_5",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "FG_0_5_CARE",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "FG_0_CARE",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "FG_1",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "FG_1_CARE",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "FG_2",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "FG_2_CARE",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "FG_3",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "FG_4",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a2",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Green_100",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Green_120",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Green_170",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Green_80",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Green_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Green_BG_100",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Green_BG_110",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Green_BG_130",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Green_BG_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a3",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Indigo_100",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Indigo_120",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Indigo_170",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Indigo_80",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Indigo_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Indigo_BG_100",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Indigo_BG_110",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Indigo_BG_130",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Indigo_BG_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a4",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "LightGreen_100",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "LightGreen_120",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "LightGreen_170",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "LightGreen_80",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "LightGreen_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "LightGreen_BG_100",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "LightGreen_BG_110",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "LightGreen_BG_130",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "LightGreen_BG_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a5",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Link_100",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Link_120",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Link_170",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Link_80",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Link_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a7",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Orange_100",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Orange_120",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Orange_170",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Orange_80",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Orange_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Orange_BG_100",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Orange_BG_110",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Orange_BG_130",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Orange_BG_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a8",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Purple_100",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Purple_120",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Purple_170",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Purple_80",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Purple_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Purple_BG_100",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Purple_BG_110",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Purple_BG_130",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Purple_BG_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Red_120",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Red_170",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Red_190",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Red_80",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Red_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Red_BG_110",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Red_BG_130",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Red_BG_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "ao",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Yellow_100",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Yellow_120",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Yellow_170",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Yellow_80",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Yellow_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Yellow_BG_100",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Yellow_BG_110",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Yellow_BG_130",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "Yellow_BG_90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "by",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "c0",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "cq",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "cz",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "de",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "dg",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "dh",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "dz",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "e0",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "e1",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "e4",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "e5",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "e8",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "e_",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "eb",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "ev",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "f5",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "fj",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "fm",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "fn",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "fo",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "g9",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "gi",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "gj",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "hm",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "ht",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "hu",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "hv",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "i0",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "i5",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "i6",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "i7",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "ia",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "ib",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "ie",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "ik",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "ir",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "it",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "iu",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "iw",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "ix",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "iy",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "iz",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "j4",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "jf",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "km",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "ks",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "lr",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "ls",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "lv",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "lw",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "mc",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "mt",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "mu",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "mv",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "mw",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "mx",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "my",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "mz",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "n6",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "n7",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "oi",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "oj",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "p_",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "pk",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "pl",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "pm",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "pn",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "q8",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "qa",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "qb",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "qd",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "qi",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "qk",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "qn",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "qu",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "ri",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "su",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "t3",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "uh",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "ut",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "vv",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "vw",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "wi",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "wj",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "y4",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "zf",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "zh",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a0s",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a0t",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a18",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a1j",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a1k",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a1l",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a1m",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a1o",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a1p",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a1q",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a1r",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a1s",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a1t",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a36",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a37",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a38",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a3j",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a3k",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a45",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a47",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a4n",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a4o",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a4p",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a54",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a57",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a58",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a59",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a5_",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a5a",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a5d",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a5e",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a5f",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a5g",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a5h",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a5i",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a6r",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a6s",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a72",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a90",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a_9",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a_b",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a_c",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a_d",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "a_e",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "aaw",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "aay",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "com.tencent.mm",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "ab9",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "framework-res-hnext",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_functional_blue",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "framework-res-hnext",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_color_divider_horizontal",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "framework-res-hnext",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_switch_bg_off",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "framework-res-hnext",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "magic_text_primary",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "framework-res-hwext",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_functional_blue",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "framework-res-hwext",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_color_divider_horizontal",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "framework-res-hwext",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_switch_bg_off",
+        "occurrences": 2
+      },
+      {
+        "kind": "duplicate_resource",
+        "module": "framework-res-hwext",
+        "path": "theme.xml",
+        "type": "color",
+        "name": "emui_text_primary",
+        "occurrences": 2
+      }
+    ]
+  },
+  "scan_integrity": {
+    "items": []
+  },
+  "strict_export_validation": {
+    "performed": false,
+    "note": "此报告只描述源主题的只读扫描结果；最终导出文件仍需单独通过严格验证。"
+  }
+}

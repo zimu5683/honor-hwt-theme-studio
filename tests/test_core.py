@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import stat
 import tempfile
 import unittest
@@ -12,7 +13,12 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 from PIL import Image
 
 from hwtstudio.blank import DIRECTORY_ENTRIES, IMAGE_LAYOUT, create_blank_theme
-from hwtstudio.catalog import load_catalog, scan_theme
+from hwtstudio.catalog import (
+    load_catalog,
+    save_source_compatibility_report,
+    scan_theme,
+    source_compatibility_report,
+)
 from hwtstudio.exporter import export_theme
 from hwtstudio.imageops import MAX_IMAGE_DIMENSION, load_image, render_image
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
@@ -35,6 +41,28 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(self.catalog.stats["icon_slots"], 1688)
         self.assertEqual(self.catalog.stats["wallpaper_slots"], 2)
         self.assertEqual(self.catalog.stats["preview_slots"], 7)
+
+    def test_source_compatibility_report_separates_scan_warnings_from_export_validation(self):
+        report = source_compatibility_report(self.catalog)
+        summary = report["summary"]
+        compatibility_count = sum(
+            1 for item in self.catalog.warnings
+            if item.get("kind") in report["compatibility"]["warning_kinds"]
+        )
+
+        self.assertEqual(summary["compatibility_warnings"], compatibility_count)
+        self.assertEqual(
+            summary["total_warnings"],
+            summary["compatibility_warnings"] + summary["scan_integrity_warnings"],
+        )
+        self.assertFalse(report["strict_export_validation"]["performed"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "source_compatibility.report.json"
+            save_source_compatibility_report(self.catalog, report_path)
+            saved = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["summary"], summary)
+            self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
 
     def test_blank_theme_minimal_and_valid(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -140,6 +168,11 @@ class CoreTests(unittest.TestCase):
             warning_kinds = {item["kind"] for item in catalog.warnings}
             self.assertIn("unsafe_path", warning_kinds)
             self.assertIn("unsafe_nested_path", warning_kinds)
+            report = source_compatibility_report(catalog)
+            self.assertTrue(any(
+                item["kind"] == "unsafe_path"
+                for item in report["scan_integrity"]["items"]
+            ))
 
     def test_scan_blocks_dangerous_nested_entries_before_reading(self):
         with tempfile.TemporaryDirectory() as directory:

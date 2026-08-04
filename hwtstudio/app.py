@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
 import qtawesome as qta
 
 from . import __version__
-from .catalog import scan_theme
+from .catalog import scan_theme, source_compatibility_report
 from .exporter import default_export_name, export_theme, preflight_export
 from .imageops import render_image, render_placeholder
 from .models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
@@ -151,6 +151,7 @@ class MainWindow(QMainWindow):
         self._bind_project()
         self._update_phone_ui(cached=bool(self.phone_profile))
         self.log("已加载大雪资源目录。原始主题仅用于只读分析，不会被修改。")
+        self._log_source_compatibility_summary(self.catalog)
         if self._catalog_load_warning:
             self.log(self._catalog_load_warning)
 
@@ -202,6 +203,9 @@ class MainWindow(QMainWindow):
         rescan_action = QAction("重新扫描资源目录", self)
         rescan_action.triggered.connect(self.rescan_source)
         advanced.addAction(rescan_action)
+        report_action = QAction("查看源主题兼容性报告", self)
+        report_action.triggered.connect(self.show_source_compatibility_report)
+        advanced.addAction(report_action)
         log_action = QAction("查看运行日志", self)
         log_action.triggered.connect(self.show_log_dialog)
         advanced.addAction(log_action)
@@ -1436,6 +1440,7 @@ class MainWindow(QMainWindow):
             save_user_catalog(catalog)
             self.bind_catalog(catalog)
             self.log(f"扫描完成：{filename}，资源槽位 {len(catalog.resources)}。")
+            self._log_source_compatibility_summary(catalog)
         except Exception as exc:
             self._show_operation_error(
                 "扫描失败",
@@ -1443,6 +1448,33 @@ class MainWindow(QMainWindow):
                 "请确认选中的 HWT 文件完整且未被占用后重试。",
                 exc,
             )
+
+    def _log_source_compatibility_summary(self, catalog: ThemeCatalog) -> None:
+        summary = source_compatibility_report(catalog)["summary"]
+        self.log(
+            "源主题兼容性报告："
+            f"兼容性警告 {summary['compatibility_warnings']} 条，"
+            f"扫描完整性警告 {summary['scan_integrity_warnings']} 条；"
+            "这些警告不会直接替代导出文件的严格验证。"
+        )
+
+    def show_source_compatibility_report(self):
+        report = source_compatibility_report(self.catalog)
+        summary = report["summary"]
+        lines = [
+            f"源主题：{report['source_path'] or '未记录'}",
+            f"模块：{summary['modules']}    资源槽位：{summary['resource_slots']}",
+            f"兼容性警告：{summary['compatibility_warnings']}",
+            f"扫描完整性警告：{summary['scan_integrity_warnings']}",
+            "",
+            "警告分类：",
+        ]
+        lines.extend(
+            f"{kind}：{count}"
+            for kind, count in list(summary["by_kind"].items())[:12]
+        )
+        lines.extend(("", "严格导出验证：未在此报告中执行；导出时会单独验证生成的 HWT。"))
+        QMessageBox.information(self, "源主题兼容性报告", "\n".join(lines))
 
     def _confirm_discard(self) -> bool:
         if not self.project.dirty:
