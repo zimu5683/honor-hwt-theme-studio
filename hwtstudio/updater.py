@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import __version__
-from .paths import data_dir
+from .paths import data_dir, ensure_no_symlink_parents
 
 
 DEFAULT_REPOSITORY = "zimu5683/honor-hwt-theme-studio"
@@ -293,7 +293,9 @@ def download_asset(
         raise ValueError("更新包缓存目录不能是符号链接")
     if target_dir.exists() and not target_dir.is_dir():
         raise ValueError("更新包缓存目录不是目录")
+    ensure_no_symlink_parents(target_dir / ".hwtstudio-path-check", "更新包缓存目录的父路径不能包含符号链接")
     target_dir.mkdir(parents=True, exist_ok=True)
+    ensure_no_symlink_parents(target_dir / ".hwtstudio-path-check", "更新包缓存目录的父路径不能包含符号链接")
     if target_dir.is_symlink() or not target_dir.is_dir():
         raise ValueError("更新包缓存目录不是普通目录")
     target = target_dir / safe_asset_name(asset.name)

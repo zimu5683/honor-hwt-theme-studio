@@ -282,6 +282,37 @@ class UpdaterTests(unittest.TestCase):
             urlopen.assert_not_called()
             self.assertEqual(list(outside.iterdir()), [])
 
+    def test_download_rejects_symlinked_cache_parent(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        payload = b"cache parent target"
+        checksum = hashlib.sha256(payload).hexdigest()
+        release = release_from_payload(
+            {
+                "version": "v0.2.0",
+                "assets": [{
+                    "name": "HwtThemeStudio-v0.2.0-win64.exe",
+                    "url": "https://example.test/studio.exe",
+                    "sha256": checksum,
+                }],
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside"
+            outside.mkdir()
+            link = root / "linked-root"
+            try:
+                os.symlink(outside, link, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
+            cache = link / "updates"
+            with patch("hwtstudio.updater.urllib.request.urlopen") as urlopen:
+                with self.assertRaisesRegex(ValueError, "缓存目录的父路径.*符号链接"):
+                    download_asset(release, download_dir=cache)
+            urlopen.assert_not_called()
+            self.assertFalse((outside / "updates").exists())
+
     def test_launch_update_rejects_file_changed_after_download(self):
         payload = b"verified update payload"
         with tempfile.TemporaryDirectory() as directory:
