@@ -13,6 +13,7 @@ from zipfile import BadZipFile, ZipFile
 from PIL import Image
 
 from .archive_safety import (
+    archive_data_overlaps,
     archive_path_overlaps,
     compression_ratio,
     duplicate_names,
@@ -85,7 +86,13 @@ def _is_image_payload(path: str, raw: bytes) -> bool:
     return Path(path).suffix.lower() in IMAGE_EXTENSIONS or detect_format(raw) in IMAGE_FORMATS
 
 
-def _archive_blocked_paths(infos, warnings: list[dict], *, module: str | None = None) -> set[str]:
+def _archive_blocked_paths(
+    infos,
+    warnings: list[dict],
+    *,
+    module: str | None = None,
+    fileobj=None,
+) -> set[str]:
     blocked: set[str] = set()
     prefix = "nested_" if module is not None else ""
 
@@ -112,6 +119,17 @@ def _archive_blocked_paths(infos, warnings: list[dict], *, module: str | None = 
             if normalize_archive_path(info.filename.rstrip("/")) in {parent, path}
         )
         item = {"kind": f"{prefix}path_overlap", "path": path, "parent": parent}
+        if module is not None:
+            item["module"] = module
+        warnings.append(item)
+
+    for parent, path in archive_data_overlaps(infos, fileobj):
+        blocked.update(
+            info.filename
+            for info in infos
+            if info.filename in {parent, path}
+        )
+        item = {"kind": f"{prefix}data_overlap", "path": path, "overlaps": parent}
         if module is not None:
             item["module"] = module
         warnings.append(item)
@@ -255,7 +273,7 @@ def _scan_module(module: str, raw: bytes, warnings: list[dict]) -> tuple[list[Re
             for path in sorted(unsafe_paths):
                 warnings.append({"kind": "unsafe_nested_path", "module": module, "path": path})
             blocked_paths = set(unsafe_paths)
-            blocked_paths.update(_archive_blocked_paths(infos, warnings, module=module))
+            blocked_paths.update(_archive_blocked_paths(infos, warnings, module=module, fileobj=archive.fp))
             try:
                 bad = None if blocked_paths else archive.testzip()
             except (BadZipFile, OSError, RuntimeError, ValueError) as exc:
@@ -367,7 +385,7 @@ def scan_theme(path: Path) -> ThemeCatalog:
         for name in sorted(unsafe_paths):
             warnings.append({"kind": "unsafe_path", "path": name})
         blocked_paths = set(unsafe_paths)
-        blocked_paths.update(_archive_blocked_paths(outer_infos, warnings))
+        blocked_paths.update(_archive_blocked_paths(outer_infos, warnings, fileobj=outer.fp))
         try:
             bad = None if blocked_paths else outer.testzip()
         except (BadZipFile, OSError, RuntimeError, ValueError) as exc:

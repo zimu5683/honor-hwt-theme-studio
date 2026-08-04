@@ -3,8 +3,13 @@ from __future__ import annotations
 import stat
 import struct
 from collections import Counter
+from typing import BinaryIO
 
 from .common import normalize_archive_path
+
+
+_LOCAL_FILE_HEADER = b"PK\x03\x04"
+_LOCAL_FILE_HEADER_SIZE = 30
 
 
 def duplicate_names(infos) -> list[str]:
@@ -45,6 +50,85 @@ def archive_path_overlaps(infos) -> list[tuple[str, str]]:
             if parent in file_paths:
                 overlaps.add((parent, path))
     return sorted(overlaps)
+
+
+def _local_data_start(info, fileobj: BinaryIO | None) -> int | None:
+    """Resolve a member's compressed-data start from its local file header."""
+    header_offset = getattr(info, "header_offset", None)
+    if isinstance(header_offset, bool) or not isinstance(header_offset, int) or header_offset < 0:
+        return None
+
+    if fileobj is not None:
+        position = None
+        try:
+            position = fileobj.tell()
+            fileobj.seek(header_offset)
+            header = fileobj.read(_LOCAL_FILE_HEADER_SIZE)
+            if len(header) == _LOCAL_FILE_HEADER_SIZE and header[:4] == _LOCAL_FILE_HEADER:
+                filename_length, extra_length = struct.unpack_from("<HH", header, 26)
+                return header_offset + _LOCAL_FILE_HEADER_SIZE + filename_length + extra_length
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+        finally:
+            if position is not None:
+                try:
+                    fileobj.seek(position)
+                except (AttributeError, OSError, TypeError, ValueError):
+                    pass
+
+    filename = getattr(info, "filename", None)
+    if not isinstance(filename, str):
+        return None
+    flag_bits = getattr(info, "flag_bits", 0)
+    encoding = "utf-8" if isinstance(flag_bits, int) and flag_bits & 0x800 else "cp437"
+    try:
+        filename_length = len(filename.encode(encoding))
+    except UnicodeEncodeError:
+        filename_length = len(filename.encode("utf-8"))
+    extra = getattr(info, "extra", b"")
+    extra_length = len(extra) if isinstance(extra, (bytes, bytearray)) else 0
+    return header_offset + _LOCAL_FILE_HEADER_SIZE + filename_length + extra_length
+
+
+def archive_data_overlaps(
+    infos,
+    fileobj: BinaryIO | None = None,
+) -> list[tuple[str, str]]:
+    """Return members whose compressed data ranges physically overlap.
+
+    ZIP central-directory records can be crafted to point at the same local
+    file header or to quote another member's data.  Logical path checks do not
+    catch that structure, so resolve the local header before comparing ranges.
+    """
+    spans: list[tuple[int, int, str]] = []
+    for info in infos:
+        compressed_size = getattr(info, "compress_size", None)
+        if (
+            isinstance(compressed_size, bool)
+            or not isinstance(compressed_size, int)
+            or compressed_size <= 0
+        ):
+            continue
+        data_start = _local_data_start(info, fileobj)
+        if data_start is None:
+            continue
+        data_end = data_start + compressed_size
+        if data_end <= data_start:
+            continue
+        filename = getattr(info, "filename", None)
+        if isinstance(filename, str):
+            spans.append((data_start, data_end, filename))
+
+    overlaps: list[tuple[str, str]] = []
+    furthest_end = -1
+    furthest_name = ""
+    for data_start, data_end, filename in sorted(spans, key=lambda item: (item[0], item[1], item[2])):
+        if data_start < furthest_end:
+            overlaps.append((furthest_name, filename))
+        if data_end > furthest_end:
+            furthest_end = data_end
+            furthest_name = filename
+    return overlaps
 
 
 def is_symlink(info) -> bool:

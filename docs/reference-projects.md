@@ -30,5 +30,5 @@
 
 - `Huawei-To-Honor-Theme-Converter`：已将其可复核的图标路径迁移规则落入 `HONOR_PATH_ALIASES`，覆盖 `com.huawei`、`com.hicloud`、天气、时钟和音乐特殊别名；映射后的目标仍经过本项目的重复目标冲突审计，不直接覆盖荣耀原生资源。
 - `localsend/protocol`：已借鉴“元数据先于二进制传输”的阶段划分，加入可选 `transfer_prepare` 能力和 `/api/v1/transfers/{id}/prepare`；本项目保留 Bearer 配对、HWT SHA-256 和旧版 PUT 兼容，不照搬 LocalSend 的设备模型或端口约定。
-- `safezip`：已将 ZIP 文件/目录前缀重叠纳入外层与嵌套归档审计，发现 `icons` 与 `icons/...` 这类有歧义结构时在读取内容前阻断。
+- `safezip`：已将 ZIP 文件/目录前缀重叠和本地压缩数据区间物理重叠纳入外层与嵌套归档审计，发现 `icons` 与 `icons/...` 或多个中心目录条目指向同一数据区间时在读取内容前阻断。
 - `Huawei-Watchface-Extractor-Python` / `magiZ`：源 HWT 扫描现在生成独立兼容性报告，保留可读取资源与原始警告；重复资源、图片扩展名错配、非标准 XML 不再与最终导出严格验证混为一谈。

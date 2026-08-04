@@ -46,6 +46,7 @@ from hwtstudio.services.catalog_service import load_preferred_catalog, save_user
 from hwtstudio.services import catalog_service
 from hwtstudio.services.project_assets import asset_name, collect_project_assets
 from hwtstudio.ui.dialogs import find_named_files
+from hwtstudio.archive_safety import archive_data_overlaps
 from hwtstudio.validation import validate_custom_slot, validate_theme
 from hwtstudio.xmlutil import parse_xml
 
@@ -817,6 +818,42 @@ class ImprovementTests(unittest.TestCase):
                 outer.writestr("com.example", nested_data.getvalue())
             nested_result = validate_theme(nested_only)
         self.assertIn("nested_path_overlap", {item["kind"] for item in nested_result["errors"]})
+
+    def test_validator_rejects_physically_overlapping_zip_data(self):
+        def overlap_archive() -> bytes:
+            raw = BytesIO()
+            with ZipFile(raw, "w", ZIP_DEFLATED) as archive:
+                archive.writestr("first.bin", b"A" * 64)
+                archive.writestr("second.bin", b"A" * 64)
+            payload = bytearray(raw.getvalue())
+            first = payload.find(b"PK\x01\x02")
+            second = payload.find(b"PK\x01\x02", first + 4)
+            self.assertGreaterEqual(first, 0)
+            self.assertGreater(second, first)
+            first_offset = struct.unpack_from("<I", payload, first + 42)[0]
+            struct.pack_into("<I", payload, second + 42, first_offset)
+            return bytes(payload)
+
+        payload = overlap_archive()
+        with ZipFile(BytesIO(payload)) as archive:
+            self.assertEqual(
+                archive_data_overlaps(archive.infolist(), archive.fp),
+                [("first.bin", "second.bin")],
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            outer_path = Path(directory) / "overlap.hwt"
+            outer_path.write_bytes(payload)
+            result = validate_theme(outer_path)
+            self.assertIn("data_overlap", {item["kind"] for item in result["errors"]})
+
+            nested_path = Path(directory) / "nested-overlap.hwt"
+            with ZipFile(nested_path, "w", ZIP_DEFLATED) as outer:
+                outer.writestr("com.example", payload)
+            nested_result = validate_theme(nested_path)
+            self.assertIn("nested_data_overlap", {item["kind"] for item in nested_result["errors"]})
+            catalog = scan_theme(nested_path)
+            self.assertIn("nested_data_overlap", {item["kind"] for item in catalog.warnings})
 
     def test_validator_rejects_oversized_entry_before_decompression(self):
         info = MagicMock()
