@@ -57,6 +57,14 @@ def _same_path(left: Path, right: Path) -> bool:
     return os.path.normcase(str(left.resolve())) == os.path.normcase(str(right.resolve()))
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class _ExportTarget:
     key: tuple[str, ...]
@@ -111,11 +119,7 @@ def _change_signature(
     cache_key = os.path.normcase(str(source.resolve()))
     digest = file_digests.get(cache_key)
     if digest is None:
-        digest_builder = hashlib.sha256()
-        with source.open("rb") as stream:
-            for block in iter(lambda: stream.read(1024 * 1024), b""):
-                digest_builder.update(block)
-        digest = digest_builder.hexdigest()
+        digest = _sha256_file(source)
         file_digests[cache_key] = digest
     return (
         "image",
@@ -329,7 +333,14 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
             if target.change.source_kind == "placeholder":
                 rendered = render_placeholder(target.slot)
             else:
-                rendered = render_image(Path(target.change.source_file), target.slot, target.change)
+                source = Path(target.change.source_file)
+                rendered = render_image(source, target.slot, target.change)
+                try:
+                    current_digest = _sha256_file(source)
+                except OSError as exc:
+                    raise ValueError("图片源文件在导出期间不可用，请重试") from exc
+                if current_digest != target.signature[1]:
+                    raise ValueError("图片源文件在导出期间发生变化，请重试")
             rendered_by_slot[target.slot.id] = rendered
         if target_module == "__root__":
             root_entries[target_path] = rendered
@@ -360,11 +371,7 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
         os.replace(temp, output)
     finally:
         temp.unlink(missing_ok=True)
-    digest_builder = hashlib.sha256()
-    with output.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest_builder.update(block)
-    digest = digest_builder.hexdigest()
+    digest = _sha256_file(output)
     report = {
         "schema": 1,
         "output": str(output),

@@ -32,6 +32,7 @@ from hwtstudio.common import (
     honor_resource_path,
 )
 from hwtstudio.exporter import export_theme, preflight_export, safe_filename
+from hwtstudio.imageops import render_image as render_source_image
 from hwtstudio.locking import InterprocessLockTimeoutError
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
 from hwtstudio.models import ThemeCatalog
@@ -258,6 +259,24 @@ class ImprovementTests(unittest.TestCase):
             with ZipFile(output) as archive:
                 with Image.open(BytesIO(archive.read(slot.path))) as image:
                     self.assertEqual(image.size, (slot.width, slot.height))
+
+    def test_export_rejects_source_mutation_after_preflight(self):
+        slot = next(item for item in self.catalog.resources if item.resource_type == "wallpaper")
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "wallpaper.png"
+            Image.new("RGBA", (slot.width, slot.height), (20, 40, 60, 255)).save(source)
+            project = ThemeProject()
+            project.set_change(ResourceChange(slot_id=slot.id, source_file=str(source)))
+            output = Path(directory) / "mutated.hwt"
+
+            def mutate_then_render(path, target_slot, change):
+                Image.new("RGBA", (slot.width, slot.height), (60, 40, 20, 255)).save(path)
+                return render_source_image(path, target_slot, change)
+
+            with patch("hwtstudio.exporter.render_image", side_effect=mutate_then_render):
+                with self.assertRaisesRegex(ValueError, "源文件在导出期间发生变化"):
+                    export_theme(project, self.catalog, output)
+            self.assertFalse(output.exists())
 
     def test_icon_export_replaces_compatibility_module_without_duplicate(self):
         slot = next(item for item in self.catalog.resources if item.resource_type == "icon")
