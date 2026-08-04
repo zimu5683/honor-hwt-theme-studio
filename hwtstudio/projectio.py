@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 from pathlib import Path
@@ -21,6 +22,11 @@ __all__ = ["load_project", "missing_project_assets", "project_assets_dir", "save
 
 _PROJECT_TEXT_FIELDS = ("name", "title", "author", "designer", "version", "screen")
 _CHANGE_TEXT_FIELDS = ("source_kind", "fit", "enhance")
+_CHANGE_ENUMS = {
+    "source_kind": {"file", "placeholder"},
+    "fit": {"cover", "contain", "stretch"},
+    "enhance": {"none", "light", "dark"},
+}
 _CUSTOM_RESOURCE_FIELDS = ("id", "module", "container", "resource_type", "name", "path", "category", "label")
 _CUSTOM_RESOURCE_OPTIONAL_TEXT_FIELDS = ("status", "risk", "mode", "actual_format", "extension")
 
@@ -65,14 +71,21 @@ def _validate_project_payload(raw: object) -> dict:
         for field in _CHANGE_TEXT_FIELDS:
             if field in change and not isinstance(change[field], str):
                 raise ValueError(f"工程修改记录 {slot_id} 的 {field} 必须是文字")
+            if field in change and change[field] not in _CHANGE_ENUMS[field]:
+                raise ValueError(f"工程修改记录 {slot_id} 的 {field} 值不支持")
         for field in ("value", "source_file"):
             if field in change and change[field] is not None and not isinstance(change[field], str):
                 raise ValueError(f"工程修改记录 {slot_id} 的 {field} 必须是文字或空值")
         for field in ("focus_x", "focus_y", "enhance_strength"):
+            value = change.get(field)
             if field in change and (
-                isinstance(change[field], bool) or not isinstance(change[field], (int, float))
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or (isinstance(value, float) and not math.isfinite(value))
             ):
                 raise ValueError(f"工程修改记录 {slot_id} 的 {field} 必须是数字")
+            if field in change and not 0 <= value <= 1:
+                raise ValueError(f"工程修改记录 {slot_id} 的 {field} 必须在 0 到 1 之间")
     custom_resources = raw.get("custom_resources", [])
     if not isinstance(custom_resources, list) or any(not isinstance(item, dict) for item in custom_resources):
         raise ValueError("工程字段 custom_resources 必须是对象列表")
@@ -129,6 +142,7 @@ def save_project(project: ThemeProject, path: Path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     serialized = project.to_dict()
+    _validate_project_payload(serialized)
     asset_dir = project_assets_dir(path)
     asset_stage = unique_temp_path(asset_dir, suffix=".tmp")
     temp = unique_temp_path(path)

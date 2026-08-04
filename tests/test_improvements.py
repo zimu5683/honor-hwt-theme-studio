@@ -154,6 +154,23 @@ class ImprovementTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "changes"):
                 load_project(malformed)
 
+            for field, invalid, message in (
+                ("fit", "unknown", "fit"),
+                ("focus_x", float("nan"), "数字"),
+                ("enhance_strength", 2, "0 到 1"),
+            ):
+                payload = {
+                    "schema": 2,
+                    "changes": {"slot": {"slot_id": "slot", field: invalid}},
+                }
+                malformed.write_text(json.dumps(payload), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, message):
+                    load_project(malformed)
+
+            invalid_project = ThemeProject(changes={"slot": ResourceChange(slot_id="slot", focus_x=float("nan"))})
+            with self.assertRaisesRegex(ValueError, "数字"):
+                save_project(invalid_project, root / "invalid-save.hwtproj.json")
+
             custom = ResourceSlot(
                 id="__custom__::loader",
                 module="com.example.app",
