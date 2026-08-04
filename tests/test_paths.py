@@ -54,6 +54,29 @@ class PathTests(unittest.TestCase):
                     data_dir()
             self.assertEqual(list(outside.iterdir()), [])
 
+    def test_data_dir_rejects_symlinked_parent_component(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            physical_home = root / "physical-home"
+            physical_home.mkdir()
+            linked_home = root / "linked-home"
+            try:
+                os.symlink(physical_home, linked_home, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
+            if os.name == "nt":
+                configured_root = linked_home / "AppData" / "Local"
+                patcher = patch.dict(os.environ, {"LOCALAPPDATA": str(configured_root)}, clear=False)
+            else:
+                patcher = patch("hwtstudio.paths.Path.home", return_value=linked_home)
+            with patcher:
+                with self.assertRaisesRegex(OSError, "父路径.*符号链接"):
+                    data_dir()
+            self.assertFalse((physical_home / "AppData").exists())
+            self.assertFalse((physical_home / ".local").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

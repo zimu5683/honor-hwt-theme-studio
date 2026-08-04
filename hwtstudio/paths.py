@@ -27,11 +27,19 @@ def data_dir() -> Path:
     if root.is_symlink() or (root.exists() and not root.is_dir()):
         raise OSError("应用数据根目录不是普通目录")
     path = root / "HwtThemeStudio"
+    try:
+        ensure_no_symlink_parents(path, "应用数据目录的父路径不能包含符号链接")
+    except ValueError as exc:
+        raise OSError(str(exc)) from exc
     if path.is_symlink():
         raise OSError("应用数据目录不能是符号链接")
     if path.exists() and not path.is_dir():
         raise OSError("应用数据目录不是目录")
     path.mkdir(parents=True, exist_ok=True)
+    try:
+        ensure_no_symlink_parents(path, "应用数据目录的父路径不能包含符号链接")
+    except ValueError as exc:
+        raise OSError(str(exc)) from exc
     if path.is_symlink() or not path.is_dir():
         raise OSError("应用数据目录不是普通目录")
     return path
