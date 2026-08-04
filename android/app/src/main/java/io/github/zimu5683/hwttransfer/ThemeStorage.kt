@@ -25,7 +25,7 @@ private const val DIRECT_UPLOAD_SUFFIX = ".uploading"
 private const val DIRECT_BACKUP_SUFFIX = ".backup"
 private val DIRECT_UPLOAD_NAME_PATTERN = Regex("^hwt_upload_[A-Za-z0-9_-]{6,64}\\.uploading$")
 private val DIRECT_BACKUP_SUFFIX_PATTERN = Regex(
-    "^[0-9a-f]{8}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
 )
 private const val STORAGE_PREFERENCES_NAME = "storage"
 private const val TREE_URI_KEY = "tree_uri"
