@@ -1068,6 +1068,7 @@ def _upload_theme_once(path: Path, device: PhoneDevice, *, transfer_id: str,
                        progress: Callable[[int, int, str], None] | None = None,
                        initial_signature: tuple[int, int, int, int] | None = None,
                        digest: str | None = None,
+                       prepare_metadata: bool = True,
                        timeout: float = 1800.0) -> dict:
     path = Path(path)
     if not path.is_file():
@@ -1088,7 +1089,7 @@ def _upload_theme_once(path: Path, device: PhoneDevice, *, transfer_id: str,
     _ensure_file_signature(path, initial_signature, "校验后")
     _ensure_file_signature(path, initial_signature, "发送前")
     filename = safe_hwt_filename(path.name)
-    if FEATURE_TRANSFER_PREPARE in device.features:
+    if prepare_metadata and FEATURE_TRANSFER_PREPARE in device.features:
         if cancelled and cancelled.is_set():
             raise TransferCancelled()
         _prepare_transfer(
@@ -1221,6 +1222,7 @@ def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event 
             timeout=timeout,
             initial_signature=initial_signature,
             digest=digest,
+            prepare_metadata=False,
         )
 
 

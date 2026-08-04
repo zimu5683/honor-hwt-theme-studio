@@ -724,6 +724,39 @@ class PhoneTransferTests(unittest.TestCase):
                 ["PUT", "GET", "GET", "PUT"],
             )
 
+    def test_legacy_retry_does_not_repeat_metadata_prepare_for_active_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "预检重试主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            completed = {
+                "stored_name": path.name, "destination": f"Honor/Themes/{path.name}",
+                "size": len(content), "sha256": digest, "overwritten": False,
+                "theme_app_opened": False,
+            }
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [OSError("预检后的完整上传响应前断开"), (201, completed)]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_PREPARE],
+            )
+
+            with (
+                patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection),
+                patch("hwtstudio.phone_transfer._prepare_transfer", return_value=True) as prepare,
+                patch(
+                    "hwtstudio.phone_transfer._remote_transfer_status",
+                    side_effect=[{"state": "receiving"}] * 40,
+                ),
+                patch("hwtstudio.phone_transfer.time.sleep"),
+            ):
+                result = upload_theme(path, device)
+
+            self.assertEqual(result["sha256"], digest)
+            prepare.assert_called_once()
+            self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "PUT"])
+
     def test_metadata_prepare_is_verified_before_upload(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "预检主题.hwt"
