@@ -353,6 +353,8 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
         applied.append({"slot_id": target.slot.id, "module": target_module, "path": target_path})
 
     temp = unique_temp_path(output)
+    if temp.is_symlink() or (temp.exists() and not temp.is_file()):
+        raise ValueError("导出临时文件不是普通文件")
     temp.unlink(missing_ok=True)
     try:
         modules = sorted(set(module_files) | set(module_xml))
@@ -372,9 +374,12 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
         validation = validate_theme(temp)
         if not validation["valid"]:
             raise ValueError("导出的主题未通过验证：" + json.dumps(validation["errors"][:5], ensure_ascii=False))
+        if output.is_symlink() or (output.exists() and not output.is_file()):
+            raise ValueError("导出文件目标不是普通文件")
         os.replace(temp, output)
     finally:
-        temp.unlink(missing_ok=True)
+        if not temp.is_symlink() and (not temp.exists() or temp.is_file()):
+            temp.unlink(missing_ok=True)
     digest = _sha256_file(output)
     report = {
         "schema": 1,
@@ -393,10 +398,18 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
     report_path = output.with_suffix(".report.json")
     report_temp = unique_temp_path(report_path)
     try:
+        if report_path.is_symlink() or (report_path.exists() and not report_path.is_file()):
+            raise OSError("导出报告目标不是普通文件")
+        ensure_no_symlink_parents(report_path, "导出报告目录不能包含符号链接")
+        if report_temp.is_symlink() or (report_temp.exists() and not report_temp.is_file()):
+            raise OSError("导出报告临时文件不是普通文件")
         report_temp.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        if report_path.is_symlink() or (report_path.exists() and not report_path.is_file()):
+            raise OSError("导出报告目标不是普通文件")
         os.replace(report_temp, report_path)
     except (OSError, TypeError, ValueError) as exc:
         report["report_warning"] = f"导出成功，但报告写入失败：{exc}"
     finally:
-        report_temp.unlink(missing_ok=True)
+        if not report_temp.is_symlink() and (not report_temp.exists() or report_temp.is_file()):
+            report_temp.unlink(missing_ok=True)
     return output, report

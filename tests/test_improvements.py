@@ -37,7 +37,7 @@ from hwtstudio.imageops import render_image as render_source_image
 from hwtstudio.locking import InterprocessLockTimeoutError
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
 from hwtstudio.models import ThemeCatalog
-from hwtstudio.paths import bundled_catalog
+from hwtstudio.paths import bundled_catalog, unique_temp_path
 from hwtstudio.pngmeta import extract_android_chunks, inject_android_chunks
 from hwtstudio.projectio import load_project, project_assets_dir, save_project
 from hwtstudio.phone_transfer import TransferCancelled
@@ -117,6 +117,64 @@ class ImprovementTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "导出目录.*符号链接"):
                 export_theme(ThemeProject(), self.catalog, output)
             self.assertFalse((outside / output.name).exists())
+
+    def test_export_rejects_symlinked_archive_temp(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "theme.hwt"
+            outside = root / "outside.tmp"
+            outside.write_text("keep", encoding="utf-8")
+            temp = unique_temp_path(output)
+            try:
+                os.symlink(outside, temp)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建文件符号链接：{exc}")
+            with self.assertRaisesRegex(ValueError, "导出临时文件.*普通文件"):
+                export_theme(ThemeProject(), self.catalog, output)
+            self.assertTrue(temp.is_symlink())
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+            self.assertFalse(output.exists())
+
+    def test_export_report_rejects_symlinked_target_without_removing_export(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "theme.hwt"
+            report_path = output.with_suffix(".report.json")
+            outside = root / "outside-report.json"
+            outside.write_text("keep", encoding="utf-8")
+            try:
+                os.symlink(outside, report_path)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建文件符号链接：{exc}")
+            _, report = export_theme(ThemeProject(), self.catalog, output)
+            self.assertTrue(output.is_file())
+            self.assertIn("报告写入失败", report["report_warning"])
+            self.assertTrue(report_path.is_symlink())
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+
+    def test_export_report_rejects_symlinked_temp_without_removing_it(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "theme.hwt"
+            report_path = output.with_suffix(".report.json")
+            outside = root / "outside-report.tmp"
+            outside.write_text("keep", encoding="utf-8")
+            report_temp = unique_temp_path(report_path)
+            try:
+                os.symlink(outside, report_temp)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建文件符号链接：{exc}")
+            _, report = export_theme(ThemeProject(), self.catalog, output)
+            self.assertTrue(output.is_file())
+            self.assertIn("报告写入失败", report["report_warning"])
+            self.assertTrue(report_temp.is_symlink())
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
 
     def test_report_serialization_failure_keeps_export(self):
         with tempfile.TemporaryDirectory() as directory:
