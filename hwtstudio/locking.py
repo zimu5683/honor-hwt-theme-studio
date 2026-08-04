@@ -6,6 +6,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from .paths import ensure_no_symlink_parents
+
 if os.name == "nt":
     import msvcrt
 else:
@@ -14,6 +16,18 @@ else:
 
 class InterprocessLockTimeoutError(OSError):
     """Raised when a file lock cannot be acquired within its bounded wait."""
+
+
+def _validate_lock_path(path: Path, *, role: str) -> None:
+    path = Path(path)
+    if path.is_symlink():
+        raise OSError(f"{role}不能是符号链接")
+    if path.exists() and not path.is_file():
+        raise OSError(f"{role}不是普通文件")
+    try:
+        ensure_no_symlink_parents(path, f"{role}的父路径不能包含符号链接")
+    except ValueError as exc:
+        raise OSError(str(exc)) from exc
 
 
 @contextmanager
@@ -26,9 +40,12 @@ def interprocess_lock(
     """Serialize access to the file identified by *path* across processes."""
     if timeout < 0:
         raise ValueError("锁等待时间不能为负数")
-    path = Path(path).resolve()
+    path = Path(path)
+    _validate_lock_path(path, role="锁目标")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _validate_lock_path(path, role="锁目标")
     lock_path = path.with_name(f".{path.name}.lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    _validate_lock_path(lock_path, role="锁文件")
     with lock_path.open("a+b") as handle:
         handle.seek(0, os.SEEK_END)
         if handle.tell() == 0:

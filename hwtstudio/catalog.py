@@ -34,7 +34,7 @@ from .common import (
     risk_for,
 )
 from .models import ResourceSlot, ThemeCatalog
-from .paths import unique_temp_path
+from .paths import ensure_no_symlink_parents, unique_temp_path
 from .pngmeta import extract_android_chunks
 from .xmlutil import parse_xml
 
@@ -479,13 +479,21 @@ def source_compatibility_report(catalog: ThemeCatalog) -> dict:
 
 def _save_bounded_json(payload: dict, path: Path, *, too_large_message: str) -> None:
     path = Path(path)
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError("资源目录输出目标不是普通文件")
+    ensure_no_symlink_parents(path, "资源目录输出目录不能包含符号链接")
     path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_no_symlink_parents(path, "资源目录输出目录不能包含符号链接")
     temp = unique_temp_path(path)
+    if temp.is_symlink() or (temp.exists() and not temp.is_file()):
+        raise ValueError("资源目录临时文件不是普通文件")
     try:
         encoded = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         if len(encoded) > MAX_CATALOG_BYTES:
             raise ValueError(too_large_message)
         temp.write_bytes(encoded)
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError("资源目录输出目标不是普通文件")
         os.replace(temp, path)
     finally:
         temp.unlink(missing_ok=True)

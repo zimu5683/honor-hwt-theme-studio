@@ -855,6 +855,41 @@ class ImprovementTests(unittest.TestCase):
             self.assertTrue(target.is_symlink())
             self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
 
+    def test_catalog_save_rejects_symlinked_output_parent(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        catalog = ThemeCatalog("source.hwt", "a" * 64, "now", {"modules": 1}, [], [])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside"
+            outside.mkdir()
+            link = root / "exports"
+            try:
+                os.symlink(outside, link, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
+            with self.assertRaisesRegex(ValueError, "资源目录输出目录.*符号链接"):
+                save_catalog(catalog, link / "catalog.json")
+            self.assertEqual(list(outside.iterdir()), [])
+
+    def test_catalog_save_rejects_symlinked_output_target(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        catalog = ThemeCatalog("source.hwt", "a" * 64, "now", {"modules": 1}, [], [])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside.json"
+            outside.write_text("keep", encoding="utf-8")
+            target = root / "catalog.json"
+            try:
+                os.symlink(outside, target)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建文件符号链接：{exc}")
+            with self.assertRaisesRegex(ValueError, "资源目录输出目标.*普通文件"):
+                save_catalog(catalog, target)
+            self.assertTrue(target.is_symlink())
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+
     def test_user_catalog_recovery_cleans_dangling_transaction_symlink(self):
         if not hasattr(os, "symlink"):
             self.skipTest("当前平台不支持符号链接")

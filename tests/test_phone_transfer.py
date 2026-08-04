@@ -1150,6 +1150,51 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
 
+    def test_registry_rejects_symlinked_parent_before_lock_creation(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside"
+            outside.mkdir()
+            link = root / "storage"
+            try:
+                os.symlink(outside, link, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
+            with self.assertRaisesRegex(OSError, "手机记录文件目录.*符号链接"):
+                PhoneRegistry(link / "phones.json").save({})
+            self.assertEqual(list(outside.iterdir()), [])
+
+    def test_registry_rejects_symlinked_target_and_lock_file(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside.json"
+            outside.write_text("keep", encoding="utf-8")
+            target = root / "phones.json"
+            try:
+                os.symlink(outside, target)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建文件符号链接：{exc}")
+            with self.assertRaisesRegex(OSError, "手机记录文件.*普通文件"):
+                PhoneRegistry(target).save({})
+            self.assertTrue(target.is_symlink())
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+
+            target.unlink()
+            lock_target = root / "outside.lock"
+            lock_target.write_bytes(b"keep")
+            lock_path = root / ".phones.json.lock"
+            try:
+                os.symlink(lock_target, lock_path)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建锁文件符号链接：{exc}")
+            with self.assertRaisesRegex(OSError, "锁文件.*符号链接"):
+                PhoneRegistry(target).save({})
+            self.assertEqual(lock_target.read_bytes(), b"keep")
+
     def test_registry_load_fails_closed_when_lock_is_unavailable(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "phones.json"

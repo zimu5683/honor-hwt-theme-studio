@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 from urllib.parse import quote
 
-from .paths import data_dir
+from .paths import data_dir, ensure_no_symlink_parents
 from .locking import interprocess_lock
 
 
@@ -109,13 +109,22 @@ class PhoneRegistry:
 
     def __init__(self, path: Path | None = None):
         self.path = Path(path) if path else data_dir() / "paired_phones.json"
-        lock_path = self.path.resolve()
+        lock_path = self.path.absolute()
         with self._lock_guard:
             self._lock = self._locks.setdefault(lock_path, threading.RLock())
+
+    def _validate_path(self) -> None:
+        if self.path.is_symlink() or (self.path.exists() and not self.path.is_file()):
+            raise OSError("手机记录文件不是普通文件")
+        try:
+            ensure_no_symlink_parents(self.path, "手机记录文件目录不能包含符号链接")
+        except ValueError as exc:
+            raise OSError(str(exc)) from exc
 
     def load(self) -> dict[str, PhoneDevice]:
         with self._lock:
             try:
+                self._validate_path()
                 with _interprocess_lock(self.path):
                     return self._load_unlocked()
             except OSError:
@@ -123,6 +132,7 @@ class PhoneRegistry:
 
     def _load_unlocked(self) -> dict[str, PhoneDevice]:
         try:
+            self._validate_path()
             with self.path.open("rb") as stream:
                 encoded = stream.read(MAX_REGISTRY_BYTES + 1)
             if len(encoded) > MAX_REGISTRY_BYTES:
@@ -201,24 +211,31 @@ class PhoneRegistry:
 
     def save(self, devices: dict[str, PhoneDevice]) -> None:
         with self._lock:
+            self._validate_path()
             with _interprocess_lock(self.path):
                 self._save_unlocked(devices)
 
     def _save_unlocked(self, devices: dict[str, PhoneDevice]) -> None:
+        self._validate_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._validate_path()
         payload = {"version": 1, "devices": [asdict(item) for item in devices.values()]}
         temp = self.path.with_name(f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        if temp.is_symlink() or (temp.exists() and not temp.is_file()):
+            raise OSError("手机记录临时文件不是普通文件")
         try:
             encoded = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
             if len(encoded) > MAX_REGISTRY_BYTES:
                 raise ValueError("手机记录文件超过允许的大小限制")
             temp.write_bytes(encoded)
+            self._validate_path()
             os.replace(temp, self.path)
         finally:
             temp.unlink(missing_ok=True)
 
     def update(self, device: PhoneDevice) -> None:
         with self._lock:
+            self._validate_path()
             with _interprocess_lock(self.path):
                 devices = self._load_unlocked()
                 previous = devices.get(device.device_id)
@@ -229,6 +246,7 @@ class PhoneRegistry:
 
     def forget(self, device_id: str) -> None:
         with self._lock:
+            self._validate_path()
             with _interprocess_lock(self.path):
                 devices = self._load_unlocked()
                 if devices.pop(device_id, None) is not None:
