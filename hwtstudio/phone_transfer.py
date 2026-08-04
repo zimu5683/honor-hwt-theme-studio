@@ -9,9 +9,11 @@ import socket
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from ipaddress import IPv4Address, IPv4Network
 from pathlib import Path
 from typing import Callable, Iterator
 from urllib.parse import quote
@@ -26,6 +28,9 @@ FEATURE_TRANSFER_PREPARE = "transfer_prepare"
 DISCOVERY_PORT = 48620
 HTTP_PORT = 48621
 DISCOVERY_REQUEST = b"HWTSTUDIO_DISCOVER_V1"
+MAX_HTTP_DISCOVERY_TARGETS = 256
+HTTP_DISCOVERY_WORKERS = 16
+HTTP_DISCOVERY_REQUEST_TIMEOUT = 0.25
 MAX_FILE_SIZE = 1024 * 1024 * 1024
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_REGISTRY_BYTES = 2 * 1024 * 1024
@@ -382,6 +387,34 @@ def _payload_strings(value: object, *, context: str = "", strict: bool = False) 
     return sorted(result)
 
 
+def bounded_ipv4_discovery_targets(
+    interfaces: list[tuple[str, str]], *, limit: int = MAX_HTTP_DISCOVERY_TARGETS,
+) -> list[str]:
+    """Expand only small private IPv4 networks for the bounded HTTP fallback."""
+    limit = min(max(limit, 0), MAX_HTTP_DISCOVERY_TARGETS)
+    if limit == 0:
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for address, netmask in interfaces:
+        try:
+            address_value = IPv4Address(address)
+            network = IPv4Network(f"{address}/{netmask}", strict=False)
+        except (ValueError, TypeError):
+            continue
+        if not address_value.is_private or network.num_addresses > MAX_HTTP_DISCOVERY_TARGETS + 2:
+            continue
+        for host in network.hosts():
+            value = str(host)
+            if value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+            if len(result) >= limit:
+                return result
+    return result
+
+
 def _merge_saved(device: PhoneDevice, saved: dict[str, PhoneDevice]) -> PhoneDevice:
     previous = saved.get(device.device_id)
     if previous and previous.host == device.host and previous.port == device.port:
@@ -390,18 +423,56 @@ def _merge_saved(device: PhoneDevice, saved: dict[str, PhoneDevice]) -> PhoneDev
     return device
 
 
+def _parse_discovered_device(
+    payload: dict, host: str, default_port: int, context: str, *, require_service: bool,
+) -> PhoneDevice:
+    protocol = _payload_protocol(payload, context)
+    if require_service and payload.get("service") != "hwtstudio":
+        raise PhoneTransferError(f"手机返回了无效的{context}服务标识", code="bad_response")
+    if protocol != PROTOCOL_VERSION:
+        raise PhoneTransferError(f"手机返回了不兼容的{context}协议版本", code="protocol_mismatch")
+    return PhoneDevice(
+        device_id=_payload_text(payload, "device_id", context, required=True),
+        name=_payload_text(payload, "name", context, default="荣耀手机") or "荣耀手机",
+        host=host,
+        port=_payload_port(payload.get("http_port", default_port), context),
+        protocol=protocol,
+        app_version=_payload_text(payload, "app_version", context),
+        features=_payload_strings(payload.get("features", [])),
+    )
+
+
+def _http_discovery_probe(host: str, timeout: float) -> PhoneDevice | None:
+    connection = http.client.HTTPConnection(host, HTTP_PORT, timeout=timeout)
+    try:
+        connection.request("GET", "/api/v1/status")
+        response = connection.getresponse()
+        payload = _decode_json(_read_response(response, "HTTP发现"), "HTTP发现")
+        if response.status != 200:
+            return None
+        return _parse_discovered_device(payload, host, HTTP_PORT, "HTTP发现响应", require_service=False)
+    except (OSError, http.client.HTTPException, PhoneTransferError, ValueError):
+        return None
+    finally:
+        connection.close()
+
+
 def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
                     targets: list[str] | None = None,
-                    cancelled: threading.Event | None = None) -> list[PhoneDevice]:
+                    cancelled: threading.Event | None = None,
+                    http_targets: list[str] | None = None) -> list[PhoneDevice]:
     registry = registry or PhoneRegistry()
     saved = registry.load()
     found: dict[str, PhoneDevice] = {}
+    timeout = max(0.0, timeout)
+    discovery_started = time.monotonic()
+    deadline = discovery_started + timeout
+    udp_deadline = discovery_started + (timeout / 2 if http_targets else timeout)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("", 0))
-        sock.settimeout(0.2)
         for target in dict.fromkeys(targets or ["255.255.255.255"]):
             if cancelled and cancelled.is_set():
                 return []
@@ -409,10 +480,10 @@ def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
                 sock.sendto(DISCOVERY_REQUEST, (target, DISCOVERY_PORT))
             except OSError:
                 continue
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+        while time.monotonic() < udp_deadline:
             if cancelled and cancelled.is_set():
                 return []
+            sock.settimeout(min(0.2, max(0.001, udp_deadline - time.monotonic())))
             try:
                 data, address = sock.recvfrom(4096)
             except socket.timeout:
@@ -423,23 +494,58 @@ def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
                 raw = json.loads(data.decode("utf-8"))
                 if not isinstance(raw, dict):
                     continue
-                protocol = _payload_protocol(raw, "发现响应")
-                if raw.get("service") != "hwtstudio" or protocol != PROTOCOL_VERSION:
-                    continue
-                device = PhoneDevice(
-                    device_id=_payload_text(raw, "device_id", "发现响应", required=True),
-                    name=_payload_text(raw, "name", "发现响应", default="荣耀手机") or "荣耀手机",
-                    host=address[0],
-                    port=_payload_port(raw.get("http_port", HTTP_PORT), "发现响应"),
-                    protocol=protocol,
-                    app_version=_payload_text(raw, "app_version", "发现响应"),
-                    features=_payload_strings(raw.get("features", [])),
+                device = _parse_discovered_device(
+                    raw, address[0], HTTP_PORT, "发现响应", require_service=True,
                 )
             except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError, PhoneTransferError):
                 continue
             found[device.device_id] = _merge_saved(device, saved)
     finally:
         sock.close()
+
+    if cancelled and cancelled.is_set():
+        return []
+
+    # UDP is the fast path. Only probe caller-supplied, validated LAN targets
+    # when it produced no result, following LocalSend's legacy fallback model.
+    if not found and http_targets:
+        candidates: list[str] = []
+        for target in dict.fromkeys(http_targets):
+            try:
+                address = IPv4Address(target)
+            except (ValueError, TypeError):
+                continue
+            if address.is_private:
+                candidates.append(str(address))
+            if len(candidates) >= MAX_HTTP_DISCOVERY_TARGETS:
+                break
+        remaining = max(0.0, deadline - time.monotonic())
+        if candidates and remaining > 0:
+            worker_count = min(HTTP_DISCOVERY_WORKERS, len(candidates))
+            executor = ThreadPoolExecutor(max_workers=worker_count)
+            try:
+                futures = {
+                    executor.submit(
+                        _http_discovery_probe,
+                        target,
+                        min(HTTP_DISCOVERY_REQUEST_TIMEOUT, remaining),
+                    ): target
+                    for target in candidates
+                }
+                try:
+                    for future in as_completed(futures, timeout=remaining):
+                        if cancelled and cancelled.is_set():
+                            break
+                        try:
+                            device = future.result()
+                        except Exception:
+                            continue
+                        if device is not None:
+                            found[device.device_id] = _merge_saved(device, saved)
+                except FuturesTimeoutError:
+                    pass
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
 
     if cancelled and cancelled.is_set():
         return []

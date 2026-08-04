@@ -28,6 +28,7 @@ from hwtstudio.phone_transfer import (
     PhoneRegistry,
     PhoneTransferError,
     TransferCancelled,
+    bounded_ipv4_discovery_targets,
     _merge_saved,
     _error_from_response,
     _interprocess_lock,
@@ -285,6 +286,41 @@ class InvalidShapeDiscoverySocket(FakeDiscoverySocket):
             self.returned = True
             return b"[]", ("10.0.0.11", 48620)
         raise socket.timeout()
+
+
+class SilentDiscoverySocket(FakeDiscoverySocket):
+    def recvfrom(self, _size):
+        raise socket.timeout()
+
+
+class HttpDiscoveryConnection:
+    calls = []
+
+    def __init__(self, host, port, timeout):
+        type(self).calls.append((host, port, timeout))
+        self.host = host
+
+    def request(self, *_args, **_kwargs):
+        pass
+
+    def getresponse(self):
+        if self.host != "10.0.0.8":
+            return FakeHttpResponse({"message": "not a receiver"}, status=404)
+        return FakeHttpResponse({
+            "protocol": 1,
+            "device_id": "http-phone-1",
+            "name": "HTTP 发现手机",
+            "app_version": "0.2.0",
+            "features": ["device_profile"],
+        })
+
+    def close(self):
+        pass
+
+
+class InvalidHttpDiscoveryConnection(HttpDiscoveryConnection):
+    def getresponse(self):
+        return FakeHttpResponse({"protocol": 1, "name": "缺少设备标识"})
 
 
 class PhoneTransferTests(unittest.TestCase):
@@ -1332,6 +1368,72 @@ class PhoneTransferTests(unittest.TestCase):
                 list(executor.map(update, range(count)))
 
             self.assertEqual(set(PhoneRegistry(path).load()), {f"phone-{index}" for index in range(count)})
+
+    def test_http_discovery_fallback_uses_only_valid_private_targets(self):
+        HttpDiscoveryConnection.calls = []
+        with tempfile.TemporaryDirectory() as directory:
+            registry = PhoneRegistry(Path(directory) / "phones.json")
+            with (
+                patch("hwtstudio.phone_transfer.socket.socket", SilentDiscoverySocket),
+                patch("hwtstudio.phone_transfer.http.client.HTTPConnection", HttpDiscoveryConnection),
+            ):
+                devices = discover_phones(
+                    timeout=1.0,
+                    registry=registry,
+                    http_targets=["10.0.0.9", "10.0.0.8", "not-an-ip", "8.8.8.8"],
+                )
+
+        self.assertEqual([device.device_id for device in devices], ["http-phone-1"])
+        self.assertEqual(devices[0].host, "10.0.0.8")
+        self.assertEqual({call[0] for call in HttpDiscoveryConnection.calls}, {"10.0.0.8", "10.0.0.9"})
+
+    def test_http_discovery_is_skipped_when_udp_already_found_a_phone(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry = PhoneRegistry(Path(directory) / "phones.json")
+            with (
+                patch("hwtstudio.phone_transfer.socket.socket", FakeDiscoverySocket),
+                patch("hwtstudio.phone_transfer.http.client.HTTPConnection", side_effect=AssertionError("unexpected scan")),
+            ):
+                devices = discover_phones(
+                    timeout=0.01,
+                    registry=registry,
+                    http_targets=["10.0.0.8"],
+                )
+
+        self.assertEqual([device.device_id for device in devices], ["phone-1"])
+
+    def test_http_discovery_discards_malformed_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry = PhoneRegistry(Path(directory) / "phones.json")
+            with (
+                patch("hwtstudio.phone_transfer.socket.socket", SilentDiscoverySocket),
+                patch(
+                    "hwtstudio.phone_transfer.http.client.HTTPConnection",
+                    InvalidHttpDiscoveryConnection,
+                ),
+            ):
+                devices = discover_phones(
+                    timeout=0.2,
+                    registry=registry,
+                    http_targets=["10.0.0.8"],
+                )
+
+        self.assertEqual(devices, [])
+        self.assertEqual(registry.load(), {})
+
+    def test_bounded_ipv4_discovery_targets_skip_large_and_public_networks(self):
+        self.assertEqual(
+            bounded_ipv4_discovery_targets(
+                [("192.168.10.20", "255.255.255.0")], limit=3,
+            ),
+            ["192.168.10.1", "192.168.10.2", "192.168.10.3"],
+        )
+        self.assertEqual(
+            bounded_ipv4_discovery_targets(
+                [("10.0.0.20", "255.255.0.0"), ("8.8.8.8", "255.255.255.0")],
+            ),
+            [],
+        )
 
     def test_discovery_discards_invalid_remote_port(self):
         with tempfile.TemporaryDirectory() as directory:

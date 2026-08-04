@@ -19,7 +19,13 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ..phone_transfer import HTTP_PORT, PhoneDevice, PhoneRegistry, discover_phones
+from ..phone_transfer import (
+    HTTP_PORT,
+    PhoneDevice,
+    PhoneRegistry,
+    bounded_ipv4_discovery_targets,
+    discover_phones,
+)
 from .design_system import set_role, set_state
 
 
@@ -43,13 +49,26 @@ class DiscoveryWorker(QObject):
     def run(self):
         try:
             targets = ["255.255.255.255"]
+            interfaces: list[tuple[str, str]] = []
             for interface in QNetworkInterface.allInterfaces():
                 for entry in interface.addressEntries():
+                    address = entry.ip()
+                    netmask = entry.netmask()
+                    if (
+                        address.protocol() == QAbstractSocket.IPv4Protocol
+                        and netmask.protocol() == QAbstractSocket.IPv4Protocol
+                    ):
+                        interfaces.append((address.toString(), netmask.toString()))
                     broadcast = entry.broadcast()
                     if not broadcast.isNull() and broadcast.protocol() == QAbstractSocket.IPv4Protocol:
                         targets.append(broadcast.toString())
             self.found.emit(
-                discover_phones(registry=self.registry, targets=targets, cancelled=self.cancelled),
+                discover_phones(
+                    registry=self.registry,
+                    targets=targets,
+                    http_targets=bounded_ipv4_discovery_targets(interfaces),
+                    cancelled=self.cancelled,
+                ),
                 self.task_id,
             )
         except Exception:
