@@ -9,6 +9,7 @@ import java.io.InputStream
 import java.security.MessageDigest
 import java.text.Normalizer
 import java.util.HashSet
+import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipFile
@@ -236,7 +237,7 @@ object Protocol {
                     if (startsLikeZip(input)) {
                         validateNestedArchive(input)
                     } else {
-                        drainArchiveEntry(input, buffer, totalBytes)
+                        drainArchiveEntry(input, buffer, totalBytes, entry.crc)
                     }
                     val entryBytes = source.count
                     if (entryBytes > MAX_ARCHIVE_ENTRY_BYTES ||
@@ -273,17 +274,27 @@ object Protocol {
             signature.contentEquals(byteArrayOf(0x50, 0x4b, 0x07, 0x08))
     }
 
-    private fun drainArchiveEntry(input: InputStream, buffer: ByteArray, previousTotal: Long) {
+    private fun drainArchiveEntry(
+        input: InputStream,
+        buffer: ByteArray,
+        previousTotal: Long,
+        expectedCrc: Long,
+    ) {
+        val checksum = CRC32()
         var entryBytes = 0L
         while (true) {
             val count = input.read(buffer)
             if (count < 0) break
             entryBytes += count
+            checksum.update(buffer, 0, count)
             if (entryBytes > MAX_ARCHIVE_ENTRY_BYTES ||
                 entryBytes > MAX_ARCHIVE_UNCOMPRESSED_BYTES - previousTotal
             ) {
                 throw TransferException(422, "invalid_hwt", "HWT ZIP 解压总量超过限制")
             }
+        }
+        if (expectedCrc >= 0L && checksum.value != expectedCrc) {
+            throw TransferException(422, "invalid_hwt", "HWT ZIP CRC 校验失败")
         }
     }
 
@@ -308,11 +319,14 @@ object Protocol {
                     ) {
                         throw TransferException(422, "invalid_hwt", "HWT 嵌套 ZIP 解压总量超过限制")
                     }
+                    val expectedCrc = entry.crc
+                    val checksum = CRC32()
                     var entryBytes = 0L
                     while (true) {
                         val count = archive.read(buffer)
                         if (count < 0) break
                         entryBytes += count
+                        checksum.update(buffer, 0, count)
                         if (entryBytes > MAX_ARCHIVE_ENTRY_BYTES ||
                             entryBytes > MAX_ARCHIVE_UNCOMPRESSED_BYTES - totalBytes
                         ) {
@@ -322,6 +336,10 @@ object Protocol {
                     archive.closeEntry()
                     if (entry.size >= 0L && entry.size != entryBytes) {
                         throw TransferException(422, "invalid_hwt", "HWT 嵌套 ZIP 条目大小无效")
+                    }
+                    val actualExpectedCrc = if (entry.crc >= 0L) entry.crc else expectedCrc
+                    if (actualExpectedCrc >= 0L && checksum.value != actualExpectedCrc) {
+                        throw TransferException(422, "invalid_hwt", "HWT 嵌套 ZIP CRC 校验失败")
                     }
                     if (entry.compressedSize >= 0L) {
                         validateArchiveCompression(entryBytes, entry.compressedSize)
