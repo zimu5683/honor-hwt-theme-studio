@@ -46,6 +46,9 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 IMAGE_FORMATS = {"PNG", "JPEG", "WEBP"}
 _RESOURCE_STRING_FIELDS = ("id", "module", "container", "resource_type", "name", "path", "category", "label")
 _RESOURCE_OPTIONAL_STRING_FIELDS = ("status", "risk", "mode", "actual_format", "extension")
+_CATALOG_RESOURCE_TYPES = {"color", "bool", "integer", "dimen", "string", "image", "icon", "wallpaper", "preview"}
+_CATALOG_TEXT_MAX_CHARS = 4096
+_CATALOG_MODULE_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def sha256_file(path: Path) -> str:
@@ -410,6 +413,38 @@ def save_catalog(catalog: ThemeCatalog, path: Path) -> None:
         temp.unlink(missing_ok=True)
 
 
+def _validate_catalog_resource(resource: dict, index: int) -> None:
+    for field in (*_RESOURCE_STRING_FIELDS, *_RESOURCE_OPTIONAL_STRING_FIELDS):
+        value = resource.get(field)
+        if isinstance(value, str) and (
+            len(value) > _CATALOG_TEXT_MAX_CHARS
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        ):
+            raise ValueError(f"资源目录第 {index} 条记录的 {field} 过长或包含控制字符")
+    module = resource["module"]
+    if not _CATALOG_MODULE_RE.fullmatch(module):
+        raise ValueError(f"资源目录第 {index} 条记录的模块名不安全")
+    if resource["resource_type"] not in _CATALOG_RESOURCE_TYPES:
+        raise ValueError(f"资源目录第 {index} 条记录的资源类型不支持")
+    synthetic = resource.get("synthetic", False)
+    path = resource["path"]
+    if path and not is_safe_archive_path(path):
+        raise ValueError(f"资源目录第 {index} 条记录的资源路径不安全")
+    container = resource["container"]
+    if container and not is_safe_archive_path(container):
+        raise ValueError(f"资源目录第 {index} 条记录的容器路径不安全")
+    if not synthetic and not path:
+        raise ValueError(f"资源目录第 {index} 条记录缺少资源路径")
+    for field in ("width", "height"):
+        value = resource.get(field)
+        if value is not None and value > 16384:
+            raise ValueError(f"资源目录第 {index} 条记录的 {field} 超过上限")
+    targets = resource.get("targets", [])
+    for target in targets:
+        if not _CATALOG_MODULE_RE.fullmatch(target["module"]) or not is_safe_archive_path(target["path"]):
+            raise ValueError(f"资源目录第 {index} 条记录的目标路径不安全")
+
+
 def load_catalog(path: Path) -> ThemeCatalog:
     path = Path(path)
     with path.open("rb") as stream:
@@ -433,7 +468,8 @@ def load_catalog(path: Path) -> ThemeCatalog:
     required = {"id", "module", "container", "resource_type", "name", "path", "category", "label"}
     if any(not isinstance(item, dict) or not required.issubset(item) for item in resources):
         raise ValueError("资源目录中的资源记录格式无效")
-    for resource in resources:
+    resource_ids: set[str] = set()
+    for index, resource in enumerate(resources, start=1):
         if any(not isinstance(resource[field], str) for field in _RESOURCE_STRING_FIELDS):
             raise ValueError("资源目录中的资源文字字段类型无效")
         for field in _RESOURCE_OPTIONAL_STRING_FIELDS:
@@ -464,9 +500,23 @@ def load_catalog(path: Path) -> ThemeCatalog:
             for target in targets
         ):
             raise ValueError("资源目录中的资源字段 targets 类型无效")
+        if resource["id"] in resource_ids:
+            raise ValueError("资源目录中的资源 ID 重复")
+        resource_ids.add(resource["id"])
+        _validate_catalog_resource(resource, index)
     for field in ("source_path", "source_sha256", "generated_at"):
         if field in raw and not isinstance(raw[field], str):
             raise ValueError(f"资源目录字段 {field} 必须是文字")
-    if not isinstance(raw.get("stats", {}), dict) or not isinstance(raw.get("warnings", []), list):
+    stats = raw.get("stats", {})
+    warnings = raw.get("warnings", [])
+    if not isinstance(stats, dict) or any(
+        not isinstance(key, str)
+        or isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 0
+        for key, value in stats.items()
+    ):
+        raise ValueError("资源目录的统计字段格式无效")
+    if not isinstance(warnings, list) or any(not isinstance(item, dict) for item in warnings):
         raise ValueError("资源目录的统计或警告字段格式无效")
     return ThemeCatalog.from_dict(raw)

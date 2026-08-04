@@ -608,6 +608,24 @@ class ImprovementTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "occurrences"):
                 load_catalog(malformed)
 
+            unsafe_path = json.loads(json.dumps(self.catalog.to_dict(), ensure_ascii=False))
+            unsafe_path["resources"][0]["path"] = "../outside.png"
+            malformed.write_text(json.dumps(unsafe_path, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "路径不安全"):
+                load_catalog(malformed)
+
+            duplicate_ids = json.loads(json.dumps(self.catalog.to_dict(), ensure_ascii=False))
+            duplicate_ids["resources"][1]["id"] = duplicate_ids["resources"][0]["id"]
+            malformed.write_text(json.dumps(duplicate_ids, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "ID 重复"):
+                load_catalog(malformed)
+
+            invalid_stats = json.loads(json.dumps(self.catalog.to_dict(), ensure_ascii=False))
+            invalid_stats["stats"]["resource_slots"] = -1
+            malformed.write_text(json.dumps(invalid_stats, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "统计字段"):
+                load_catalog(malformed)
+
             oversized_catalog = ThemeCatalog(
                 source_path="x" * (MAX_CATALOG_BYTES + 1),
                 source_sha256="",
