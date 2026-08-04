@@ -46,6 +46,19 @@ class ThemeStorageTest {
     }
 
     @Test
+    fun safArtifactNamesOnlyMatchGeneratedShapes() {
+        assertTrue(isSafBackupName("theme.hwt", "theme.hwt.backup-123456"))
+        assertTrue(isSafBackupName("theme.hwt", "theme.hwt.backup--123456"))
+        assertFalse(isSafBackupName("theme.hwt", "theme.hwt.backup-user-file"))
+        assertTrue(isSafUploadName("hwt_transfer_123e4567-e89b-42d3-a456-426614174000.uploading"))
+        assertFalse(isSafUploadName("hwt_transfer_user.uploading"))
+        assertFalse(isSafUploadName("hwt_transfer_123e4567-e89b-42d3-a456-42661417400.uploading"))
+        assertFalse(isSafUploadName("hwt_transfer_123e4567-e89b-12d3-a456-4266141740000.uploading"))
+        assertFalse(isSafUploadName("hwt_transfer_123e4567-e89b-42d3-c456-426614174000.uploading"))
+        assertFalse(isSafUploadName("hwt_transfer_123e4567-e89b-42d3-a456-42661417400z.uploading"))
+    }
+
+    @Test
     fun directRecoveryRestoresMatchingBackupAndKeepsUnknownLegacyBackup() {
         val root = Files.createTempDirectory("hwt-recovery-test")
         try {

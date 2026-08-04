@@ -22,6 +22,10 @@ private val themeInstallLock = Any()
 private const val DIRECT_UPLOAD_PREFIX = "hwt_upload_"
 private const val DIRECT_UPLOAD_SUFFIX = ".uploading"
 private const val DIRECT_BACKUP_SUFFIX = ".backup"
+private val SAF_UPLOAD_NAME_PATTERN = Regex(
+    "^hwt_transfer_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\\.uploading$",
+)
+private val SAF_BACKUP_SUFFIX_PATTERN = Regex("-?[0-9]+")
 
 internal enum class SafRenameState {
     MOVED,
@@ -52,6 +56,13 @@ internal fun directThemeBackupPrefix(themeName: String): String {
         .digest(themeName.toByteArray(Charsets.UTF_8))
     return "hwt_backup_" + digest.joinToString("") { "%02x".format(it) }
 }
+
+internal fun isSafBackupName(themeName: String, candidate: String): Boolean {
+    val prefix = "$themeName.backup-"
+    return candidate.startsWith(prefix) && SAF_BACKUP_SUFFIX_PATTERN.matches(candidate.removePrefix(prefix))
+}
+
+internal fun isSafUploadName(candidate: String): Boolean = SAF_UPLOAD_NAME_PATTERN.matches(candidate)
 
 internal fun recoverDirectThemeArtifacts(directory: File, target: File, name: String) {
     val children = directory.listFiles()
@@ -435,7 +446,7 @@ class ThemeStorage(private val context: Context) {
     private fun recoverSafArtifacts(directory: DocumentFile, name: String) {
         val children = listSafChildren(directory)
         val backups = children.filter { child ->
-            child.name?.startsWith("$name.backup-") == true
+            child.name?.let { isSafBackupName(name, it) } == true
         }
         val current = children.firstOrNull { it.name == name }
         current?.let { requireSafRegularFile(it, "同名目标不是普通主题文件") }
@@ -464,7 +475,7 @@ class ThemeStorage(private val context: Context) {
         listSafChildren(directory)
             .filter { child ->
                 val name = child.name ?: return@filter false
-                if (!name.startsWith("hwt_transfer_") || !name.endsWith(".uploading")) {
+                if (!isSafUploadName(name)) {
                     return@filter false
                 }
                 requireSafRegularFile(child, "主题临时对象不是普通文件")
