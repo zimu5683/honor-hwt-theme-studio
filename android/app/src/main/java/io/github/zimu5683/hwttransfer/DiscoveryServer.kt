@@ -13,12 +13,25 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-class DiscoveryServer(private val pairing: PairingManager) {
+class DiscoveryServer(
+    private val pairing: PairingManager,
+    private val bindPort: Int = Protocol.DISCOVERY_PORT,
+) {
+    init {
+        require(bindPort in 0..65535) { "Discovery port must be between 0 and 65535" }
+    }
+
     private val lock = Any()
     @Volatile private var running = false
     @Volatile private var socket: DatagramSocket? = null
     private var workerThread: Thread? = null
     private var executor: ExecutorService? = null
+
+    internal val isRunning: Boolean
+        get() = synchronized(lock) { running && executor != null }
+
+    internal val localPort: Int
+        get() = synchronized(lock) { socket?.localPort ?: -1 }
 
     fun start() {
         val worker: ExecutorService
@@ -55,7 +68,7 @@ class DiscoveryServer(private val pairing: PairingManager) {
                 reuseAddress = true
                 broadcast = true
                 soTimeout = 1000
-                bind(InetSocketAddress(Protocol.DISCOVERY_PORT))
+                bind(InetSocketAddress(bindPort))
             }
             synchronized(lock) {
                 if (executor !== worker || !running) return
@@ -69,6 +82,7 @@ class DiscoveryServer(private val pairing: PairingManager) {
                 } catch (_: SocketTimeoutException) {
                     continue
                 }
+                if (!owns(worker)) break
                 val message = String(request.data, request.offset, request.length, Charsets.UTF_8)
                 if (message != Protocol.DISCOVERY_REQUEST) continue
                 val response = JSONObject()
