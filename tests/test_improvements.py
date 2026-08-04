@@ -319,6 +319,8 @@ class ImprovementTests(unittest.TestCase):
         self.assertEqual(honor_module_name("com.huawei.phone.recorder"), "com.hihonor.phone.recorder")
         self.assertEqual(honor_module_name("com.huawei.aod"), "com.hihonor.aod")
         self.assertEqual(honor_resource_name("hwtoolbar_background"), "hntoolbar_background")
+        self.assertEqual(honor_resource_name("navigationbar_emui_light"), "navigationbar_magic_light")
+        self.assertEqual(honor_resource_name("dial_hwfab_shadow_start"), "dial_hnfab_shadow_start")
         self.assertEqual(
             honor_resource_path("framework-res-hwext/res/drawable/emui_status.png"),
             "framework-res-hnext/res/drawable/magic_status.png",

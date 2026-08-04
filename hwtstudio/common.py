@@ -49,11 +49,7 @@ def honor_module_name(value: str) -> str:
 
 
 def honor_resource_name(value: str) -> str:
-    if value.startswith("emui"):
-        return "magic" + value[4:]
-    if value.startswith("hw"):
-        return "hn" + value[2:]
-    return value
+    return value.replace("emui", "magic").replace("hw", "hn")
 
 
 def honor_resource_path(value: str) -> str:
