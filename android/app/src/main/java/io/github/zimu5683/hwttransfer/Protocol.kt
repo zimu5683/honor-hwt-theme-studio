@@ -5,6 +5,8 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.security.MessageDigest
+import java.text.Normalizer
+import java.util.HashSet
 import java.util.zip.ZipFile
 
 object Protocol {
@@ -20,6 +22,7 @@ object Protocol {
     const val MAX_ARCHIVE_ENTRY_BYTES = 256L * 1024L * 1024L
     const val MAX_ARCHIVE_UNCOMPRESSED_BYTES = 512L * 1024L * 1024L
     const val MAX_ARCHIVE_ENTRIES = 20_000
+    const val MAX_ARCHIVE_COMPRESSION_RATIO = 500.0
     const val MAX_CLIENT_NAME_CODE_POINTS = 60
     const val MAX_PAIR_BODY_BYTES = 16L * 1024L
     const val MAX_TRANSFER_PREPARE_BODY_BYTES = 16L * 1024L
@@ -122,6 +125,7 @@ object Protocol {
                 if (description == null || description.isDirectory) {
                     throw TransferException(422, "invalid_hwt", "HWT 中缺少 description.xml")
                 }
+                val normalizedNames = HashSet<String>()
                 val sizes = buildList {
                     val entries = archive.entries()
                     var entryCount = 0
@@ -129,7 +133,17 @@ object Protocol {
                         val entry = entries.nextElement()
                         entryCount += 1
                         validateArchiveEntryCount(entryCount)
-                        if (!entry.isDirectory) add(entry.size)
+                        val normalizedName = normalizeArchivePath(entry.name)
+                        if (!isSafeArchivePath(normalizedName)) {
+                            throw TransferException(422, "invalid_hwt", "HWT ZIP 路径不安全")
+                        }
+                        if (!normalizedNames.add(normalizedName)) {
+                            throw TransferException(422, "invalid_hwt", "HWT ZIP 存在规范化后的重复路径")
+                        }
+                        if (!entry.isDirectory) {
+                            validateArchiveCompression(entry.size, entry.compressedSize)
+                            add(entry.size)
+                        }
                     }
                 }
                 validateArchiveBudget(sizes)
@@ -138,6 +152,28 @@ object Protocol {
             throw exc
         } catch (exc: Exception) {
             throw TransferException(422, "invalid_hwt", "HWT ZIP 结构损坏")
+        }
+    }
+
+    internal fun normalizeArchivePath(value: String): String =
+        Normalizer.normalize(value, Normalizer.Form.NFC)
+
+    internal fun isSafeArchivePath(value: String): Boolean {
+        if (value.isEmpty() || value.contains('\\') || value.contains(':') ||
+            value.contains("\u0000") || value.startsWith('/')) {
+            return false
+        }
+        val path = value.removeSuffix("/")
+        if (path.isEmpty()) return false
+        return path.split('/').all { part -> part.isNotEmpty() && part != "." && part != ".." }
+    }
+
+    internal fun validateArchiveCompression(size: Long, compressedSize: Long) {
+        if (size < 0L || compressedSize < 0L || (size > 0L && compressedSize == 0L)) {
+            throw TransferException(422, "invalid_hwt", "HWT ZIP 压缩大小无效")
+        }
+        if (size > 0L && size.toDouble() / compressedSize.toDouble() > MAX_ARCHIVE_COMPRESSION_RATIO) {
+            throw TransferException(422, "invalid_hwt", "HWT ZIP 压缩比超过限制")
         }
     }
 

@@ -57,7 +57,7 @@ class ProtocolTest {
             .put(JSONObject().put("name", "负时间").put("token_hash", validHash).put("paired_at", -1L))
             .put(JSONObject().put("name", "小数时间").put("token_hash", validHash).put("paired_at", 1.5))
 
-        assertTrue(PairingManager.parseClients(raw).isEmpty())
+        assertTrue(PairingManager.parseClients(raw.toString()).isEmpty())
     }
 
     @Test
@@ -67,7 +67,7 @@ class ProtocolTest {
             .put(JSONObject().put("name", "带\n换行").put("token_hash", validHash).put("paired_at", 123L))
             .put(JSONObject().put("name", "x".repeat(Protocol.MAX_CLIENT_NAME_CODE_POINTS + 1)).put("token_hash", validHash).put("paired_at", 123L))
 
-        assertTrue(PairingManager.parseClients(raw).isEmpty())
+        assertTrue(PairingManager.parseClients(raw.toString()).isEmpty())
     }
 
     @Test
@@ -196,6 +196,58 @@ class ProtocolTest {
             Protocol.validateHwt(file)
         } finally {
             file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsUnsafeAndNormalizedDuplicatePaths() {
+        val file = File.createTempFile("unsafe", ".hwt")
+        try {
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("e\u0301.txt"))
+                zip.write(byteArrayOf(1))
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("\u00e9.txt"))
+                zip.write(byteArrayOf(2))
+                zip.closeEntry()
+            }
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsHighCompressionRatioBeforeReadingEntry() {
+        val file = File.createTempFile("bomb", ".hwt")
+        try {
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("bomb.bin"))
+                zip.write(ByteArray(2 * 1024 * 1024))
+                zip.closeEntry()
+            }
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun archivePathAndCompressionHelpersKeepSafeBoundaries() {
+        assertTrue(Protocol.isSafeArchivePath("preview/cover.jpg"))
+        assertTrue(!Protocol.isSafeArchivePath("../escape.jpg"))
+        assertEquals("\u00e9.txt", Protocol.normalizeArchivePath("e\u0301.txt"))
+        Protocol.validateArchiveCompression(500L, 1L)
+        assertThrows(TransferException::class.java) {
+            Protocol.validateArchiveCompression(501L, 1L)
         }
     }
 
