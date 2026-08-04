@@ -24,9 +24,11 @@ from hwtstudio.phone_transfer import (
     MAX_REGISTRY_BYTES,
     MAX_RESPONSE_BYTES,
     PhoneDevice,
+    PhoneProfile,
     PhoneRegistry,
     PhoneTransferError,
     TransferCancelled,
+    _merge_saved,
     _error_from_response,
     _interprocess_lock,
     discover_phones,
@@ -286,6 +288,40 @@ class InvalidShapeDiscoverySocket(FakeDiscoverySocket):
 
 
 class PhoneTransferTests(unittest.TestCase):
+    def test_saved_credentials_are_bound_to_the_identified_endpoint(self):
+        profile = PhoneProfile(model="已确认手机")
+        saved = {
+            "phone-1": PhoneDevice(
+                "phone-1",
+                "已配对手机",
+                "10.0.0.8",
+                port=48621,
+                token="saved-token",
+                profile=profile,
+            )
+        }
+
+        same_endpoint = _merge_saved(
+            PhoneDevice("phone-1", "发现手机", "10.0.0.8", port=48621),
+            saved,
+        )
+        self.assertEqual(same_endpoint.token, "saved-token")
+        self.assertIs(same_endpoint.profile, profile)
+
+        moved_endpoint = _merge_saved(
+            PhoneDevice("phone-1", "冒用手机", "10.0.0.9", port=48621),
+            saved,
+        )
+        self.assertEqual(moved_endpoint.token, "")
+        self.assertIsNone(moved_endpoint.profile)
+
+        moved_port = _merge_saved(
+            PhoneDevice("phone-1", "冒用手机", "10.0.0.8", port=48622),
+            saved,
+        )
+        self.assertEqual(moved_port.token, "")
+        self.assertIsNone(moved_port.profile)
+
     def test_chunked_upload_sends_offsets_and_both_sha256_values(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "分块主题.hwt"
@@ -1283,7 +1319,7 @@ class PhoneTransferTests(unittest.TestCase):
     def test_registry_and_discovery_preserve_token(self):
         with tempfile.TemporaryDirectory() as directory:
             registry = PhoneRegistry(Path(directory) / "phones.json")
-            registry.update(PhoneDevice("phone-1", "旧名称", "10.0.0.2", token="secret"))
+            registry.update(PhoneDevice("phone-1", "旧名称", "10.0.0.8", token="secret"))
             with patch("hwtstudio.phone_transfer.socket.socket", FakeDiscoverySocket):
                 devices = discover_phones(timeout=0.01, registry=registry)
             self.assertEqual(len(devices), 1)

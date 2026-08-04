@@ -379,7 +379,7 @@ def _payload_strings(value: object, *, context: str = "", strict: bool = False) 
 
 def _merge_saved(device: PhoneDevice, saved: dict[str, PhoneDevice]) -> PhoneDevice:
     previous = saved.get(device.device_id)
-    if previous:
+    if previous and previous.host == device.host and previous.port == device.port:
         device.token = previous.token
         device.profile = previous.profile
     return device
