@@ -634,6 +634,29 @@ class ImprovementTests(unittest.TestCase):
                 self.assertNotEqual(loaded.source_path, "cached.hwt")
                 self.assertIn("已回退", warning)
 
+    def test_preferred_catalog_rejects_cache_when_source_hash_changes(self):
+        slot = copy.deepcopy(self.catalog.resources[0])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.hwt"
+            source.write_bytes(b"original source")
+            cached_catalog = ThemeCatalog(
+                str(source),
+                catalog_service._bounded_sha256(source) or "",
+                "now",
+                {"resource_slots": 1},
+                [],
+                [slot],
+            )
+            save_catalog(cached_catalog, root / "catalog_daxue.json")
+            source.write_bytes(b"replaced source")
+
+            with patch("hwtstudio.services.catalog_service.data_dir", return_value=root):
+                loaded, warning = load_preferred_catalog()
+
+            self.assertNotEqual(loaded.source_path, str(source))
+            self.assertIn("已过期", warning)
+
     def test_user_catalog_save_writes_source_compatibility_report(self):
         catalog = ThemeCatalog(
             "source.hwt",

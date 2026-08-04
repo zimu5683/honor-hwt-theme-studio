@@ -60,6 +60,20 @@ def _bounded_sha256(path: Path) -> str | None:
         return None
 
 
+def _catalog_source_is_stale(catalog: ThemeCatalog) -> bool:
+    source_name = catalog.source_path
+    if not source_name:
+        return False
+    source = Path(source_name)
+    if not source.is_file():
+        return False
+    expected = catalog.source_sha256
+    if not expected:
+        return True
+    actual = _bounded_sha256(source)
+    return actual != expected.lower()
+
+
 def _safe_unlink(path: Path) -> None:
     try:
         path.unlink(missing_ok=True)
@@ -266,9 +280,11 @@ def _load_preferred_catalog_unlocked(root: Path) -> tuple[ThemeCatalog, str]:
             catalog = load_catalog(cached)
             if not catalog.resources:
                 raise ValueError("资源目录为空")
+            if _catalog_source_is_stale(catalog):
+                raise ValueError("缓存对应的源主题已变化，缓存已过期")
             return catalog, warning
         except Exception as exc:
-            fallback_warning = f"用户扫描目录损坏，已回退到内置目录：{exc}"
+            fallback_warning = f"用户扫描目录已过期或损坏，已回退到内置目录：{exc}"
             warning = f"{warning}\n{fallback_warning}" if warning else fallback_warning
     bundled = bundled_catalog()
     if bundled.is_file():
