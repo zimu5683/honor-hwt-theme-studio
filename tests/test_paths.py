@@ -10,6 +10,25 @@ from hwtstudio.paths import data_dir
 
 
 class PathTests(unittest.TestCase):
+    def test_data_dir_falls_back_when_localappdata_is_empty(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / "home"
+            expected_root = home / "AppData" / "Local" if os.name == "nt" else home / ".local" / "share"
+            with (
+                patch.dict(os.environ, {"LOCALAPPDATA": ""}, clear=False),
+                patch("hwtstudio.paths.Path.home", return_value=home),
+            ):
+                result = data_dir()
+            self.assertEqual(result, expected_root / "HwtThemeStudio")
+            self.assertTrue(result.is_dir())
+
+    def test_data_dir_rejects_relative_localappdata(self):
+        if os.name != "nt":
+            self.skipTest("LOCALAPPDATA 仅用于 Windows")
+        with patch.dict(os.environ, {"LOCALAPPDATA": "relative-app-data"}, clear=False):
+            with self.assertRaisesRegex(OSError, "必须是绝对路径"):
+                data_dir()
+
     def test_data_dir_rejects_application_path_that_is_a_file(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

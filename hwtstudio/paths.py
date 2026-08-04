@@ -18,9 +18,12 @@ def bundle_root() -> Path:
 
 def data_dir() -> Path:
     if os.name == "nt":
-        root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        configured_root = os.environ.get("LOCALAPPDATA", "").strip()
+        root = Path(configured_root) if configured_root else Path.home() / "AppData" / "Local"
     else:
         root = Path.home() / ".local" / "share"
+    if not root.is_absolute():
+        raise OSError("应用数据根目录必须是绝对路径")
     if root.is_symlink() or (root.exists() and not root.is_dir()):
         raise OSError("应用数据根目录不是普通目录")
     path = root / "HwtThemeStudio"
