@@ -1028,9 +1028,10 @@ class PhoneTransferTests(unittest.TestCase):
     def test_registry_lock_has_bounded_wait(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "phones.json"
+            lock_call = "hwtstudio.locking.msvcrt.locking" if os.name == "nt" else "hwtstudio.locking.fcntl.flock"
             with (
-                patch("hwtstudio.phone_transfer.time.monotonic", side_effect=[0.0, 6.0]),
-                patch("hwtstudio.phone_transfer.msvcrt.locking", side_effect=OSError("busy")),
+                patch("hwtstudio.locking.time.monotonic", side_effect=[0.0, 6.0]),
+                patch(lock_call, side_effect=OSError("busy")),
             ):
                 with self.assertRaisesRegex(OSError, "超时"):
                     with _interprocess_lock(path):

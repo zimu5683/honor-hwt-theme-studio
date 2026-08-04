@@ -5,7 +5,10 @@ import json
 import os
 import re
 import shutil
+import threading
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 from ..catalog import (
     load_catalog,
@@ -14,6 +17,7 @@ from ..catalog import (
     scan_theme,
 )
 from ..common import MAX_CATALOG_BYTES
+from ..locking import InterprocessLockTimeoutError, interprocess_lock
 from ..models import ThemeCatalog
 from ..paths import bundled_catalog, data_dir, default_source_theme, unique_temp_path
 
@@ -24,6 +28,23 @@ _TRANSACTION_FILE_NAME = ".catalog_bundle.transaction.json"
 _TRANSACTION_SCHEMA = 1
 _MAX_TRANSACTION_BYTES = 16 * 1024
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_CATALOG_LOCK_TIMEOUT = 5.0
+_CATALOG_LOCK_GUARD = threading.Lock()
+_CATALOG_LOCKS: dict[Path, threading.RLock] = {}
+
+
+@contextmanager
+def _catalog_bundle_lock(root: Path) -> Iterator[None]:
+    target = (root / _CATALOG_FILE_NAME).resolve()
+    with _CATALOG_LOCK_GUARD:
+        thread_lock = _CATALOG_LOCKS.setdefault(target, threading.RLock())
+    with thread_lock:
+        with interprocess_lock(
+            target,
+            timeout=_CATALOG_LOCK_TIMEOUT,
+            timeout_message="用户资源目录锁等待超时",
+        ):
+            yield
 
 
 def _bounded_sha256(path: Path) -> str | None:
@@ -236,9 +257,8 @@ def _save_catalog_bundle(catalog: ThemeCatalog, root: Path) -> None:
             _safe_unlink(backup)
 
 
-def load_preferred_catalog() -> tuple[ThemeCatalog, str]:
+def _load_preferred_catalog_unlocked(root: Path) -> tuple[ThemeCatalog, str]:
     """Load a valid user scan first, falling back to bundled/source data."""
-    root = data_dir()
     recovered, warning = _recover_catalog_transaction(root)
     cached = root / _CATALOG_FILE_NAME
     if recovered and cached.is_file():
@@ -262,9 +282,22 @@ def load_preferred_catalog() -> tuple[ThemeCatalog, str]:
     return catalog, warning
 
 
+def load_preferred_catalog() -> tuple[ThemeCatalog, str]:
+    root = data_dir()
+    try:
+        with _catalog_bundle_lock(root):
+            return _load_preferred_catalog_unlocked(root)
+    except InterprocessLockTimeoutError:
+        bundled = bundled_catalog()
+        if bundled.is_file():
+            return load_catalog(bundled), "用户资源目录正在被其他进程更新，已暂时使用内置目录"
+        raise
+
+
 def save_user_catalog(catalog: ThemeCatalog) -> None:
     root = data_dir()
-    recovered, warning = _recover_catalog_transaction(root)
-    if not recovered:
-        raise OSError(warning)
-    _save_catalog_bundle(catalog, root)
+    with _catalog_bundle_lock(root):
+        recovered, warning = _recover_catalog_transaction(root)
+        if not recovered:
+            raise OSError(warning)
+        _save_catalog_bundle(catalog, root)

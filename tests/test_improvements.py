@@ -7,9 +7,11 @@ import shutil
 import stat
 import struct
 import tempfile
+import time
 import threading
 import unittest
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -30,6 +32,7 @@ from hwtstudio.common import (
     honor_resource_path,
 )
 from hwtstudio.exporter import export_theme, preflight_export, safe_filename
+from hwtstudio.locking import InterprocessLockTimeoutError
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
 from hwtstudio.models import ThemeCatalog
 from hwtstudio.paths import bundled_catalog
@@ -647,6 +650,77 @@ class ImprovementTests(unittest.TestCase):
             report = json.loads((root / "source_compatibility.report.json").read_text(encoding="utf-8"))
             self.assertEqual(report["summary"]["compatibility_warnings"], 1)
             self.assertTrue((root / "catalog_daxue.json").is_file())
+
+    def test_user_catalog_load_falls_back_when_bundle_lock_is_busy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch("hwtstudio.services.catalog_service.data_dir", return_value=root),
+                patch(
+                    "hwtstudio.services.catalog_service.interprocess_lock",
+                    side_effect=InterprocessLockTimeoutError("busy"),
+                ),
+            ):
+                loaded, warning = load_preferred_catalog()
+
+            self.assertTrue(loaded.resources)
+            self.assertIn("内置目录", warning)
+
+    def test_user_catalog_save_fails_before_writing_when_bundle_lock_is_busy(self):
+        catalog = ThemeCatalog("source.hwt", "a" * 64, "now", {"modules": 1}, [], [])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch("hwtstudio.services.catalog_service.data_dir", return_value=root),
+                patch(
+                    "hwtstudio.services.catalog_service.interprocess_lock",
+                    side_effect=InterprocessLockTimeoutError("busy"),
+                ),
+            ):
+                with self.assertRaisesRegex(OSError, "busy"):
+                    save_user_catalog(catalog)
+
+            self.assertFalse((root / catalog_service._CATALOG_FILE_NAME).exists())
+            self.assertFalse((root / catalog_service._REPORT_FILE_NAME).exists())
+
+    def test_user_catalog_save_serializes_threads_before_bundle_commit(self):
+        first = ThemeCatalog("first.hwt", "a" * 64, "first", {"modules": 1}, [], [])
+        second = ThemeCatalog("second.hwt", "b" * 64, "second", {"modules": 2}, [], [])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            active = 0
+            maximum_active = 0
+            state_lock = threading.Lock()
+            entered = threading.Event()
+            release = threading.Event()
+
+            def hold_bundle(_catalog, _root):
+                nonlocal active, maximum_active
+                with state_lock:
+                    active += 1
+                    maximum_active = max(maximum_active, active)
+                entered.set()
+                if not release.wait(2):
+                    raise AssertionError("测试未释放目录事务")
+                with state_lock:
+                    active -= 1
+
+            with (
+                patch("hwtstudio.services.catalog_service.data_dir", return_value=root),
+                patch("hwtstudio.services.catalog_service._save_catalog_bundle", side_effect=hold_bundle),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                first_future = executor.submit(save_user_catalog, first)
+                self.assertTrue(entered.wait(2))
+                second_future = executor.submit(save_user_catalog, second)
+                time.sleep(0.1)
+                with state_lock:
+                    self.assertEqual(active, 1)
+                release.set()
+                first_future.result(timeout=5)
+                second_future.result(timeout=5)
+
+            self.assertEqual(maximum_active, 1)
 
     def test_user_catalog_save_rolls_back_both_files_when_second_replace_fails(self):
         old = ThemeCatalog("old.hwt", "a" * 64, "old", {"modules": 1}, [], [])
