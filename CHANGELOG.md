@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 华为/荣耀资源映射改为按资源键和包名前缀边界匹配，避免 `myhwvalue`、`com.huawei2` 等普通名称被误改写；已确认的 `emui`、`hw`、框架目录和包名映射保持兼容。
 - Android SAF 切换 Honor/Themes 目录时会在新授权成功持久化后释放旧 tree URI，避免反复选择目录积累
   持久化读写权限；新目录验证或保存失败时仍保留旧授权。
 - 手机自动发现参考 LocalSend 的 HTTP legacy fallback：UDP 没有结果时，仅对活动网卡推导的私有

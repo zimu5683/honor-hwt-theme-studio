@@ -671,6 +671,18 @@ class ImprovementTests(unittest.TestCase):
             "dynamic_icons/com.hihonor.deskclock/clock.png",
         )
 
+    def test_huawei_mapping_does_not_rewrite_unrelated_substrings(self):
+        self.assertEqual(honor_resource_name("myhwvalue"), "myhwvalue")
+        self.assertEqual(honor_resource_name("emui2_panel"), "emui2_panel")
+        self.assertEqual(
+            honor_resource_path("dynamic_icons/com.huawei2/weather.png"),
+            "dynamic_icons/com.huawei2/weather.png",
+        )
+        self.assertEqual(
+            honor_resource_path("res/drawable/myemui_panel.png"),
+            "res/drawable/myemui_panel.png",
+        )
+
     def test_huawei_icon_fanout_is_exact_and_module_scoped(self):
         self.assertEqual(
             honor_resource_paths("icons", "com.vmall.client.png"),
