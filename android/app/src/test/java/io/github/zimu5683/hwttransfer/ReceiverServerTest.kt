@@ -10,6 +10,24 @@ import org.junit.Test
 
 class ReceiverServerTest {
     @Test
+    fun cachedTransferRequiresTheSameNormalizedFileIdentity() {
+        val cached = InstallResult(
+            storedName = "原主题.hwt",
+            destination = "Honor/Themes/原主题.hwt",
+            size = 7L,
+            sha256 = "a".repeat(64),
+            overwritten = false,
+        )
+
+        validateCachedTransfer(cached, "原主题.hwt", 7L, "A".repeat(64))
+        val error = org.junit.Assert.assertThrows(TransferException::class.java) {
+            validateCachedTransfer(cached, "另一主题.hwt", 7L, "a".repeat(64))
+        }
+        assertEquals(409, error.status)
+        assertEquals("transfer_id_reused", error.code)
+    }
+
+    @Test
     fun chunkCommitRequiresAnEmptyRequestBody() {
         validateEmptyRequestLength(0L)
         val error = org.junit.Assert.assertThrows(TransferException::class.java) {

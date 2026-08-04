@@ -37,6 +37,20 @@ internal fun validateEmptyRequestLength(declaredSize: Long) {
     }
 }
 
+internal fun validateCachedTransfer(
+    cached: InstallResult,
+    requestedName: String,
+    declaredSize: Long,
+    expectedHash: String,
+) {
+    if (cached.storedName != requestedName ||
+        cached.size != declaredSize ||
+        !cached.sha256.equals(expectedHash, ignoreCase = true)
+    ) {
+        throw TransferException(409, "transfer_id_reused", "上传会话标识已用于其他文件")
+    }
+}
+
 class ReceiverServer(
     context: Context,
     private val pairing: PairingManager,
@@ -602,9 +616,7 @@ class ReceiverServer(
             }
             val cached = cachedTransfer(transferId)
             if (cached != null) {
-                if (cached.size != declaredSize || !cached.sha256.equals(expectedHash, ignoreCase = true)) {
-                    throw TransferException(409, "transfer_id_reused", "上传会话标识已用于其他文件")
-                }
+                validateCachedTransfer(cached, name, declaredSize, expectedHash)
                 if (!Protocol.sha256(tempFile).equals(cached.sha256, ignoreCase = true)) {
                     throw TransferException(422, "hash_mismatch", "重试文件的 SHA-256 与原上传不一致")
                 }
