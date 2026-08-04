@@ -215,6 +215,51 @@ class ImprovementTests(unittest.TestCase):
             self.assertTrue(project.dirty)
             self.assertIsNone(project.project_file)
 
+    def test_project_save_rejects_asset_changed_during_copy(self):
+        slot = next(item for item in self.catalog.resources if item.resource_type == "wallpaper")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "wallpaper.png"
+            source.write_bytes(b"original")
+            target = root / "theme.hwtproj.json"
+            project = ThemeProject()
+            project.set_change(ResourceChange(slot_id=slot.id, source_file=str(source)))
+            original_copy2 = shutil.copy2
+
+            def copy_then_mutate(source_path, destination):
+                result = original_copy2(source_path, destination)
+                Path(source_path).write_bytes(b"changed")
+                return result
+
+            with patch("hwtstudio.services.project_assets.shutil.copy2", side_effect=copy_then_mutate):
+                with self.assertRaisesRegex(OSError, "复制时发生变化"):
+                    save_project(project, target)
+
+            self.assertFalse(target.exists())
+            self.assertFalse(project_assets_dir(target).exists())
+            self.assertTrue(project.dirty)
+
+    def test_project_save_rejects_symlinked_asset_entries(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "theme.hwtproj.json"
+            asset_dir = project_assets_dir(target)
+            asset_dir.mkdir()
+            outside = root / "outside.bin"
+            outside.write_bytes(b"outside")
+            try:
+                os.symlink(outside, asset_dir / "linked.bin")
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建符号链接：{exc}")
+
+            with self.assertRaisesRegex(ValueError, "不能包含符号链接"):
+                save_project(ThemeProject(), target)
+
+            self.assertFalse(target.exists())
+            self.assertTrue((asset_dir / "linked.bin").is_symlink())
+
     def test_project_save_commit_failure_restores_project_and_assets(self):
         slot = next(item for item in self.catalog.resources if item.resource_type == "wallpaper")
         with tempfile.TemporaryDirectory() as directory:

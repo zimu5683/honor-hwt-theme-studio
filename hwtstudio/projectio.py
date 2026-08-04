@@ -8,7 +8,13 @@ from pathlib import Path
 from .common import MAX_PROJECT_BYTES
 from .models import ResourceSlot, ThemeProject
 from .paths import unique_temp_path
-from .services.project_assets import collect_project_assets, missing_project_assets, project_assets_dir, resolve_source
+from .services.project_assets import (
+    collect_project_assets,
+    ensure_no_symlinks,
+    missing_project_assets,
+    project_assets_dir,
+    resolve_source,
+)
 from .validation import validate_custom_slot
 
 __all__ = ["load_project", "missing_project_assets", "project_assets_dir", "save_project"]
@@ -139,7 +145,10 @@ def save_project(project: ThemeProject, path: Path) -> Path:
         _cleanup_path(temp)
         _cleanup_path(asset_backup)
         _cleanup_path(project_backup)
+        if asset_dir.is_symlink():
+            raise ValueError("工程资产目录不能是符号链接")
         if (has_file_assets or asset_dir.exists()) and asset_dir.is_dir() and not asset_dir.is_symlink():
+            ensure_no_symlinks(asset_dir)
             shutil.copytree(asset_dir, asset_stage)
         collected = collect_project_assets(
             project,

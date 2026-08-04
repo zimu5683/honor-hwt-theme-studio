@@ -44,6 +44,30 @@ def resolve_source(source: str, project_file: Path | None) -> Path:
     return path.resolve()
 
 
+def ensure_no_symlinks(root: Path) -> None:
+    root = Path(root)
+    if root.is_symlink():
+        raise ValueError("工程资产目录不能是符号链接")
+    for directory, directories, files in os.walk(root, followlinks=False):
+        for name in (*directories, *files):
+            if (Path(directory) / name).is_symlink():
+                raise ValueError("工程资产目录不能包含符号链接")
+
+
+def _file_signature(path: Path) -> tuple[int, int, int, int]:
+    stat = Path(path).stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
+
+
+def _ensure_file_unchanged(path: Path, expected: tuple[int, int, int, int]) -> None:
+    try:
+        current = _file_signature(path)
+    except OSError as exc:
+        raise OSError(f"工程图片在复制时不可用：{path}") from exc
+    if current != expected:
+        raise OSError(f"工程图片在复制时发生变化：{path}")
+
+
 def missing_project_assets(project: ThemeProject) -> list[tuple[str, Path]]:
     missing: list[tuple[str, Path]] = []
     for slot_id, change in project.changes.items():
@@ -76,6 +100,7 @@ def collect_project_assets(
             raise FileNotFoundError(f"工程图片不存在：{source}")
         copy_dir.mkdir(parents=True, exist_ok=True)
         target = copy_dir / asset_name(slot_id, source.name)
+        source_signature = _file_signature(source)
         try:
             same_file = target.exists() and os.path.samefile(source, target)
         except OSError:
@@ -84,6 +109,7 @@ def collect_project_assets(
             copy_temp = unique_temp_path(target)
             try:
                 shutil.copy2(source, copy_temp)
+                _ensure_file_unchanged(source, source_signature)
                 os.replace(copy_temp, target)
             finally:
                 copy_temp.unlink(missing_ok=True)
