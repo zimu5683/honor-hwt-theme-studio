@@ -290,9 +290,11 @@ def _payload_text(payload: dict, key: str, context: str, *, required: bool = Fal
         return default
     if not isinstance(value, str) or (required and not value.strip()):
         raise PhoneTransferError(f"手机返回了无效的{context}{key}", code="bad_response")
-    normalized = value.strip()
-    if len(normalized) > MAX_REMOTE_TEXT_CHARS or any(ord(character) < 32 or ord(character) == 127 for character in normalized):
+    if len(value) > MAX_REMOTE_TEXT_CHARS or any(
+        ord(character) < 32 or ord(character) == 127 for character in value
+    ):
         raise PhoneTransferError(f"手机返回的{context}{key}过长或包含控制字符", code="bad_response")
+    normalized = value.strip()
     return normalized
 
 

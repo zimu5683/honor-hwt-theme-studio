@@ -918,6 +918,19 @@ class PhoneTransferTests(unittest.TestCase):
         self.assertNotIn("\x00", str(error))
         self.assertLessEqual(len(str(error)), MAX_REMOTE_ERROR_CHARS + 3)
 
+    def test_remote_text_fields_reject_control_characters_at_edges(self):
+        for value in ("\nphone-1", "phone-1\n", "\tphone-1", "phone-1\t"):
+            FakeHttpConnection.response_payload = {
+                "protocol": 1,
+                "device_id": value,
+                "name": "测试手机",
+            }
+            with self.subTest(value=repr(value)):
+                with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
+                    with self.assertRaisesRegex(PhoneTransferError, "过长或包含控制字符") as raised:
+                        probe_phone("127.0.0.1")
+                self.assertEqual(raised.exception.code, "bad_response")
+
     def test_oversized_remote_response_is_rejected(self):
         device = PhoneDevice("phone-1", "测试手机", "127.0.0.1")
         FakeHttpConnection.response_payload = {
