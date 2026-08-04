@@ -10,10 +10,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.SocketException
 import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
@@ -77,6 +79,25 @@ class DiscoveryServerTest {
         } finally {
             server.stop()
             replacement?.stop()
+        }
+    }
+
+    @Test
+    fun startupFailureIsReportedAndWorkerIsReleased() {
+        val server = DiscoveryServer(
+            PairingManager(context),
+            bindPort = 0,
+            socketFactory = { throw SocketException("simulated bind failure") },
+        )
+        try {
+            val error = runCatching { server.start() }.exceptionOrNull()
+
+            assertTrue(error is IOException)
+            assertTrue(error?.cause is SocketException)
+            assertFalse(server.isRunning)
+            assertEquals(-1, server.localPort)
+        } finally {
+            server.stop()
         }
     }
 
