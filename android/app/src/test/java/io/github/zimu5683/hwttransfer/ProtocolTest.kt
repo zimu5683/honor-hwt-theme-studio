@@ -8,6 +8,7 @@ import org.junit.Test
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -216,6 +217,35 @@ class ProtocolTest {
                 zip.closeEntry()
             }
             Protocol.validateHwt(file)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsCrcCorruption() {
+        val file = File.createTempFile("crc", ".hwt")
+        val content = byteArrayOf(0x11, 0x22, 0x33, 0x44, 0x55)
+        try {
+            val entry = ZipEntry("description.xml").apply {
+                method = ZipEntry.STORED
+                size = content.size.toLong()
+                crc = CRC32().apply { update(content) }.value
+            }
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(entry)
+                zip.write(content)
+                zip.closeEntry()
+            }
+            val encoded = file.readBytes()
+            val offset = (0..encoded.size - content.size).first { index ->
+                content.indices.all { encoded[index + it] == content[it] }
+            }
+            encoded[offset] = (encoded[offset].toInt() xor 0x01).toByte()
+            file.writeBytes(encoded)
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
         } finally {
             file.delete()
         }

@@ -181,11 +181,44 @@ object Protocol {
                     }
                 }
                 validateArchiveBudget(sizes)
+                validateArchiveContents(archive)
             }
         } catch (exc: TransferException) {
             throw exc
         } catch (exc: Exception) {
             throw TransferException(422, "invalid_hwt", "HWT ZIP 结构损坏")
+        }
+    }
+
+    private fun validateArchiveContents(archive: ZipFile) {
+        val buffer = ByteArray(1024 * 1024)
+        var totalBytes = 0L
+        try {
+            val entries = archive.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                if (entry.isDirectory) continue
+                var entryBytes = 0L
+                archive.getInputStream(entry).use { input ->
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        entryBytes += count
+                        totalBytes += count
+                        if (entryBytes > MAX_ARCHIVE_ENTRY_BYTES ||
+                            totalBytes > MAX_ARCHIVE_UNCOMPRESSED_BYTES
+                        ) {
+                            throw TransferException(422, "invalid_hwt", "HWT ZIP 解压总量超过限制")
+                        }
+                    }
+                }
+            }
+        } catch (exc: TransferException) {
+            throw exc
+        } catch (exc: Exception) {
+            throw TransferException(422, "invalid_hwt", "HWT ZIP 内容校验失败").also {
+                it.addSuppressed(exc)
+            }
         }
     }
 
