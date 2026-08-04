@@ -44,6 +44,7 @@ from hwtstudio.phone_transfer import TransferCancelled
 from hwtstudio.ssh_transfer import REMOTE_DIR, preflight_phone, transfer_to_phone
 from hwtstudio.services.catalog_service import load_preferred_catalog, save_user_catalog
 from hwtstudio.services import catalog_service
+from hwtstudio.services.project_assets import asset_name, collect_project_assets
 from hwtstudio.ui.dialogs import find_named_files
 from hwtstudio.validation import validate_custom_slot, validate_theme
 from hwtstudio.xmlutil import parse_xml
@@ -352,6 +353,77 @@ class ImprovementTests(unittest.TestCase):
 
             self.assertFalse(target.exists())
             self.assertTrue((asset_dir / "linked.bin").is_symlink())
+
+    def test_collect_project_assets_rejects_symlinked_staging_directory(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        slot = next(item for item in self.catalog.resources if item.resource_type == "wallpaper")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "wallpaper.png"
+            source.write_bytes(b"image")
+            project = ThemeProject()
+            project.set_change(ResourceChange(slot_id=slot.id, source_file=str(source)))
+            outside = root / "outside"
+            outside.mkdir()
+            link = root / "staging"
+            try:
+                os.symlink(outside, link, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
+            with self.assertRaisesRegex(ValueError, "工程资产暂存目录.*普通目录"):
+                collect_project_assets(
+                    project,
+                    root / "theme.hwtproj.json",
+                    project.to_dict(),
+                    staging_dir=link,
+                )
+            self.assertEqual(list(outside.iterdir()), [])
+
+    def test_collect_project_assets_rejects_symlinked_target_and_copy_temp(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        slot = next(item for item in self.catalog.resources if item.resource_type == "wallpaper")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "wallpaper.png"
+            source.write_bytes(b"image")
+            project = ThemeProject()
+            project.set_change(ResourceChange(slot_id=slot.id, source_file=str(source)))
+            staging = root / "staging"
+            staging.mkdir()
+            target = staging / asset_name(slot.id, source.name)
+            outside = root / "outside.bin"
+            outside.write_bytes(b"keep")
+            try:
+                os.symlink(outside, target)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建文件符号链接：{exc}")
+            with self.assertRaisesRegex(ValueError, "工程资产目标.*普通文件"):
+                collect_project_assets(
+                    project,
+                    root / "theme.hwtproj.json",
+                    project.to_dict(),
+                    staging_dir=staging,
+                )
+            self.assertTrue(target.is_symlink())
+            self.assertEqual(outside.read_bytes(), b"keep")
+
+            target.unlink()
+            copy_temp = unique_temp_path(target)
+            try:
+                os.symlink(outside, copy_temp)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建文件符号链接：{exc}")
+            with self.assertRaisesRegex(ValueError, "工程资产临时文件.*普通文件"):
+                collect_project_assets(
+                    project,
+                    root / "theme.hwtproj.json",
+                    project.to_dict(),
+                    staging_dir=staging,
+                )
+            self.assertTrue(copy_temp.is_symlink())
+            self.assertEqual(outside.read_bytes(), b"keep")
 
     def test_project_save_rejects_non_file_targets_without_replacing_them(self):
         with tempfile.TemporaryDirectory() as directory:
