@@ -287,9 +287,15 @@ def download_asset(
     if not expected:
         raise ValueError("发布包缺少有效 SHA-256 校验值，已拒绝自动更新")
 
-    target_dir = download_dir or data_dir() / "updates"
+    target_dir = Path(download_dir) if download_dir is not None else data_dir() / "updates"
     _check_cancelled(cancelled)
+    if target_dir.is_symlink():
+        raise ValueError("更新包缓存目录不能是符号链接")
+    if target_dir.exists() and not target_dir.is_dir():
+        raise ValueError("更新包缓存目录不是目录")
     target_dir.mkdir(parents=True, exist_ok=True)
+    if target_dir.is_symlink() or not target_dir.is_dir():
+        raise ValueError("更新包缓存目录不是普通目录")
     target = target_dir / safe_asset_name(asset.name)
     if target.is_symlink():
         raise ValueError("更新包缓存不能是符号链接")
