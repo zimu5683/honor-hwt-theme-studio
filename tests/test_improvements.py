@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import shutil
@@ -40,7 +41,7 @@ from hwtstudio.paths import bundled_catalog
 from hwtstudio.pngmeta import extract_android_chunks, inject_android_chunks
 from hwtstudio.projectio import load_project, project_assets_dir, save_project
 from hwtstudio.phone_transfer import TransferCancelled
-from hwtstudio.ssh_transfer import preflight_phone, transfer_to_phone
+from hwtstudio.ssh_transfer import REMOTE_DIR, preflight_phone, transfer_to_phone
 from hwtstudio.services.catalog_service import load_preferred_catalog, save_user_catalog
 from hwtstudio.services import catalog_service
 from hwtstudio.ui.dialogs import find_named_files
@@ -1075,6 +1076,38 @@ class ImprovementTests(unittest.TestCase):
 
             self.assertEqual(len(calls), 3)
             self.assertIn("rm -f", calls[-1][2])
+
+    @patch("hwtstudio.ssh_transfer.uuid.uuid4")
+    def test_ssh_transfer_uses_unique_remote_temp_name(self, uuid4):
+        uuid4.return_value.hex = "a" * 32
+
+        def result(returncode=0, stdout="", stderr=""):
+            return type("Result", (), {"returncode": returncode, "stdout": stdout, "stderr": stderr})()
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "theme.hwt"
+            path.write_bytes(b"payload")
+            digest = hashlib.sha256(b"payload").hexdigest()
+            with patch(
+                "hwtstudio.ssh_transfer.preflight_phone",
+                return_value={"valid": True, "checks": [], "errors": [], "warnings": []},
+            ), patch("hwtstudio.ssh_transfer._run_with_cancel") as run:
+                run.side_effect = [
+                    result(),
+                    result(),
+                    result(stdout=f"{digest}  theme.hwt\n"),
+                    result(),
+                    result(),
+                ]
+                transfer_to_phone(path, host="phone-termux")
+
+            commands = [call.args[0] for call in run.call_args_list]
+            temp_suffix = f".{uuid4.return_value.hex}.uploading"
+            self.assertIn(f"{REMOTE_DIR}/theme.hwt{temp_suffix}", commands[0][2])
+            self.assertIn(f"phone-termux:{REMOTE_DIR}/theme.hwt{temp_suffix}", commands[1][2])
+            self.assertIn(f"{REMOTE_DIR}/theme.hwt{temp_suffix}", commands[2][2])
+            self.assertIn(f"{REMOTE_DIR}/theme.hwt{temp_suffix}", commands[3][2])
+            self.assertNotIn(f"{REMOTE_DIR}/theme.hwt.uploading", commands[0][2])
 
 
 if __name__ == "__main__":
