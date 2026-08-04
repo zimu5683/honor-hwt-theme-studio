@@ -49,7 +49,7 @@ def _catalog_bundle_lock(root: Path) -> Iterator[None]:
 
 def _bounded_sha256(path: Path) -> str | None:
     try:
-        if not path.is_file() or path.stat().st_size > MAX_CATALOG_BYTES:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_CATALOG_BYTES:
             return None
         digest = hashlib.sha256()
         with path.open("rb") as stream:
@@ -144,6 +144,8 @@ def _transaction_entries(raw: object) -> list[dict] | None:
 def _read_transaction(root: Path) -> list[dict] | None:
     marker = _transaction_path(root)
     try:
+        if marker.is_symlink() or not marker.is_file():
+            return None
         encoded = marker.read_bytes()
         if len(encoded) > _MAX_TRANSACTION_BYTES:
             return None
@@ -181,6 +183,8 @@ def _complete_transaction(root: Path, entries: list[dict]) -> bool:
         target = root / item["target"]
         stage = root / item["stage"]
         expected = item["sha256"]
+        if target.is_symlink() or stage.is_symlink():
+            return False
         if _bounded_sha256(target) == expected:
             continue
         if _bounded_sha256(stage) != expected:
@@ -203,8 +207,12 @@ def _rollback_transaction(root: Path, entries: list[dict]) -> bool:
             if item["original_exists"]:
                 if backup is None or _bounded_sha256(backup) != item["backup_sha256"]:
                     return False
+                if target.is_symlink() or (target.exists() and not target.is_file()):
+                    return False
                 os.replace(backup, target)
             else:
+                if target.is_symlink() or (target.exists() and not target.is_file()):
+                    return False
                 _safe_unlink(target)
         _cleanup_transaction(root, entries)
         return True
@@ -235,9 +243,16 @@ def _save_catalog_bundle(catalog: ThemeCatalog, root: Path) -> None:
     entries: list[dict] = []
     marker_written = False
     try:
+        for artifact in (*stages, *backups):
+            if artifact.is_symlink() or (artifact.exists() and not artifact.is_file()):
+                reason = "符号链接" if artifact.is_symlink() else "普通文件"
+                raise OSError(f"资源目录事务临时对象不是{reason}：{artifact}")
         save_catalog(catalog, stages[0])
         save_source_compatibility_report(catalog, stages[1])
         for target, stage, backup in zip(targets, stages, backups):
+            if target.is_symlink() or (target.exists() and not target.is_file()):
+                reason = "符号链接" if target.is_symlink() else "普通文件"
+                raise OSError(f"资源目录目标不是{reason}：{target}")
             original_exists = target.is_file()
             backup_name = backup.name if original_exists else None
             backup_hash = None

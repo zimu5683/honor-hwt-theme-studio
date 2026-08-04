@@ -779,6 +779,27 @@ class ImprovementTests(unittest.TestCase):
             self.assertEqual(report["summary"]["compatibility_warnings"], 1)
             self.assertTrue((root / "catalog_daxue.json").is_file())
 
+    def test_user_catalog_save_rejects_symlinked_targets(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        catalog = ThemeCatalog("source.hwt", "a" * 64, "now", {"modules": 1}, [], [])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside.json"
+            outside.write_text("keep", encoding="utf-8")
+            target = root / catalog_service._CATALOG_FILE_NAME
+            try:
+                os.symlink(outside, target)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建符号链接：{exc}")
+
+            with patch("hwtstudio.services.catalog_service.data_dir", return_value=root):
+                with self.assertRaisesRegex(OSError, "符号链接"):
+                    save_user_catalog(catalog)
+
+            self.assertTrue(target.is_symlink())
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+
     def test_user_catalog_load_falls_back_when_bundle_lock_is_busy(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
