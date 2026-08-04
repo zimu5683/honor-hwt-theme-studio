@@ -188,8 +188,8 @@ object Protocol {
         if (file.length() <= 0L) throw TransferException(422, "invalid_hwt", "HWT 文件为空")
         if (file.length() > MAX_FILE_SIZE) throw TransferException(413, "too_large", "HWT 文件超过 1 GiB 上限")
         try {
+            validateArchiveDataRanges(file)
             ZipFile(file).use { archive ->
-                validateArchiveDataRanges(file)
                 val description = archive.getEntry("description.xml")
                 if (description == null || description.isDirectory) {
                     throw TransferException(422, "invalid_hwt", "HWT 中缺少 description.xml")
