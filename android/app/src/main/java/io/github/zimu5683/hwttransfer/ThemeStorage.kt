@@ -223,6 +223,8 @@ class ThemeStorage(private val context: Context) {
     private fun installSaf(source: File, name: String, digest: String, tree: Uri): InstallResult {
         val directory = DocumentFile.fromTreeUri(context, tree)
             ?: throw TransferException(503, "storage_unavailable", "目录授权已失效")
+        recoverSafArtifacts(directory, name)
+        cleanupStaleSafUploads(directory)
         val uploadName = "hwt_transfer_${UUID.randomUUID()}.uploading"
         val temporary = directory.createFile("application/octet-stream", uploadName)
             ?: throw TransferException(503, "storage_unavailable", "无法在主题目录创建临时文件")
@@ -272,7 +274,6 @@ class ThemeStorage(private val context: Context) {
             }
             val finalFile = directory.findFile(name)
                 ?: throw TransferException(503, "rename_failed", "无法确认最终主题文件")
-            if (published == null) published = finalFile
             val finalDigest = context.contentResolver.openInputStream(finalFile.uri)?.use(::sha256Stream)
                 ?: throw TransferException(503, "rename_failed", "无法复核最终主题文件")
             if (!finalDigest.equals(digest, ignoreCase = true)) {
@@ -296,6 +297,45 @@ class ThemeStorage(private val context: Context) {
             if (!temporaryRenamed && !temporaryDeleted) temporary.delete()
             if (committed) backup?.delete()
         }
+    }
+
+    private fun listSafChildren(directory: DocumentFile): List<DocumentFile> =
+        runCatching { directory.listFiles().toList() }.getOrElse {
+            throw TransferException(503, "storage_unavailable", "无法读取主题目录")
+        }
+
+    private fun recoverSafArtifacts(directory: DocumentFile, name: String) {
+        val children = listSafChildren(directory)
+        val backups = children.filter { child ->
+            child.name?.startsWith("$name.backup-") == true
+        }
+        val current = children.firstOrNull { it.name == name }
+        var restoredUri: Uri? = null
+        if (current == null && backups.isNotEmpty()) {
+            val candidate = backups.maxByOrNull { it.lastModified() }!!
+            val backupName = candidate.name ?: ""
+            if (!candidate.renameTo(name)) {
+                throw TransferException(503, "replace_failed", "无法恢复上次未完成的主题替换")
+            }
+            val restored = directory.findFile(name)
+            if (restored == null || restored.isDirectory || !restored.exists()) {
+                if (backupName.isNotBlank()) runCatching { candidate.renameTo(backupName) }
+                throw TransferException(503, "replace_failed", "无法确认已恢复的主题文件")
+            }
+            restoredUri = candidate.uri
+        }
+        backups.filter { it.uri != restoredUri }.forEach { backup ->
+            runCatching { backup.delete() }
+        }
+    }
+
+    private fun cleanupStaleSafUploads(directory: DocumentFile) {
+        listSafChildren(directory)
+            .filter { child ->
+                val name = child.name ?: return@filter false
+                name.startsWith("hwt_transfer_") && name.endsWith(".uploading")
+            }
+            .forEach { runCatching { it.delete() } }
     }
 
     private fun ensureFreeSpace(size: Long, safTree: Uri?) {
