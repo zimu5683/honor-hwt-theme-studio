@@ -345,6 +345,13 @@ class ReceiverServer(
         val cached = cachedTransfer(id)
         if (cached != null) return installResponse(cached)
         val state = synchronized(transferLock) {
+            // Recheck under the state lock so a retry cannot observe the hand-off gap.
+            completedTransfers[id]?.let { return installResponse(it) }
+            if (committingTransferId == id) {
+                return json(202, JSONObject()
+                    .put("state", "committing")
+                    .put("transfer_id", id))
+            }
             if (uploading.get()) throw TransferException(409, "busy", "手机正在接收另一个数据块")
             val current = chunkTransfer?.takeIf { it.id == id }
                 ?: throw TransferException(404, "transfer_not_found", "上传会话不存在")
@@ -432,7 +439,7 @@ class ReceiverServer(
                 }
                 false
             } else {
-                if (id != null) committingTransferId = id
+                committingTransferId = id
                 activeTransferId = null
                 cancelRequested = false
                 true
