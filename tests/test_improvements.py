@@ -18,7 +18,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 from PIL import Image
 
 from hwtstudio.blank import create_blank_theme
-from hwtstudio.catalog import load_catalog
+from hwtstudio.catalog import load_catalog, scan_theme
 from hwtstudio.catalog import save_catalog
 from hwtstudio.common import (
     MAX_ARCHIVE_ENTRIES,
@@ -454,6 +454,35 @@ class ImprovementTests(unittest.TestCase):
             self.assertIn("integer", kinds)
             self.assertIn("image_format", kinds)
         self.assertIn("unsafe_nested_path", kinds)
+
+    def test_archive_path_overlaps_are_blocked_at_both_levels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "overlap.hwt"
+            create_blank_theme(output)
+            nested_data = BytesIO()
+            with ZipFile(nested_data, "w", ZIP_DEFLATED) as nested:
+                nested.writestr("theme.xml", b"<resources><color name='safe'>#FFFFFFFF</color></resources>")
+                nested.writestr("theme.xml/extra.png", b"not an image")
+            with ZipFile(output, "a", ZIP_DEFLATED) as outer:
+                outer.writestr("com.example", nested_data.getvalue())
+                outer.writestr("icons/theme.png", b"not an image")
+
+            catalog = scan_theme(output)
+            result = validate_theme(output)
+
+        warning_kinds = {item["kind"] for item in catalog.warnings}
+        self.assertIn("path_overlap", warning_kinds)
+        self.assertIn("nested_path_overlap", warning_kinds)
+        kinds = {item["kind"] for item in result["errors"]}
+        self.assertIn("path_overlap", kinds)
+
+        with tempfile.TemporaryDirectory() as directory:
+            nested_only = Path(directory) / "nested-overlap.hwt"
+            create_blank_theme(nested_only)
+            with ZipFile(nested_only, "a", ZIP_DEFLATED) as outer:
+                outer.writestr("com.example", nested_data.getvalue())
+            nested_result = validate_theme(nested_only)
+        self.assertIn("nested_path_overlap", {item["kind"] for item in nested_result["errors"]})
 
     def test_validator_rejects_oversized_entry_before_decompression(self):
         info = MagicMock()

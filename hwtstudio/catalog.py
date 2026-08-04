@@ -13,6 +13,7 @@ from zipfile import BadZipFile, ZipFile
 from PIL import Image
 
 from .archive_safety import (
+    archive_path_overlaps,
     compression_ratio,
     duplicate_names,
     duplicate_normalized_names,
@@ -101,6 +102,16 @@ def _archive_blocked_paths(infos, warnings: list[dict], *, module: str | None = 
             if normalize_archive_path(info.filename) == duplicate
         )
         item = {"kind": f"{prefix}duplicate_normalized_zip_entry", "path": duplicate}
+        if module is not None:
+            item["module"] = module
+        warnings.append(item)
+    for parent, path in archive_path_overlaps(infos):
+        blocked.update(
+            info.filename
+            for info in infos
+            if normalize_archive_path(info.filename.rstrip("/")) in {parent, path}
+        )
+        item = {"kind": f"{prefix}path_overlap", "path": path, "parent": parent}
         if module is not None:
             item["module"] = module
         warnings.append(item)

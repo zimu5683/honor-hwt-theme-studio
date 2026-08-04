@@ -6,6 +6,7 @@ from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
 from .archive_safety import (
+    archive_path_overlaps,
     compression_ratio,
     duplicate_names,
     duplicate_normalized_names,
@@ -131,15 +132,18 @@ def validate_theme(path: Path) -> dict:
                 outer_size_blocked = True
             names = set(outer.namelist())
             unsafe_outer_paths = set()
+            outer_overlaps = archive_path_overlaps(outer.infolist())
             for duplicate in duplicate_names(outer.infolist()):
                 errors.append({"kind": "duplicate_zip_entry", "path": duplicate})
             for duplicate in duplicate_normalized_names(outer.infolist()):
                 errors.append({"kind": "duplicate_normalized_zip_entry", "path": duplicate})
+            for parent, path_name in outer_overlaps:
+                errors.append({"kind": "path_overlap", "path": path_name, "parent": parent})
             for name in outer.namelist():
                 if not is_safe_archive_path(name.rstrip("/")):
                     errors.append({"kind": "unsafe_path", "path": name})
                     unsafe_outer_paths.add(name)
-            outer_read_blocked = False
+            outer_read_blocked = bool(outer_overlaps)
             for info in outer_infos:
                 if info.is_dir():
                     continue
@@ -222,6 +226,7 @@ def validate_theme(path: Path) -> dict:
                             errors.append({"kind": "nested_archive_too_large", "module": info.filename})
                             nested_size_blocked = True
                         unsafe_nested_paths = set()
+                        nested_overlaps = archive_path_overlaps(nested_infos)
                         for child in nested_infos:
                             if not is_safe_archive_path(child.filename.rstrip("/")):
                                 errors.append({"kind": "unsafe_nested_path", "module": info.filename, "path": child.filename})
@@ -230,7 +235,14 @@ def validate_theme(path: Path) -> dict:
                             errors.append({"kind": "duplicate_nested_entry", "module": info.filename, "path": duplicate})
                         for duplicate in duplicate_normalized_names(nested_infos):
                             errors.append({"kind": "duplicate_normalized_nested_entry", "module": info.filename, "path": duplicate})
-                        nested_read_blocked = False
+                        for parent, path_name in nested_overlaps:
+                            errors.append({
+                                "kind": "nested_path_overlap",
+                                "module": info.filename,
+                                "path": path_name,
+                                "parent": parent,
+                            })
+                        nested_read_blocked = bool(nested_overlaps)
                         for child in nested_infos:
                             if child.is_dir():
                                 continue

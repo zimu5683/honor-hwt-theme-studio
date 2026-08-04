@@ -17,6 +17,36 @@ def duplicate_normalized_names(infos) -> list[str]:
     return sorted(name for name, count in counts.items() if count > 1)
 
 
+def archive_path_overlaps(infos) -> list[tuple[str, str]]:
+    """Return file/directory path prefixes that make extraction ambiguous."""
+    entries: dict[str, list[object]] = {}
+    for info in infos:
+        filename = getattr(info, "filename", "")
+        if not isinstance(filename, str):
+            continue
+        canonical = normalize_archive_path(filename.rstrip("/"))
+        if canonical:
+            entries.setdefault(canonical, []).append(info)
+
+    overlaps: set[tuple[str, str]] = set()
+    file_paths = set()
+    for canonical, matching in entries.items():
+        has_file = any(not info.is_dir() for info in matching)
+        has_directory = any(info.is_dir() for info in matching)
+        if has_file and has_directory:
+            overlaps.add((canonical, canonical))
+        if has_file:
+            file_paths.add(canonical)
+
+    for path in sorted(file_paths):
+        parts = path.split("/")
+        for index in range(1, len(parts)):
+            parent = "/".join(parts[:index])
+            if parent in file_paths:
+                overlaps.add((parent, path))
+    return sorted(overlaps)
+
+
 def is_symlink(info) -> bool:
     try:
         mode = (int(info.external_attr) >> 16) & 0xFFFF
