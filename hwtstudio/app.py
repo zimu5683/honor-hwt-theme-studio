@@ -131,8 +131,9 @@ class MainWindow(QMainWindow):
         self._update_generation = 0
         self.update_info: UpdateCheck | None = None
         self.update_progress: QProgressDialog | None = None
-        cached_profiles = [device.profile for device in PhoneRegistry().load().values() if device.profile]
-        self.phone_profile = max(cached_profiles, key=lambda item: item.updated_at, default=None)
+        profile_device_id = self.settings.value("phone/profile_device_id", "", type=str)
+        saved_devices = PhoneRegistry().load()
+        self.phone_profile = self._cached_phone_profile(saved_devices, profile_device_id)
         self.installed_packages: set[str] | None = (
             set(self.phone_profile.installed_packages) if self.phone_profile else None
         )
@@ -154,6 +155,16 @@ class MainWindow(QMainWindow):
         self._log_source_compatibility_summary(self.catalog)
         if self._catalog_load_warning:
             self.log(self._catalog_load_warning)
+
+    @staticmethod
+    def _cached_phone_profile(devices: dict, preferred_device_id: str):
+        preferred = devices.get(preferred_device_id) if preferred_device_id else None
+        if preferred is not None and preferred.profile is not None:
+            return preferred.profile
+        if preferred_device_id:
+            return None
+        profiles = [device.profile for device in devices.values() if device.profile]
+        return profiles[0] if len(profiles) == 1 else None
 
     def _load_initial_catalog(self) -> ThemeCatalog:
         catalog, self._catalog_load_warning = load_preferred_catalog()
@@ -791,11 +802,12 @@ class MainWindow(QMainWindow):
         self._profile_worker = worker
         thread.start()
 
-    def _profile_finished(self, _device, profile, generation: int | None = None):
+    def _profile_finished(self, device, profile, generation: int | None = None):
         if generation is not None and generation != self._profile_generation:
             return
         if self._closing:
             return
+        self.settings.setValue("phone/profile_device_id", device.device_id)
         self.phone_profile = profile
         self.installed_packages = set(profile.installed_packages)
         self.resource_model.set_installed_packages(self.installed_packages)

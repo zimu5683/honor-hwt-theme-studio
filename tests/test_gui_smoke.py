@@ -15,6 +15,7 @@ from hwtstudio import __version__
 from hwtstudio.app import MainWindow
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
 from hwtstudio.semantic import SIMPLE_BY_ID
+from hwtstudio.phone_transfer import PhoneDevice, PhoneProfile
 from hwtstudio.ui.dialogs import resolve_missing_assets
 from hwtstudio.ui.design_system import Colors, STYLE_SHEET
 from hwtstudio.ui.phone_dialog import PhoneTransferDialog
@@ -43,6 +44,21 @@ class GuiSmokeTests(unittest.TestCase):
         window._toggle_technical_columns(True)
         self.assertFalse(window.table.isColumnHidden(2))
         window.close()
+
+    def test_cached_phone_profile_is_bound_to_the_last_identified_device(self):
+        first = PhoneProfile(model="第一台", updated_at="2026-08-04T10:00:00+00:00")
+        second = PhoneProfile(model="第二台", updated_at="2026-08-04T11:00:00+00:00")
+        devices = {
+            "phone-1": PhoneDevice("phone-1", "第一台", "10.0.0.1", profile=first),
+            "phone-2": PhoneDevice("phone-2", "第二台", "10.0.0.2", profile=second),
+        }
+
+        self.assertIs(MainWindow._cached_phone_profile(devices, "phone-1"), first)
+        self.assertIsNone(MainWindow._cached_phone_profile(devices, ""))
+        self.assertIsNone(MainWindow._cached_phone_profile(devices, "missing"))
+
+        only_device = {"phone-1": devices["phone-1"]}
+        self.assertIs(MainWindow._cached_phone_profile(only_device, ""), first)
 
     def test_simple_group_apply_reset_and_undo(self):
         window = MainWindow()
