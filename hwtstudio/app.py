@@ -6,8 +6,8 @@ import sys
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSettings, QSize, QStandardPaths, Qt, QThread, QTimer, QUrl
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QMouseEvent, QPixmap, QUndoStack
+from PySide6.QtCore import QSettings, QSize, QStandardPaths, Qt, QThread, QTimer, QUrl
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QPixmap, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -61,7 +61,6 @@ from .ui.phone_dialog import PhoneTransferDialog
 from .ui.resource_models import ResourceFilterModel, ResourceTableModel
 from .ui.simple_editor import SimpleEditor
 from .ui.simple_preview import PreviewRepository
-from .ui.titlebar import WindowTitleBar
 from .ui.workers import ProfileWorker, TransferWorker, UpdateWorker
 from .updater import Release, UpdateCheck, VerifiedDownload, launch_update, release_page_url
 
@@ -115,7 +114,6 @@ class MainWindow(QMainWindow):
         if app is not None:
             install_qt_translations(app)
         super().__init__()
-        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.resize(1500, 920)
         self.catalog = self._load_initial_catalog()
@@ -142,13 +140,9 @@ class MainWindow(QMainWindow):
         self._profile_generation = 0
         self._closing = False
         self._log_lines: list[str] = []
-        self._resize_margin = 6
         self.simple_resolved = resolve_all(self.catalog)
         self.preview_repository = PreviewRepository()
         self._build_ui()
-        app = QApplication.instance()
-        if app is not None:
-            app.installEventFilter(self)
         self._bind_project()
         self._update_phone_ui(cached=bool(self.phone_profile))
         self.log("已加载大雪资源目录。原始主题仅用于只读分析，不会被修改。")
@@ -171,8 +165,6 @@ class MainWindow(QMainWindow):
         return catalog
 
     def _build_ui(self):
-        self.title_bar = WindowTitleBar(self)
-        self.setMenuWidget(self.title_bar)
         self.setStatusBar(QStatusBar())
         self._build_toolbar()
         self.tabs = QTabWidget()
@@ -1539,46 +1531,6 @@ class MainWindow(QMainWindow):
             event.ignore()
         else:
             event.accept()
-
-    def _resize_edges_at(self, global_pos):
-        if self.isMaximized() or self.isFullScreen():
-            return Qt.Edges()
-        rect = self.frameGeometry()
-        margin = self._resize_margin
-        edges = Qt.Edges()
-        if abs(global_pos.x() - rect.left()) <= margin:
-            edges |= Qt.Edge.LeftEdge
-        if abs(global_pos.x() - rect.right()) <= margin:
-            edges |= Qt.Edge.RightEdge
-        if abs(global_pos.y() - rect.top()) <= margin:
-            edges |= Qt.Edge.TopEdge
-        if abs(global_pos.y() - rect.bottom()) <= margin:
-            edges |= Qt.Edge.BottomEdge
-        return edges
-
-    def eventFilter(self, watched, event):
-        if isinstance(watched, QWidget) and (watched is self or self.isAncestorOf(watched)):
-            if isinstance(event, QMouseEvent):
-                global_pos = event.globalPosition().toPoint()
-                edges = self._resize_edges_at(global_pos)
-                if event.type() == QEvent.Type.MouseMove and not (event.buttons() & Qt.MouseButton.LeftButton):
-                    if edges & (Qt.Edge.LeftEdge | Qt.Edge.RightEdge):
-                        if edges & (Qt.Edge.TopEdge | Qt.Edge.BottomEdge):
-                            self.setCursor(Qt.CursorShape.SizeFDiagCursor if edges & Qt.Edge.LeftEdge else Qt.CursorShape.SizeBDiagCursor)
-                        else:
-                            self.setCursor(Qt.CursorShape.SizeHorCursor)
-                    elif edges & (Qt.Edge.TopEdge | Qt.Edge.BottomEdge):
-                        self.setCursor(Qt.CursorShape.SizeVerCursor)
-                    else:
-                        self.unsetCursor()
-                elif event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton and edges:
-                    handle = self.windowHandle()
-                    if handle is not None and handle.startSystemResize(edges):
-                        event.accept()
-                        return True
-                elif event.type() == QEvent.Type.MouseButtonRelease:
-                    self.unsetCursor()
-        return super().eventFilter(watched, event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

@@ -1,6 +1,6 @@
 # 大雪主题编辑器
 
-当前版本：`0.1.6.3`
+当前版本：`0.1.6.4`
 
 一个面向荣耀 `.hwt` 主题的中文可视化编辑器。程序只读分析
 `30039574_大雪.hwt`，把资源位置整理成目录；新主题从空白模板生成，
@@ -11,7 +11,7 @@
 0.1.5.1 起桌面端采用 PySide6 Widgets + 集中式 QSS 的 Studio Soft Light 视觉系统；Android
 传输助手采用 Jetpack Compose + 自定义 Material 3 Studio Soft Light 主题。两端使用暖灰画布、
 紫色主操作、白色 12px 圆角卡片、Pastel 类别点缀和明确的 primary/secondary/tertiary/ghost/danger
-语义，不启用 `qt-material`、动态配色或默认 elevation。Windows 使用自定义客户端标题栏，
+语义，不启用 `qt-material`、动态配色或默认 elevation。Windows 使用系统原生标题栏和窗口按钮，
 中文字体使用 IBM Plex Sans SC，Inter Variable 用于 Latin 字符和 Android 字体度量。
 
 - 默认“简洁编辑”只显示 30 个明确的中文项目，一次修改自动同步底层兼容资源。

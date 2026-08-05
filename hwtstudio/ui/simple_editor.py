@@ -90,11 +90,10 @@ class SimpleSettingCard(QFrame):
         self.state.setWordWrap(True)
         layout.addWidget(self.state)
 
-        self.preview = ClickablePreview()
+        self.preview = ClickablePreview(self)
         self.preview.setFixedHeight(132)
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setObjectName("simplePreview")
-        self.preview.setVisible(True)
         self.preview.setText("尚未选择图片" if setting.kind == "image" else "使用默认颜色")
         self.preview.setToolTip("点击查看原始参考与当前设置预览")
         self.preview.clicked.connect(self._show_preview)
@@ -133,7 +132,7 @@ class SimpleSettingCard(QFrame):
         layout.addWidget(self.options)
 
         buttons = QHBoxLayout()
-        self.more_button = QPushButton("更多图片选项")
+        self.more_button = QPushButton("更多图片选项", self)
         set_role(self.more_button, "ghost")
         self.more_button.setCheckable(True)
         self.more_button.toggled.connect(self.options.setVisible)

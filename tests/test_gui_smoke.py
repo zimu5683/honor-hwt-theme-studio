@@ -299,16 +299,17 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             PhoneTransferDialog._manual_device("1:2:3:bad")
 
-    def test_studio_tokens_titlebar_and_responsive_layout(self):
+    def test_studio_tokens_native_titlebar_and_responsive_layout(self):
         self.assertEqual(Colors.PRIMARY, "#5645D4")
         self.assertEqual(Colors.CANVAS, "#F6F5F4")
         self.assertIn("border-radius: 12px", STYLE_SHEET)
-        self.assertIn("QFrame#windowTitleBar", STYLE_SHEET)
+        self.assertNotIn("windowTitleBar", STYLE_SHEET)
+        self.assertNotIn("windowControl", STYLE_SHEET)
         self.assertNotIn("box-shadow", STYLE_SHEET)
 
         window = MainWindow()
-        self.assertTrue(window.windowFlags() & Qt.WindowType.FramelessWindowHint)
-        self.assertEqual(window.title_bar.title.text().split(" - ")[0], f"大雪主题编辑器 {__version__}")
+        self.assertFalse(window.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        self.assertEqual(window.windowTitle().split(" - ")[0], f"大雪主题编辑器 {__version__}")
         window.show()
         for width, columns, orientation in ((1500, 3, 1), (900, 2, 2), (640, 1, 2)):
             window.resize(width, 720)
