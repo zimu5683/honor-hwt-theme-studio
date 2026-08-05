@@ -20,12 +20,16 @@ from hwtstudio.phone_transfer import (
     FEATURE_TRANSFER_PREPARE,
     MAX_FILENAME_BYTES,
     MAX_REMOTE_ERROR_CHARS,
+    MAX_REMOTE_TEXT_CHARS,
     MAX_REGISTRY_BYTES,
     MAX_RESPONSE_BYTES,
     PhoneDevice,
+    PhoneProfile,
     PhoneRegistry,
     PhoneTransferError,
     TransferCancelled,
+    bounded_ipv4_discovery_targets,
+    _merge_saved,
     _error_from_response,
     _interprocess_lock,
     discover_phones,
@@ -182,6 +186,29 @@ class ChunkedConnection:
         if isinstance(self.plan, BaseException):
             raise self.plan
         status, payload = self.plan
+        if isinstance(payload, dict) and payload.get("transfer_id") == "session":
+            payload = dict(payload)
+            marker = "/api/v1/transfers/"
+            transfer_id = self.target.split(marker, 1)[1].split("/", 1)[0]
+            payload["transfer_id"] = transfer_id
+        elif (
+            isinstance(payload, dict)
+            and self.method == "GET"
+            and payload.get("state") == "completed"
+            and "transfer_id" not in payload
+        ):
+            payload = dict(payload)
+            marker = "/api/v1/transfers/"
+            payload["transfer_id"] = self.target.split(marker, 1)[1].split("/", 1)[0]
+        elif (
+            isinstance(payload, dict)
+            and self.method == "POST"
+            and self.target.endswith("/complete")
+            and "transfer_id" not in payload
+        ):
+            payload = dict(payload)
+            marker = "/api/v1/transfers/"
+            payload["transfer_id"] = self.target.split(marker, 1)[1].split("/", 1)[0]
         return FakeHttpResponse(payload, status=status)
 
     def close(self):
@@ -261,7 +288,82 @@ class InvalidShapeDiscoverySocket(FakeDiscoverySocket):
         raise socket.timeout()
 
 
+class SilentDiscoverySocket(FakeDiscoverySocket):
+    def recvfrom(self, _size):
+        raise socket.timeout()
+
+
+class HttpDiscoveryConnection:
+    calls = []
+
+    def __init__(self, host, port, timeout):
+        type(self).calls.append((host, port, timeout))
+        self.host = host
+
+    def request(self, *_args, **_kwargs):
+        pass
+
+    def getresponse(self):
+        if self.host != "10.0.0.8":
+            return FakeHttpResponse({"message": "not a receiver"}, status=404)
+        return FakeHttpResponse({
+            "protocol": 1,
+            "device_id": "http-phone-1",
+            "name": "HTTP 发现手机",
+            "app_version": "0.2.0",
+            "features": ["device_profile"],
+        })
+
+    def close(self):
+        pass
+
+
+class InvalidHttpDiscoveryConnection(HttpDiscoveryConnection):
+    def getresponse(self):
+        return FakeHttpResponse({"protocol": 1, "name": "缺少设备标识"})
+
+
 class PhoneTransferTests(unittest.TestCase):
+    def test_saved_credentials_are_bound_to_the_identified_endpoint(self):
+        profile = PhoneProfile(model="已确认手机")
+        saved = {
+            "phone-1": PhoneDevice(
+                "phone-1",
+                "已配对手机",
+                "10.0.0.8",
+                port=48621,
+                token="saved-token",
+                profile=profile,
+            )
+        }
+
+        same_endpoint = _merge_saved(
+            PhoneDevice("phone-1", "发现手机", "10.0.0.8", port=48621),
+            saved,
+        )
+        self.assertEqual(same_endpoint.token, "saved-token")
+        self.assertIs(same_endpoint.profile, profile)
+
+        moved_endpoint = _merge_saved(
+            PhoneDevice("phone-1", "冒用手机", "10.0.0.9", port=48621),
+            saved,
+        )
+        self.assertEqual(moved_endpoint.token, "")
+        self.assertIsNone(moved_endpoint.profile)
+
+        moved_port = _merge_saved(
+            PhoneDevice("phone-1", "冒用手机", "10.0.0.8", port=48622),
+            saved,
+        )
+        self.assertEqual(moved_port.token, "")
+        self.assertIsNone(moved_port.profile)
+
+        with tempfile.TemporaryDirectory() as directory:
+            registry = PhoneRegistry(Path(directory) / "phones.json")
+            registry.update(saved["phone-1"])
+            registry.update(moved_endpoint)
+            self.assertEqual(registry.load()["phone-1"].token, "")
+
     def test_chunked_upload_sends_offsets_and_both_sha256_values(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "分块主题.hwt"
@@ -372,6 +474,85 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, "bad_response")
             self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "GET"])
 
+    def test_chunked_upload_rejects_mismatched_response_transfer_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "串会话主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (202, {
+                    "state": "receiving", "transfer_id": "another-session",
+                    "received": len(content), "total": len(content), "next_offset": len(content),
+                }),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
+                with self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "bad_response")
+            self.assertEqual(len(ChunkedConnection.instances), 1)
+
+    def test_chunked_recovery_rejects_mismatched_status_transfer_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "串会话恢复.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                OSError("上传响应前断开"),
+                (202, {
+                    "state": "receiving", "transfer_id": "another-session",
+                    "received": len(content), "total": len(content), "next_offset": len(content),
+                }),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
+                with self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "bad_response")
+            self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "GET"])
+
+    def test_chunked_commit_rejects_mismatched_response_transfer_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "串会话提交.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (202, {
+                    "state": "receiving", "transfer_id": "session",
+                    "received": len(content), "total": len(content), "next_offset": len(content),
+                }),
+                (201, {
+                    "transfer_id": "another-session", "stored_name": "串会话提交.hwt",
+                    "destination": "Honor/Themes/串会话提交.hwt", "size": len(content),
+                    "sha256": digest, "overwritten": False, "theme_app_opened": False,
+                }),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
+                with self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "bad_response")
+            self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "POST"])
+
     def test_chunked_upload_does_not_resend_last_chunk_when_commit_response_is_lost(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "提交主题.hwt"
@@ -407,6 +588,123 @@ class PhoneTransferTests(unittest.TestCase):
                 ["PUT", "PUT", "POST", "GET", "GET"],
             )
             self.assertEqual(sum(request.method == "PUT" for request in ChunkedConnection.instances), 2)
+
+    def test_chunked_upload_refuses_file_changed_after_commit_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "提交状态变化主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+
+            class MutatingStatusConnection(ChunkedConnection):
+                def getresponse(self):
+                    if (
+                        self.method == "GET"
+                        and isinstance(self.plan, tuple)
+                        and isinstance(self.plan[1], dict)
+                        and self.plan[1].get("state") == "completed"
+                    ):
+                        path.write_bytes(b"changed after remote commit")
+                    return super().getresponse()
+
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (202, {
+                    "state": "receiving", "transfer_id": "session", "received": len(content),
+                    "total": len(content), "next_offset": len(content),
+                }),
+                OSError("提交响应前断开"),
+                (200, {
+                    "state": "completed", "stored_name": path.name,
+                    "destination": f"Honor/Themes/{path.name}", "size": len(content),
+                    "sha256": digest, "overwritten": False, "theme_app_opened": False,
+                }),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with patch(
+                "hwtstudio.phone_transfer.http.client.HTTPConnection",
+                MutatingStatusConnection,
+            ):
+                with self.assertRaisesRegex(PhoneTransferError, "状态确认后.*发生变化") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "file_changed")
+
+    def test_chunked_upload_refuses_file_changed_after_commit_response(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "提交响应变化主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+
+            class MutatingCommitConnection(ChunkedConnection):
+                def getresponse(self):
+                    response = super().getresponse()
+                    if self.method == "POST" and self.target.endswith("/complete"):
+                        path.write_bytes(b"changed after commit response")
+                    return response
+
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (202, {
+                    "state": "receiving", "transfer_id": "session", "received": len(content),
+                    "total": len(content), "next_offset": len(content),
+                }),
+                (201, {
+                    "stored_name": path.name, "destination": f"Honor/Themes/{path.name}",
+                    "size": len(content), "sha256": digest, "overwritten": False,
+                    "theme_app_opened": False,
+                }),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with patch(
+                "hwtstudio.phone_transfer.http.client.HTTPConnection",
+                MutatingCommitConnection,
+            ):
+                with self.assertRaisesRegex(PhoneTransferError, "提交响应后.*发生变化") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "file_changed")
+
+    def test_chunked_upload_cancels_before_commit_when_signal_arrives_after_last_chunk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "提交前取消主题.hwt"
+            path.write_bytes(b"payload")
+            cancelled = threading.Event()
+
+            class CancelAfterChunkConnection(ChunkedConnection):
+                def getresponse(self):
+                    response = super().getresponse()
+                    if self.method == "PUT":
+                        cancelled.set()
+                    return response
+
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (202, {
+                    "state": "receiving", "transfer_id": "session", "received": 7,
+                    "total": 7, "next_offset": 7,
+                }),
+                (202, {"code": "cancel_requested", "transfer_id": "session"}),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", CancelAfterChunkConnection):
+                with self.assertRaisesRegex(TransferCancelled, "发送已取消"):
+                    upload_theme(path, device, cancelled=cancelled)
+
+            self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "DELETE"])
 
     def test_legacy_upload_waits_for_commit_after_response_is_lost(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -461,6 +759,39 @@ class PhoneTransferTests(unittest.TestCase):
                 [request.method for request in ChunkedConnection.instances],
                 ["PUT", "GET", "GET", "PUT"],
             )
+
+    def test_legacy_retry_does_not_repeat_metadata_prepare_for_active_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "预检重试主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            completed = {
+                "stored_name": path.name, "destination": f"Honor/Themes/{path.name}",
+                "size": len(content), "sha256": digest, "overwritten": False,
+                "theme_app_opened": False,
+            }
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [OSError("预检后的完整上传响应前断开"), (201, completed)]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_PREPARE],
+            )
+
+            with (
+                patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection),
+                patch("hwtstudio.phone_transfer._prepare_transfer", return_value=True) as prepare,
+                patch(
+                    "hwtstudio.phone_transfer._remote_transfer_status",
+                    side_effect=[{"state": "receiving"}] * 40,
+                ),
+                patch("hwtstudio.phone_transfer.time.sleep"),
+            ):
+                result = upload_theme(path, device)
+
+            self.assertEqual(result["sha256"], digest)
+            prepare.assert_called_once()
+            self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "PUT"])
 
     def test_metadata_prepare_is_verified_before_upload(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -585,6 +916,29 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertIn("/api/v1/themes/", request.target)
             self.assertNotIn("X-HWT-Chunk-Offset", request.headers)
 
+    def test_legacy_upload_rejects_mismatched_response_transfer_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "完整会话绑定主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (201, {
+                    "transfer_id": "another-session", "stored_name": "完整会话绑定主题.hwt",
+                    "destination": "Honor/Themes/完整会话绑定主题.hwt", "size": len(content),
+                    "sha256": digest, "overwritten": False, "theme_app_opened": False,
+                }),
+            ]
+            device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token")
+
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
+                with self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "bad_response")
+            self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT"])
+
     def test_upload_refuses_file_changed_after_hashing(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "theme.hwt"
@@ -619,6 +973,39 @@ class PhoneTransferTests(unittest.TestCase):
                     upload_theme(path, device)
             self.assertEqual(raised.exception.code, "file_changed")
 
+    def test_legacy_upload_refuses_file_changed_after_response(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "响应后变化主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+
+            class MutatingResponseConnection(ChunkedConnection):
+                def getresponse(self):
+                    response = super().getresponse()
+                    if self.method == "PUT":
+                        path.write_bytes(b"changed after response")
+                    return response
+
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (201, {
+                    "stored_name": path.name, "destination": f"Honor/Themes/{path.name}",
+                    "size": len(content), "sha256": digest, "overwritten": False,
+                    "theme_app_opened": False,
+                }),
+            ]
+            device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token")
+
+            with patch(
+                "hwtstudio.phone_transfer.http.client.HTTPConnection",
+                MutatingResponseConnection,
+            ):
+                with self.assertRaisesRegex(PhoneTransferError, "响应确认后.*发生变化") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "file_changed")
+
     def test_malformed_remote_protocol_is_reported_as_bad_response(self):
         device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token", features=["device_profile"])
         FakeHttpConnection.response_payload = {"protocol": "not-a-number"}
@@ -642,6 +1029,19 @@ class PhoneTransferTests(unittest.TestCase):
         self.assertNotIn("\n", str(error))
         self.assertNotIn("\x00", str(error))
         self.assertLessEqual(len(str(error)), MAX_REMOTE_ERROR_CHARS + 3)
+
+    def test_remote_text_fields_reject_control_characters_at_edges(self):
+        for value in ("\nphone-1", "phone-1\n", "\tphone-1", "phone-1\t"):
+            FakeHttpConnection.response_payload = {
+                "protocol": 1,
+                "device_id": value,
+                "name": "测试手机",
+            }
+            with self.subTest(value=repr(value)):
+                with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
+                    with self.assertRaisesRegex(PhoneTransferError, "过长或包含控制字符") as raised:
+                        probe_phone("127.0.0.1")
+                self.assertEqual(raised.exception.code, "bad_response")
 
     def test_oversized_remote_response_is_rejected(self):
         device = PhoneDevice("phone-1", "测试手机", "127.0.0.1")
@@ -692,6 +1092,33 @@ class PhoneTransferTests(unittest.TestCase):
             with self.assertRaisesRegex(PhoneTransferError, "token") as raised:
                 pair_phone(device, "123456")
         self.assertEqual(raised.exception.code, "bad_response")
+
+    def test_pair_rejects_unbounded_remote_device_id(self):
+        device = PhoneDevice("phone-1", "测试手机", "127.0.0.1")
+        FakeHttpConnection.response_payload = {
+            "protocol": 1,
+            "token": "token",
+            "device_id": "x" * (MAX_REMOTE_TEXT_CHARS + 1),
+        }
+        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
+            with self.assertRaisesRegex(PhoneTransferError, "配对响应device_id.*过长") as raised:
+                pair_phone(device, "123456")
+        self.assertEqual(raised.exception.code, "bad_response")
+
+    def test_pair_compacts_remote_error_message(self):
+        device = PhoneDevice("phone-1", "测试手机", "127.0.0.1")
+        FakeHttpConnection.response_status = 400
+        FakeHttpConnection.response_payload = {"message": "x" * 600 + "\n第二行\x00"}
+        try:
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
+                with self.assertRaises(PhoneTransferError) as raised:
+                    pair_phone(device, "123456")
+            self.assertEqual(raised.exception.code, "pair_failed")
+            self.assertNotIn("\n", str(raised.exception))
+            self.assertNotIn("\x00", str(raised.exception))
+            self.assertLessEqual(len(str(raised.exception)), MAX_REMOTE_ERROR_CHARS + 3)
+        finally:
+            FakeHttpConnection.response_status = 200
 
     def test_upload_rejects_mismatched_remote_size(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -862,6 +1289,51 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
 
+    def test_registry_rejects_symlinked_parent_before_lock_creation(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside"
+            outside.mkdir()
+            link = root / "storage"
+            try:
+                os.symlink(outside, link, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
+            with self.assertRaisesRegex(OSError, "手机记录文件目录.*符号链接"):
+                PhoneRegistry(link / "phones.json").save({})
+            self.assertEqual(list(outside.iterdir()), [])
+
+    def test_registry_rejects_symlinked_target_and_lock_file(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside.json"
+            outside.write_text("keep", encoding="utf-8")
+            target = root / "phones.json"
+            try:
+                os.symlink(outside, target)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建文件符号链接：{exc}")
+            with self.assertRaisesRegex(OSError, "手机记录文件.*普通文件"):
+                PhoneRegistry(target).save({})
+            self.assertTrue(target.is_symlink())
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+
+            target.unlink()
+            lock_target = root / "outside.lock"
+            lock_target.write_bytes(b"keep")
+            lock_path = root / ".phones.json.lock"
+            try:
+                os.symlink(lock_target, lock_path)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建锁文件符号链接：{exc}")
+            with self.assertRaisesRegex(OSError, "锁文件.*符号链接"):
+                PhoneRegistry(target).save({})
+            self.assertEqual(lock_target.read_bytes(), b"keep")
+
     def test_registry_load_fails_closed_when_lock_is_unavailable(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "phones.json"
@@ -871,9 +1343,10 @@ class PhoneTransferTests(unittest.TestCase):
     def test_registry_lock_has_bounded_wait(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "phones.json"
+            lock_call = "hwtstudio.locking.msvcrt.locking" if os.name == "nt" else "hwtstudio.locking.fcntl.flock"
             with (
-                patch("hwtstudio.phone_transfer.time.monotonic", side_effect=[0.0, 6.0]),
-                patch("hwtstudio.phone_transfer.msvcrt.locking", side_effect=OSError("busy")),
+                patch("hwtstudio.locking.time.monotonic", side_effect=[0.0, 6.0]),
+                patch(lock_call, side_effect=OSError("busy")),
             ):
                 with self.assertRaisesRegex(OSError, "超时"):
                     with _interprocess_lock(path):
@@ -895,6 +1368,72 @@ class PhoneTransferTests(unittest.TestCase):
                 list(executor.map(update, range(count)))
 
             self.assertEqual(set(PhoneRegistry(path).load()), {f"phone-{index}" for index in range(count)})
+
+    def test_http_discovery_fallback_uses_only_valid_private_targets(self):
+        HttpDiscoveryConnection.calls = []
+        with tempfile.TemporaryDirectory() as directory:
+            registry = PhoneRegistry(Path(directory) / "phones.json")
+            with (
+                patch("hwtstudio.phone_transfer.socket.socket", SilentDiscoverySocket),
+                patch("hwtstudio.phone_transfer.http.client.HTTPConnection", HttpDiscoveryConnection),
+            ):
+                devices = discover_phones(
+                    timeout=1.0,
+                    registry=registry,
+                    http_targets=["10.0.0.9", "10.0.0.8", "not-an-ip", "8.8.8.8"],
+                )
+
+        self.assertEqual([device.device_id for device in devices], ["http-phone-1"])
+        self.assertEqual(devices[0].host, "10.0.0.8")
+        self.assertEqual({call[0] for call in HttpDiscoveryConnection.calls}, {"10.0.0.8", "10.0.0.9"})
+
+    def test_http_discovery_is_skipped_when_udp_already_found_a_phone(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry = PhoneRegistry(Path(directory) / "phones.json")
+            with (
+                patch("hwtstudio.phone_transfer.socket.socket", FakeDiscoverySocket),
+                patch("hwtstudio.phone_transfer.http.client.HTTPConnection", side_effect=AssertionError("unexpected scan")),
+            ):
+                devices = discover_phones(
+                    timeout=0.01,
+                    registry=registry,
+                    http_targets=["10.0.0.8"],
+                )
+
+        self.assertEqual([device.device_id for device in devices], ["phone-1"])
+
+    def test_http_discovery_discards_malformed_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry = PhoneRegistry(Path(directory) / "phones.json")
+            with (
+                patch("hwtstudio.phone_transfer.socket.socket", SilentDiscoverySocket),
+                patch(
+                    "hwtstudio.phone_transfer.http.client.HTTPConnection",
+                    InvalidHttpDiscoveryConnection,
+                ),
+            ):
+                devices = discover_phones(
+                    timeout=0.2,
+                    registry=registry,
+                    http_targets=["10.0.0.8"],
+                )
+
+        self.assertEqual(devices, [])
+        self.assertEqual(registry.load(), {})
+
+    def test_bounded_ipv4_discovery_targets_skip_large_and_public_networks(self):
+        self.assertEqual(
+            bounded_ipv4_discovery_targets(
+                [("192.168.10.20", "255.255.255.0")], limit=3,
+            ),
+            ["192.168.10.1", "192.168.10.2", "192.168.10.3"],
+        )
+        self.assertEqual(
+            bounded_ipv4_discovery_targets(
+                [("10.0.0.20", "255.255.0.0"), ("8.8.8.8", "255.255.255.0")],
+            ),
+            [],
+        )
 
     def test_discovery_discards_invalid_remote_port(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -921,13 +1460,25 @@ class PhoneTransferTests(unittest.TestCase):
     def test_registry_and_discovery_preserve_token(self):
         with tempfile.TemporaryDirectory() as directory:
             registry = PhoneRegistry(Path(directory) / "phones.json")
-            registry.update(PhoneDevice("phone-1", "旧名称", "10.0.0.2", token="secret"))
+            registry.update(PhoneDevice("phone-1", "旧名称", "10.0.0.8", token="secret"))
             with patch("hwtstudio.phone_transfer.socket.socket", FakeDiscoverySocket):
                 devices = discover_phones(timeout=0.01, registry=registry)
             self.assertEqual(len(devices), 1)
             self.assertEqual(devices[0].host, "10.0.0.8")
             self.assertEqual(devices[0].token, "secret")
             self.assertEqual(registry.load()["phone-1"].host, "10.0.0.8")
+
+    def test_discovery_does_not_reuse_stale_capabilities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry = PhoneRegistry(Path(directory) / "phones.json")
+            registry.update(PhoneDevice(
+                "phone-1", "旧名称", "10.0.0.2", features=[FEATURE_TRANSFER_CHUNKED],
+            ))
+            with patch("hwtstudio.phone_transfer.socket.socket", FakeDiscoverySocket):
+                devices = discover_phones(timeout=0.01, registry=registry)
+
+            self.assertEqual(devices[0].features, ["device_profile"])
+            self.assertNotIn(FEATURE_TRANSFER_CHUNKED, registry.load()["phone-1"].features)
 
     def test_probe_pair_and_stream_upload(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), ReceiverHandler)
@@ -1096,6 +1647,49 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertEqual(result["remote"], "Honor/Themes/already-done.hwt")
             self.assertTrue(result["overwritten"])
             self.assertIn("手机已完成上传，正在确认结果", stages)
+
+    def test_completed_transfer_status_rejects_file_changed_after_initial_upload(self):
+        class MutatingStatusConnection(FakeHttpConnection):
+            def __init__(self, fail=False, *_args, **_kwargs):
+                self.fail = fail
+                self.headers = {}
+
+            def putheader(self, name, value):
+                self.headers[name] = value
+
+            def getresponse(self):
+                if self.fail:
+                    raise OSError("连接在响应前断开")
+                theme.write_bytes(b"changed")
+                os.utime(theme, ns=(theme.stat().st_atime_ns, initial_mtime_ns))
+                payload = b"payload"
+                return FakeHttpResponse(
+                    {
+                        "state": "completed",
+                        "size": len(payload),
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                        "destination": "Honor/Themes/already-done.hwt",
+                        "overwritten": True,
+                        "theme_app_opened": False,
+                    },
+                    status=200,
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            theme = Path(directory) / "already-done-changed.hwt"
+            theme.write_bytes(b"payload")
+            initial_mtime_ns = theme.stat().st_mtime_ns
+            with patch(
+                "hwtstudio.phone_transfer.http.client.HTTPConnection",
+                side_effect=[MutatingStatusConnection(fail=True), MutatingStatusConnection()],
+            ):
+                with self.assertRaisesRegex(PhoneTransferError, "状态确认后.*发生变化") as raised:
+                    upload_theme(
+                        theme,
+                        PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="test-token"),
+                    )
+
+            self.assertEqual(raised.exception.code, "file_changed")
 
     def test_unknown_remote_transfer_state_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

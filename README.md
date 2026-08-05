@@ -1,6 +1,6 @@
 # 大雪主题编辑器
 
-当前版本：`0.1.6.1`
+当前版本：`0.1.6.4`
 
 一个面向荣耀 `.hwt` 主题的中文可视化编辑器。程序只读分析
 `30039574_大雪.hwt`，把资源位置整理成目录；新主题从空白模板生成，
@@ -11,7 +11,7 @@
 0.1.5.1 起桌面端采用 PySide6 Widgets + 集中式 QSS 的 Studio Soft Light 视觉系统；Android
 传输助手采用 Jetpack Compose + 自定义 Material 3 Studio Soft Light 主题。两端使用暖灰画布、
 紫色主操作、白色 12px 圆角卡片、Pastel 类别点缀和明确的 primary/secondary/tertiary/ghost/danger
-语义，不启用 `qt-material`、动态配色或默认 elevation。Windows 使用自定义客户端标题栏，
+语义，不启用 `qt-material`、动态配色或默认 elevation。Windows 使用系统原生标题栏和窗口按钮，
 中文字体使用 IBM Plex Sans SC，Inter Variable 用于 Latin 字符和 Android 字体度量。
 
 - 默认“简洁编辑”只显示 30 个明确的中文项目，一次修改自动同步底层兼容资源。
@@ -25,7 +25,8 @@
 - 保存工程时会把引用图片收集到同名 `.assets` 目录，工程可整体移动和分享。
 - 打开工程发现图片缺失时，可更换图片、搜索文件夹或改用灰白占位图。
 - 导出前验证外层及嵌套 ZIP、XML、颜色、图片格式及荣耀本地主题识别骨架。
-- 配套“荣耀主题传输助手”APK，可在局域网内自动发现、配对并流式发送 HWT。
+- 重新扫描源主题时会保存 `source_compatibility.report.json`，把源主题可读取兼容性警告与导出文件严格验证分开记录。
+- 配套“荣耀主题传输助手”APK，可在局域网内通过 UDP 或有界 HTTP 回退自动发现、配对并流式发送 HWT。
 - 手机端通过目录授权写入 `Honor/Themes`，也支持从手机本地选择 HWT 导入。
 - 原有 `phone-termux` SSH 发送方式保留在“高级”菜单中作为备用。
 - 简洁编辑卡片显示 MagicOS 10.0.0 真机参考图和受影响位置；点击缩略图可对比原始参考与当前颜色/图片合成效果。
@@ -33,7 +34,7 @@
 
 ## 使用步骤
 
-1. 双击 `大雪主题编辑器.exe`。
+1. 下载 Windows 版 ZIP，解压后双击 `大雪主题编辑器\大雪主题编辑器.exe`。
 2. 在“简洁编辑”顶部展开“主题信息”，填写方案名称和主题身份。
 3. 在“简洁编辑”中直接设置壁纸、全局配色、系统界面、桌面或常用应用；需要逐项调整时进入“高级编辑”。
 4. 简洁项目会自动同步所有相关兼容资源；可在“修改记录”查看实际影响数量。
@@ -49,8 +50,8 @@
 ## 自动更新
 
 桌面端启动后会在后台检查本仓库的 GitHub Release；也可以在“更多 → 检查更新”中手动检查。
-更新只选择 Windows 桌面 EXE，下载后会校验发布页提供的 SHA-256。校验通过后，正式打包的程序会
-启动替换助手并自动重启；开发运行时则打开已下载的新 EXE。更新源固定为本项目 GitHub Release，
+更新只选择 Windows 桌面 ZIP，下载后会校验发布页提供的 SHA-256。校验通过后，正式打包的程序会
+安全解包并启动替换助手；开发运行时则打开已解压的新 EXE。更新源固定为本项目 GitHub Release，
 不要从其他来源替换程序文件。
 
 ## 开发运行
@@ -76,11 +77,12 @@ python -m unittest discover -s tests -v
 
 真机参考图来自 ADB `exec-out screencap -p` 和隐私空间中的授权截图；发布包只包含缩放图和元数据，原始 PNG/JPG/XML 保存在工作目录外，不进入 Git 或 EXE。
 
-输出程序位于 `dist/大雪主题编辑器.exe`。
+输出程序目录位于 `dist/大雪主题编辑器`；发布时将整个目录压缩为 ZIP。
 
-Windows 版使用 PyInstaller 单文件构建并关闭 UPX 压缩，以减少安全软件对自解压载荷的启发式误报。
-如果本机 Defender 仍提示 `Trojan:Win32/Sabsik.TE.A!ml`，请先核对发布页中的 SHA-256，再将该文件提交到
-Microsoft Security Intelligence 的误报分析入口；不要从非 GitHub Release 来源下载或替换程序文件。
+Windows 版使用 PyInstaller onedir 构建并关闭 UPX 压缩，发布 ZIP 而不是单文件自解压 EXE，降低安全软件
+对自解压载荷的启发式误报。如果本机 Defender 仍提示 `Trojan:Win32/Sabsik.TE.A!ml`，请先核对发布页中的
+SHA-256，再将发布包提交到 Microsoft Security Intelligence 的误报分析入口；不要从非 GitHub Release
+来源下载或替换程序文件。
 
 ## Android 传输助手
 

@@ -25,12 +25,18 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Validate PyInstaller build
         run: >-
-          python -m PyInstaller --noconfirm --clean --onefile --windowed
+          python -m PyInstaller --noconfirm --clean --onedir --windowed
           --noupx
           --name "大雪主题编辑器" --add-data "assets;assets"
           --exclude-module PySide6.QtWebEngineCore
           --exclude-module PySide6.QtWebEngineWidgets
           --exclude-module PySide6.QtWebEngineQuick run.py
+      - name: Verify portable desktop layout
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath "dist\大雪主题编辑器\大雪主题编辑器.exe")) {
+            throw "onedir 构建结果缺少桌面程序"
+          }
 
   android:
     runs-on: ubuntu-latest

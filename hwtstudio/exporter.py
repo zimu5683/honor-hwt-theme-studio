@@ -13,10 +13,10 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from lxml import etree
 
 from .blank import blank_entries
-from .common import honor_module_name, honor_resource_name, honor_resource_path
+from .common import honor_module_name, honor_resource_name, honor_resource_path, honor_resource_paths
 from .imageops import render_image, render_placeholder
 from .models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
-from .paths import unique_temp_path
+from .paths import ensure_no_symlink_parents, unique_temp_path
 from .validation import validate_change_value, validate_custom_slot, validate_theme
 
 
@@ -57,6 +57,14 @@ def _same_path(left: Path, right: Path) -> bool:
     return os.path.normcase(str(left.resolve())) == os.path.normcase(str(right.resolve()))
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class _ExportTarget:
     key: tuple[str, ...]
@@ -76,7 +84,11 @@ def _target_keys(slot: ResourceSlot, scanned_ids: set[str]) -> list[tuple[str, .
     if slot.synthetic:
         return [("image", target["module"], target["path"]) for target in slot.targets]
     target_module, _, _, target_path = _slot_target(slot, scanned_ids)
-    return [("image", target_module, target_path)]
+    if slot.id in scanned_ids:
+        target_paths = honor_resource_paths(slot.module, slot.path)
+    else:
+        target_paths = (target_path,)
+    return [("image", target_module, path) for path in target_paths]
 
 
 def _slot_priority(slot: ResourceSlot, scanned_ids: set[str]) -> int:
@@ -85,6 +97,11 @@ def _slot_priority(slot: ResourceSlot, scanned_ids: set[str]) -> int:
         return -1
     original = (slot.module, slot.container, slot.name, slot.path)
     converted = _slot_target(slot, scanned_ids)
+    if slot.resource_type in {"image", "icon", "wallpaper", "preview"}:
+        # A fan-out is a compatibility source even when its original path is
+        # otherwise unchanged; native Honor slots must win those targets.
+        if len(honor_resource_paths(slot.module, slot.path)) > 1:
+            return 1
     return 2 if converted == original else 1
 
 
@@ -111,11 +128,7 @@ def _change_signature(
     cache_key = os.path.normcase(str(source.resolve()))
     digest = file_digests.get(cache_key)
     if digest is None:
-        digest_builder = hashlib.sha256()
-        with source.open("rb") as stream:
-            for block in iter(lambda: stream.read(1024 * 1024), b""):
-                digest_builder.update(block)
-        digest = digest_builder.hexdigest()
+        digest = _sha256_file(source)
         file_digests[cache_key] = digest
     return (
         "image",
@@ -239,6 +252,17 @@ def _prepare_export(project: ThemeProject, catalog: ThemeCatalog) -> dict:
             warnings.append({"kind": "unsupported_type", "slot_id": slot_id, "type": slot.resource_type})
             skipped_count += 1
             continue
+        if not slot.synthetic and slot.id in scanned_ids and len(target_keys) > 1:
+            warnings.append(
+                {
+                    "kind": "resource_fanout",
+                    "slot_id": slot.id,
+                    "source": {"module": slot.module, "path": slot.path},
+                    "targets": [{"module": key[1], "path": key[2]} for key in target_keys],
+                    "policy": "华为资源复制到全部兼容的荣耀目标",
+                    "message": "一个华为资源将复制到多个荣耀目标；每个目标单独执行冲突审计",
+                }
+            )
         signature = _change_signature(slot, change, value, file_digests)
         priority = _slot_priority(slot, scanned_ids)
         for key in target_keys:
@@ -287,6 +311,9 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
     output = Path(output)
     if output.name.lower().endswith(".report.json"):
         raise ValueError("导出文件名不能以 .report.json 结尾，请选择 .hwt 文件名")
+    if output.is_symlink() or (output.exists() and not output.is_file()):
+        raise ValueError("导出文件目标不是普通文件")
+    ensure_no_symlink_parents(output, "导出目录不能包含符号链接")
     if catalog.source_path and _same_path(output, Path(catalog.source_path)):
         raise ValueError("不能覆盖资源目录对应的原始主题，请选择新的导出文件名")
     prepared = _prepare_export(project, catalog)
@@ -295,6 +322,7 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
     if not preflight["valid"]:
         raise ValueError("导出预检失败：" + json.dumps(preflight["errors"][:8], ensure_ascii=False))
     output.parent.mkdir(parents=True, exist_ok=True)
+    ensure_no_symlink_parents(output, "导出目录不能包含符号链接")
     root_entries = blank_entries(project.title, project.author, project.designer, project.version, project.screen)
     module_files: dict[str, dict[str, bytes]] = defaultdict(dict)
     module_xml: dict[str, dict[str, dict[tuple[str, str], str]]] = defaultdict(lambda: defaultdict(dict))
@@ -329,7 +357,14 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
             if target.change.source_kind == "placeholder":
                 rendered = render_placeholder(target.slot)
             else:
-                rendered = render_image(Path(target.change.source_file), target.slot, target.change)
+                source = Path(target.change.source_file)
+                rendered = render_image(source, target.slot, target.change)
+                try:
+                    current_digest = _sha256_file(source)
+                except OSError as exc:
+                    raise ValueError("图片源文件在导出期间不可用，请重试") from exc
+                if current_digest != target.signature[1]:
+                    raise ValueError("图片源文件在导出期间发生变化，请重试")
             rendered_by_slot[target.slot.id] = rendered
         if target_module == "__root__":
             root_entries[target_path] = rendered
@@ -338,6 +373,8 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
         applied.append({"slot_id": target.slot.id, "module": target_module, "path": target_path})
 
     temp = unique_temp_path(output)
+    if temp.is_symlink() or (temp.exists() and not temp.is_file()):
+        raise ValueError("导出临时文件不是普通文件")
     temp.unlink(missing_ok=True)
     try:
         modules = sorted(set(module_files) | set(module_xml))
@@ -357,14 +394,13 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
         validation = validate_theme(temp)
         if not validation["valid"]:
             raise ValueError("导出的主题未通过验证：" + json.dumps(validation["errors"][:5], ensure_ascii=False))
+        if output.is_symlink() or (output.exists() and not output.is_file()):
+            raise ValueError("导出文件目标不是普通文件")
         os.replace(temp, output)
     finally:
-        temp.unlink(missing_ok=True)
-    digest_builder = hashlib.sha256()
-    with output.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest_builder.update(block)
-    digest = digest_builder.hexdigest()
+        if not temp.is_symlink() and (not temp.exists() or temp.is_file()):
+            temp.unlink(missing_ok=True)
+    digest = _sha256_file(output)
     report = {
         "schema": 1,
         "output": str(output),
@@ -382,10 +418,18 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
     report_path = output.with_suffix(".report.json")
     report_temp = unique_temp_path(report_path)
     try:
+        if report_path.is_symlink() or (report_path.exists() and not report_path.is_file()):
+            raise OSError("导出报告目标不是普通文件")
+        ensure_no_symlink_parents(report_path, "导出报告目录不能包含符号链接")
+        if report_temp.is_symlink() or (report_temp.exists() and not report_temp.is_file()):
+            raise OSError("导出报告临时文件不是普通文件")
         report_temp.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        if report_path.is_symlink() or (report_path.exists() and not report_path.is_file()):
+            raise OSError("导出报告目标不是普通文件")
         os.replace(report_temp, report_path)
     except (OSError, TypeError, ValueError) as exc:
         report["report_warning"] = f"导出成功，但报告写入失败：{exc}"
     finally:
-        report_temp.unlink(missing_ok=True)
+        if not report_temp.is_symlink() and (not report_temp.exists() or report_temp.is_file()):
+            report_temp.unlink(missing_ok=True)
     return output, report

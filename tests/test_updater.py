@@ -1,18 +1,25 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import tempfile
 import threading
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 from hwtstudio.updater import (
     _sha256,
     _fetch_json,
+    _extract_portable_archive,
+    APP_NAME,
+    PORTABLE_EXECUTABLE_NAME,
     ReleaseAsset,
+    VerifiedDownload,
     download_asset,
     is_newer_version,
+    launch_update,
     release_from_payload,
     safe_asset_name,
     select_update_asset,
@@ -130,6 +137,15 @@ class UpdaterTests(unittest.TestCase):
         self.assertIsNotNone(selected)
         self.assertEqual(selected.name, "HwtThemeStudio-v0.2.0-win64.exe")
 
+    def test_asset_selection_prefers_portable_zip(self):
+        assets = [
+            ReleaseAsset("HwtThemeStudio-v0.2.0-win64.exe", "https://example.test/studio.exe"),
+            ReleaseAsset("HwtThemeStudio-v0.2.0-win64.zip", "https://example.test/studio.zip"),
+        ]
+        selected = select_update_asset(assets)
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.name, "HwtThemeStudio-v0.2.0-win64.zip")
+
     def test_github_api_payload_prefers_browser_download_url(self):
         release = release_from_payload(
             {
@@ -190,9 +206,192 @@ class UpdaterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch(
             "hwtstudio.updater.urllib.request.urlopen", return_value=_FakeResponse(payload)
         ):
-            path = download_asset(release, download_dir=Path(directory))
-            self.assertEqual(path.read_bytes(), payload)
+            download = download_asset(release, download_dir=Path(directory))
+            self.assertIsInstance(download, VerifiedDownload)
+            self.assertEqual(download.path.read_bytes(), payload)
+            self.assertEqual(download.sha256, checksum)
             self.assertEqual(list(Path(directory).glob(".*.part")), [])
+
+    def test_cached_download_preserves_verified_sha256(self):
+        payload = b"cached verified update payload"
+        checksum = hashlib.sha256(payload).hexdigest()
+        release = release_from_payload(
+            {
+                "version": "v0.2.0",
+                "assets": [
+                    {
+                        "name": "HwtThemeStudio-v0.2.0-win64.exe",
+                        "url": "https://example.test/studio.exe",
+                        "sha256": checksum,
+                    }
+                ],
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "hwtstudio.updater.urllib.request.urlopen"
+        ) as urlopen:
+            target = Path(directory) / release.asset.name
+            target.write_bytes(payload)
+            download = download_asset(release, download_dir=Path(directory))
+            self.assertEqual(download, VerifiedDownload(path=target, sha256=checksum))
+            urlopen.assert_not_called()
+
+    def test_download_rejects_symlinked_cached_target(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        payload = b"cached target"
+        checksum = hashlib.sha256(payload).hexdigest()
+        release = release_from_payload(
+            {
+                "version": "v0.2.0",
+                "assets": [{
+                    "name": "HwtThemeStudio-v0.2.0-win64.exe",
+                    "url": "https://example.test/studio.exe",
+                    "sha256": checksum,
+                }],
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside.exe"
+            outside.write_bytes(payload)
+            target = root / release.asset.name
+            try:
+                os.symlink(outside, target)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建符号链接：{exc}")
+            with patch("hwtstudio.updater.urllib.request.urlopen") as urlopen:
+                with self.assertRaisesRegex(ValueError, "符号链接"):
+                    download_asset(release, download_dir=root)
+            urlopen.assert_not_called()
+
+    def test_download_rejects_symlinked_cache_directory(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        payload = b"cache directory target"
+        checksum = hashlib.sha256(payload).hexdigest()
+        release = release_from_payload(
+            {
+                "version": "v0.2.0",
+                "assets": [{
+                    "name": "HwtThemeStudio-v0.2.0-win64.exe",
+                    "url": "https://example.test/studio.exe",
+                    "sha256": checksum,
+                }],
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside"
+            outside.mkdir()
+            cache = root / "updates"
+            try:
+                os.symlink(outside, cache, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
+            with patch("hwtstudio.updater.urllib.request.urlopen") as urlopen:
+                with self.assertRaisesRegex(ValueError, "缓存目录.*符号链接"):
+                    download_asset(release, download_dir=cache)
+            urlopen.assert_not_called()
+            self.assertEqual(list(outside.iterdir()), [])
+
+    def test_download_rejects_symlinked_cache_parent(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        payload = b"cache parent target"
+        checksum = hashlib.sha256(payload).hexdigest()
+        release = release_from_payload(
+            {
+                "version": "v0.2.0",
+                "assets": [{
+                    "name": "HwtThemeStudio-v0.2.0-win64.exe",
+                    "url": "https://example.test/studio.exe",
+                    "sha256": checksum,
+                }],
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside"
+            outside.mkdir()
+            link = root / "linked-root"
+            try:
+                os.symlink(outside, link, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
+            cache = link / "updates"
+            with patch("hwtstudio.updater.urllib.request.urlopen") as urlopen:
+                with self.assertRaisesRegex(ValueError, "缓存目录的父路径.*符号链接"):
+                    download_asset(release, download_dir=cache)
+            urlopen.assert_not_called()
+            self.assertFalse((outside / "updates").exists())
+
+    def test_portable_archive_extracts_expected_layout(self):
+        payload = b"portable executable"
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "studio.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr(f"{APP_NAME}/", b"")
+                bundle.writestr(f"{APP_NAME}/{PORTABLE_EXECUTABLE_NAME}", payload)
+            app_dir, staging_root = _extract_portable_archive(archive)
+            self.assertEqual(app_dir.name, APP_NAME)
+            self.assertEqual((app_dir / PORTABLE_EXECUTABLE_NAME).read_bytes(), payload)
+            self.assertEqual(staging_root.parent, archive.parent)
+
+    def test_portable_archive_rejects_path_traversal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "studio.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr("../outside.txt", b"escape")
+            with self.assertRaisesRegex(ValueError, "路径穿越"):
+                _extract_portable_archive(archive)
+            self.assertFalse((Path(directory).parent / "outside.txt").exists())
+
+    def test_launch_portable_archive_after_hash_verification(self):
+        payload = b"portable executable"
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "studio.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr(f"{APP_NAME}/{PORTABLE_EXECUTABLE_NAME}", payload)
+            checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+            download = VerifiedDownload(path=archive, sha256=checksum)
+            with patch("hwtstudio.updater.subprocess.Popen") as popen:
+                self.assertFalse(launch_update(download))
+            popen.assert_called_once()
+            launched = Path(popen.call_args.args[0][0])
+            self.assertEqual(launched.name, PORTABLE_EXECUTABLE_NAME)
+            self.assertTrue(launched.is_file())
+
+    def test_launch_update_rejects_file_changed_after_download(self):
+        payload = b"verified update payload"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "hwtstudio-test-update.exe"
+            path.write_bytes(payload)
+            download = VerifiedDownload(path=path, sha256=hashlib.sha256(payload).hexdigest())
+            path.write_bytes(b"tampered update payload")
+            with patch("hwtstudio.updater.subprocess.Popen") as popen:
+                with self.assertRaisesRegex(ValueError, "启动前.*SHA-256"):
+                    launch_update(download)
+            popen.assert_not_called()
+
+    def test_launch_update_rejects_symlinked_download(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        payload = b"verified update payload"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside.exe"
+            outside.write_bytes(payload)
+            path = root / "hwtstudio-test-update.exe"
+            try:
+                os.symlink(outside, path)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建符号链接：{exc}")
+            download = VerifiedDownload(path=path, sha256=hashlib.sha256(payload).hexdigest())
+            with patch("hwtstudio.updater.subprocess.Popen") as popen:
+                with self.assertRaisesRegex(ValueError, "符号链接"):
+                    launch_update(download)
+            popen.assert_not_called()
 
     def test_download_asset_rejects_truncated_declared_response(self):
         payload = b"truncated update payload"

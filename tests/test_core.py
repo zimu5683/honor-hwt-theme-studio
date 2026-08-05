@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import stat
 import tempfile
 import unittest
@@ -12,10 +14,15 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 from PIL import Image
 
 from hwtstudio.blank import DIRECTORY_ENTRIES, IMAGE_LAYOUT, create_blank_theme
-from hwtstudio.catalog import load_catalog, scan_theme
+from hwtstudio.catalog import (
+    load_catalog,
+    save_source_compatibility_report,
+    scan_theme,
+    source_compatibility_report,
+)
 from hwtstudio.exporter import export_theme
 from hwtstudio.imageops import MAX_IMAGE_DIMENSION, load_image, render_image
-from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
+from hwtstudio.models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
 from hwtstudio.projectio import load_project, save_project
 from hwtstudio.paths import bundled_catalog, default_source_theme
 from hwtstudio.validation import validate_theme
@@ -35,6 +42,112 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(self.catalog.stats["icon_slots"], 1688)
         self.assertEqual(self.catalog.stats["wallpaper_slots"], 2)
         self.assertEqual(self.catalog.stats["preview_slots"], 7)
+
+    def test_source_compatibility_report_separates_scan_warnings_from_export_validation(self):
+        report = source_compatibility_report(self.catalog)
+        summary = report["summary"]
+        compatibility_count = sum(
+            1 for item in self.catalog.warnings
+            if item.get("kind") in report["compatibility"]["warning_kinds"]
+        )
+
+        self.assertEqual(summary["compatibility_warnings"], compatibility_count)
+        self.assertEqual(
+            summary["total_warnings"],
+            summary["compatibility_warnings"] + summary["scan_integrity_warnings"],
+        )
+        self.assertFalse(report["strict_export_validation"]["performed"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "source_compatibility.report.json"
+            save_source_compatibility_report(self.catalog, report_path)
+            saved = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["summary"], summary)
+            self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
+
+    def test_source_compatibility_report_audits_bounded_honor_mapping_targets(self):
+        source_color = ResourceSlot(
+            id="source-color",
+            module="com.huawei.android.launcher",
+            container="framework-res-hwext/theme.xml",
+            resource_type="color",
+            name="emui_color_bg",
+            path="framework-res-hwext/theme.xml",
+            category="桌面",
+            label="华为背景",
+        )
+        source_icon = ResourceSlot(
+            id="source-icon",
+            module="icons",
+            container="",
+            resource_type="icon",
+            name="com.vmall.client.png",
+            path="com.vmall.client.png",
+            category="桌面图标",
+            label="华为商城",
+        )
+        synthetic = ResourceSlot(
+            id="synthetic",
+            module="com.android.settings",
+            container="",
+            resource_type="image",
+            name="设置背景",
+            path="",
+            category="设置",
+            label="设置背景",
+            synthetic=True,
+            targets=[{"module": "com.android.settings", "path": "background.png"}],
+        )
+        catalog = ThemeCatalog("source.hwt", "a" * 64, "now", {}, [], [source_color, source_icon, synthetic])
+
+        conversion = source_compatibility_report(catalog)["honor_conversion"]
+
+        self.assertEqual(conversion["summary"]["scanned_slots"], 2)
+        self.assertEqual(conversion["summary"]["mapped_slots"], 2)
+        self.assertEqual(conversion["summary"]["fanout_slots"], 1)
+        self.assertEqual(conversion["summary"]["mapped_targets"], 3)
+        self.assertFalse(conversion["summary"]["items_truncated"])
+        by_id = {item["slot_id"]: item for item in conversion["items"]}
+        self.assertEqual(
+            by_id["source-color"]["targets"],
+            [{
+                "module": "com.hihonor.android.launcher",
+                "path": "framework-res-hnext/theme.xml",
+                "resource_type": "color",
+                "name": "magic_color_bg",
+            }],
+        )
+        self.assertEqual(
+            by_id["source-icon"]["targets"],
+            [
+                {"module": "icons", "path": "com.hihonor.hstore.global.png"},
+                {"module": "icons", "path": "com.hihonor.appmarket.png"},
+            ],
+        )
+
+    def test_source_compatibility_report_caps_mapping_samples(self):
+        resources = [
+            ResourceSlot(
+                id=f"source-{index:03d}",
+                module="com.huawei.android.launcher",
+                container="theme.xml",
+                resource_type="color",
+                name=f"emui_color_{index:03d}",
+                path="theme.xml",
+                category="桌面",
+                label="华为颜色",
+            )
+            for index in range(257)
+        ]
+        conversion = source_compatibility_report(
+            ThemeCatalog("source.hwt", "a" * 64, "now", {}, [], resources),
+        )["honor_conversion"]
+        summary = conversion["summary"]
+
+        self.assertEqual(summary["mapped_slots"], 257)
+        self.assertEqual(summary["sampled_items"], summary["sample_limit"])
+        self.assertTrue(summary["items_truncated"])
+        self.assertEqual(len(conversion["items"]), summary["sample_limit"])
 
     def test_blank_theme_minimal_and_valid(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -57,6 +170,34 @@ class CoreTests(unittest.TestCase):
                 self.assertFalse(any(name.startswith("com.") for name in archive.namelist()))
                 with ZipFile(BytesIO(archive.read("icons"))) as icons:
                     self.assertEqual(icons.namelist(), [])
+
+    def test_blank_theme_write_failure_preserves_existing_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "blank.hwt"
+            output.write_bytes(b"previous theme")
+            with patch("hwtstudio.blank.ZipFile") as zip_file:
+                archive = zip_file.return_value.__enter__.return_value
+                archive.writestr.side_effect = OSError("模拟写入失败")
+                with self.assertRaisesRegex(OSError, "模拟写入失败"):
+                    create_blank_theme(output)
+            self.assertEqual(output.read_bytes(), b"previous theme")
+            self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
+
+    def test_blank_theme_rejects_symlinked_output_parent(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("当前平台不支持符号链接")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside"
+            outside.mkdir()
+            link = root / "exports"
+            try:
+                os.symlink(outside, link, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
+            with self.assertRaisesRegex(ValueError, "空白主题输出目录.*符号链接"):
+                create_blank_theme(link / "blank.hwt")
+            self.assertEqual(list(outside.iterdir()), [])
 
     def test_honor_local_theme_admission_entries_are_required(self):
         """Mirror Theme Manager 20.x isValidThemeInfo()'s local-HWT gate."""
@@ -102,7 +243,8 @@ class CoreTests(unittest.TestCase):
             project = ThemeProject(name="背景测试")
             project.set_change(ResourceChange(slot_id=slot.id, source_file=str(image_path)))
             output = Path(directory) / "background.hwt"
-            export_theme(project, self.catalog, output)
+            _, report = export_theme(project, self.catalog, output)
+            self.assertFalse(any(item["kind"] == "resource_fanout" for item in report["preflight"]["warnings"]))
             with ZipFile(output) as outer:
                 with ZipFile(BytesIO(outer.read("com.android.settings"))) as module:
                     self.assertIn(
@@ -140,6 +282,11 @@ class CoreTests(unittest.TestCase):
             warning_kinds = {item["kind"] for item in catalog.warnings}
             self.assertIn("unsafe_path", warning_kinds)
             self.assertIn("unsafe_nested_path", warning_kinds)
+            report = source_compatibility_report(catalog)
+            self.assertTrue(any(
+                item["kind"] == "unsafe_path"
+                for item in report["scan_integrity"]["items"]
+            ))
 
     def test_scan_blocks_dangerous_nested_entries_before_reading(self):
         with tempfile.TemporaryDirectory() as directory:

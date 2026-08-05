@@ -5,17 +5,21 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable
+import zipfile
 
 from . import __version__
-from .paths import data_dir
+from .paths import APP_NAME, data_dir, ensure_no_symlink_parents
 
 
 DEFAULT_REPOSITORY = "zimu5683/honor-hwt-theme-studio"
@@ -28,6 +32,9 @@ MAX_METADATA_BYTES = 2 * 1024 * 1024
 MAX_ASSET_NAME_BYTES = 200
 MAX_RELEASE_VERSION_CHARS = 64
 MAX_RELEASE_BODY_CHARS = 12_000
+MAX_ARCHIVE_MEMBERS = 10_000
+MAX_EXTRACTED_SIZE = 1 * 1024 * 1024 * 1024
+PORTABLE_EXECUTABLE_NAME = f"{APP_NAME}.exe"
 ProgressCallback = Callable[[int, int, str], None]
 
 
@@ -57,6 +64,12 @@ class UpdateCheck:
     latest_version: str | None
     release: Release | None
     update_available: bool
+
+
+@dataclass(frozen=True)
+class VerifiedDownload:
+    path: Path
+    sha256: str
 
 
 def parse_version_tag(value: str) -> tuple[int, ...]:
@@ -126,7 +139,9 @@ def select_update_asset(assets: list[ReleaseAsset]) -> ReleaseAsset | None:
         lower = asset.name.lower()
         if not is_windows_installer_asset(lower):
             continue
-        rank = 0 if "win64" in lower or "windows-x64" in lower or "win-x64" in lower else 1
+        portable_rank = 0 if lower.endswith(".zip") else 1
+        architecture_rank = 0 if "win64" in lower or "windows-x64" in lower or "win-x64" in lower else 1
+        rank = portable_rank * 2 + architecture_rank
         candidates.append((rank, asset))
     candidates.sort(key=lambda item: (item[0], item[1].name.lower()))
     return candidates[0][1] if candidates else None
@@ -135,7 +150,7 @@ def select_update_asset(assets: list[ReleaseAsset]) -> ReleaseAsset | None:
 def is_windows_installer_asset(name: str) -> bool:
     lower = name.lower()
     return (
-        lower.endswith(".exe")
+        lower.endswith((".exe", ".zip"))
         and "hwt" in lower
         and "studio" in lower
         and ".sha256" not in lower
@@ -273,7 +288,7 @@ def download_asset(
     *,
     progress: ProgressCallback | None = None,
     cancelled: threading.Event | None = None,
-) -> Path:
+) -> VerifiedDownload:
     asset = release.asset
     if asset is None:
         raise ValueError("该 Release 没有适用于 Windows 的桌面安装包")
@@ -281,16 +296,32 @@ def download_asset(
     if not expected:
         raise ValueError("发布包缺少有效 SHA-256 校验值，已拒绝自动更新")
 
-    target_dir = download_dir or data_dir() / "updates"
+    target_dir = Path(download_dir) if download_dir is not None else data_dir() / "updates"
     _check_cancelled(cancelled)
+    if target_dir.is_symlink():
+        raise ValueError("更新包缓存目录不能是符号链接")
+    if target_dir.exists() and not target_dir.is_dir():
+        raise ValueError("更新包缓存目录不是目录")
+    ensure_no_symlink_parents(target_dir / ".hwtstudio-path-check", "更新包缓存目录的父路径不能包含符号链接")
     target_dir.mkdir(parents=True, exist_ok=True)
+    ensure_no_symlink_parents(target_dir / ".hwtstudio-path-check", "更新包缓存目录的父路径不能包含符号链接")
+    if target_dir.is_symlink() or not target_dir.is_dir():
+        raise ValueError("更新包缓存目录不是普通目录")
     target = target_dir / safe_asset_name(asset.name)
+    if target.is_symlink():
+        raise ValueError("更新包缓存不能是符号链接")
+    if target.exists() and not target.is_file():
+        raise ValueError("更新包缓存不是普通文件")
     if target.is_file() and _sha256(target, cancelled=cancelled) == expected:
         if progress:
             progress(target.stat().st_size, target.stat().st_size, "已复用已校验的更新包")
-        return target
+        return VerifiedDownload(path=target, sha256=expected)
 
     partial = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.part")
+    if partial.is_symlink():
+        raise ValueError("更新包临时文件不能是符号链接")
+    if partial.exists() and not partial.is_file():
+        raise ValueError("更新包临时文件不是普通文件")
     partial.unlink(missing_ok=True)
     digest = hashlib.sha256()
     received = 0
@@ -328,24 +359,195 @@ def download_asset(
         _check_cancelled(cancelled)
         if actual != expected:
             raise ValueError(f"更新包 SHA-256 校验失败：期望 {expected}，实际 {actual}")
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            raise ValueError("更新包缓存目标已变为非普通文件")
         os.replace(partial, target)
     except Exception:
         partial.unlink(missing_ok=True)
         raise
     if progress:
         progress(received, total or received, "更新包校验完成")
-    return target
+    return VerifiedDownload(path=target, sha256=expected)
+
+
+def _archive_member_path(info: zipfile.ZipInfo) -> tuple[PurePosixPath, bool]:
+    raw_name = info.filename.replace("\\", "/")
+    is_directory = raw_name.endswith("/")
+    normalized = raw_name.rstrip("/")
+    if not normalized or "\x00" in normalized:
+        raise ValueError("更新 ZIP 含有非法条目路径")
+    path = PurePosixPath(normalized)
+    if (
+        path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts)
+        or any(":" in part for part in path.parts)
+    ):
+        raise ValueError("更新 ZIP 含有路径穿越条目")
+    mode = (info.external_attr >> 16) & 0o170000
+    if mode == stat.S_IFLNK:
+        raise ValueError("更新 ZIP 不允许符号链接条目")
+    return path, is_directory
+
+
+def _extract_portable_archive(archive: Path) -> tuple[Path, Path]:
+    """Extract a verified portable package into a private staging directory."""
+    staging_root = Path(tempfile.mkdtemp(prefix=".hwt-update-", dir=str(archive.parent)))
+    try:
+        seen: dict[PurePosixPath, bool] = {}
+        total_size = 0
+        with zipfile.ZipFile(archive) as bundle:
+            infos = bundle.infolist()
+            if len(infos) > MAX_ARCHIVE_MEMBERS:
+                raise ValueError("更新 ZIP 条目数量超过限制")
+            parsed: list[tuple[zipfile.ZipInfo, PurePosixPath, bool]] = []
+            for info in infos:
+                path, is_directory = _archive_member_path(info)
+                if path in seen:
+                    raise ValueError("更新 ZIP 含有重复条目")
+                for parent in path.parents:
+                    if parent in seen and not seen[parent]:
+                        raise ValueError("更新 ZIP 含有文件/目录路径冲突")
+                seen[path] = is_directory
+                if not is_directory:
+                    total_size += info.file_size
+                    if total_size > MAX_EXTRACTED_SIZE:
+                        raise ValueError("更新 ZIP 解压内容超过限制")
+                parsed.append((info, path, is_directory))
+
+            expected_executable = PurePosixPath(APP_NAME) / PORTABLE_EXECUTABLE_NAME
+            if expected_executable not in seen or seen[expected_executable]:
+                raise ValueError("更新 ZIP 缺少桌面程序")
+
+            root = staging_root.resolve()
+            for info, path, is_directory in parsed:
+                destination = staging_root.joinpath(*path.parts)
+                if not destination.resolve().is_relative_to(root):
+                    raise ValueError("更新 ZIP 条目超出暂存目录")
+                if is_directory:
+                    destination.mkdir(parents=True, exist_ok=True)
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with bundle.open(info) as source, destination.open("xb") as target:
+                    shutil.copyfileobj(source, target, length=1024 * 1024)
+
+        executable = staging_root / APP_NAME / PORTABLE_EXECUTABLE_NAME
+        if executable.is_symlink() or not executable.is_file():
+            raise ValueError("更新 ZIP 中的桌面程序不是普通文件")
+        return executable.parent, staging_root
+    except Exception:
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise
 
 
 def release_page_url(release: Release) -> str:
     return release.url or f"https://github.com/{DEFAULT_REPOSITORY}/releases/tag/{release.version}"
 
 
-def launch_update(downloaded_path: Path) -> bool:
+def _spawn_encoded_powershell(script: str) -> None:
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    subprocess.Popen(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded],
+        creationflags=creation_flags,
+        close_fds=True,
+    )
+
+
+def _launch_portable_update(
+    staged_app: Path,
+    staging_root: Path,
+    target_dir: Path,
+    source_archive: Path,
+    expected: str,
+) -> bool:
+    source = staged_app.absolute()
+    staging = staging_root.absolute()
+    target = target_dir.absolute()
+    archive = source_archive.absolute()
+    executable = PORTABLE_EXECUTABLE_NAME.replace("'", "''")
+    script = f"""
+$processId = {os.getpid()}
+$source = '{str(source).replace("'", "''")}'
+$staging = '{str(staging).replace("'", "''")}'
+$target = '{str(target).replace("'", "''")}'
+$archive = '{str(archive).replace("'", "''")}'
+$expected = '{expected}'
+$backup = $target + '.previous'
+$deadline = (Get-Date).AddSeconds(30)
+function Get-Sha256([string] $path) {{
+    return (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+}}
+function Assert-PlainPath([string] $path) {{
+    if (Test-Path -LiteralPath $path) {{
+        $item = Get-Item -LiteralPath $path -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {{
+            throw '更新目录不能是符号链接或重解析点'
+        }}
+    }}
+}}
+while ((Get-Date) -lt $deadline -and (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {{
+    Start-Sleep -Milliseconds 200
+}}
+if (Get-Process -Id $processId -ErrorAction SilentlyContinue) {{ exit 2 }}
+$moved = $false
+try {{
+    Assert-PlainPath $archive
+    Assert-PlainPath $source
+    Assert-PlainPath $target
+    if ((Get-Sha256 $archive) -ne $expected) {{ throw 'source checksum mismatch' }}
+    if (-not (Test-Path -LiteralPath (Join-Path $source '{executable}') -PathType Leaf)) {{ throw 'portable executable missing' }}
+    Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $target) {{ Move-Item -LiteralPath $target -Destination $backup -Force }}
+    Move-Item -LiteralPath $source -Destination $target -Force
+    $moved = $true
+    Start-Process -FilePath (Join-Path $target '{executable}')
+    Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
+}} catch {{
+    if ($moved -and (Test-Path -LiteralPath $target)) {{ Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue }}
+    if (Test-Path -LiteralPath $backup) {{ Move-Item -LiteralPath $backup -Destination $target -Force }}
+    Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+    exit 3
+}}
+"""
+    _spawn_encoded_powershell(script)
+    return True
+
+
+def launch_update(download: VerifiedDownload) -> bool:
     """Start a verified update; return True when the current process should exit."""
-    downloaded_path = downloaded_path.resolve()
+    expected = _valid_sha256(download.sha256)
+    if not expected:
+        raise ValueError("更新包缺少有效 SHA-256 校验值，已拒绝启动")
+    downloaded_path = Path(download.path)
+    if downloaded_path.is_symlink():
+        raise ValueError("更新包不能是符号链接")
     if not downloaded_path.is_file():
         raise FileNotFoundError(downloaded_path)
+    downloaded_path = downloaded_path.absolute()
+    actual = _sha256(downloaded_path)
+    if actual != expected:
+        raise ValueError(f"启动前更新包 SHA-256 校验失败：期望 {expected}，实际 {actual}")
+
+    if downloaded_path.suffix.lower() == ".zip":
+        staged_app, staging_root = _extract_portable_archive(downloaded_path)
+        if os.name != "nt" or not getattr(sys, "frozen", False):
+            subprocess.Popen([str(staged_app / PORTABLE_EXECUTABLE_NAME)])
+            return False
+        current = Path(sys.executable).resolve()
+        if current.name == PORTABLE_EXECUTABLE_NAME and current.parent.name == APP_NAME:
+            target_dir = current.parent
+        else:
+            target_dir = current.parent / APP_NAME
+        return _launch_portable_update(
+            staged_app,
+            staging_root,
+            target_dir,
+            downloaded_path,
+            expected,
+        )
+
     if os.name != "nt" or not getattr(sys, "frozen", False):
         subprocess.Popen([str(downloaded_path)])
         return False
@@ -357,31 +559,37 @@ def launch_update(downloaded_path: Path) -> bool:
 $processId = {os.getpid()}
 $source = '{str(downloaded_path).replace("'", "''")}'
 $target = '{str(target).replace("'", "''")}'
+$expected = '{expected}'
+$staged = Join-Path ([System.IO.Path]::GetTempPath()) ("hwt-update-" + $processId + ".tmp")
 $backup = $target + '.previous'
 $deadline = (Get-Date).AddSeconds(30)
+function Get-Sha256([string] $path) {{
+    return (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+}}
 while ((Get-Date) -lt $deadline -and (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {{
     Start-Sleep -Milliseconds 200
 }}
 if (Get-Process -Id $processId -ErrorAction SilentlyContinue) {{ exit 2 }}
 try {{
+    Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+    if ((Get-Sha256 $source) -ne $expected) {{ throw 'source checksum mismatch' }}
+    Copy-Item -LiteralPath $source -Destination $staged -Force
+    if ((Get-Sha256 $staged) -ne $expected) {{ throw 'staged checksum mismatch' }}
     Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
     Copy-Item -LiteralPath $target -Destination $backup -Force
-    Copy-Item -LiteralPath $source -Destination $target -Force
+    Copy-Item -LiteralPath $staged -Destination $target -Force
+    if ((Get-Sha256 $target) -ne $expected) {{ throw 'target checksum mismatch' }}
     Start-Process -FilePath $target
     Remove-Item -LiteralPath $source -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
 }} catch {{
     if (Test-Path -LiteralPath $backup) {{
         Copy-Item -LiteralPath $backup -Destination $target -Force
     }}
+    Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
     exit 3
 }}
 """
-    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
-    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-    subprocess.Popen(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded],
-        creationflags=creation_flags,
-        close_fds=True,
-    )
+    _spawn_encoded_powershell(script)
     return True

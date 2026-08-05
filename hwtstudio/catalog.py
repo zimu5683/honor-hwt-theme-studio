@@ -13,6 +13,9 @@ from zipfile import BadZipFile, ZipFile
 from PIL import Image
 
 from .archive_safety import (
+    archive_data_overlaps,
+    archive_local_header_issues,
+    archive_path_overlaps,
     compression_ratio,
     duplicate_names,
     duplicate_normalized_names,
@@ -26,14 +29,19 @@ from .common import (
     MAX_ARCHIVE_ENTRY_BYTES,
     MAX_ARCHIVE_UNCOMPRESSED_BYTES,
     MAX_CATALOG_BYTES,
+    MAX_SOURCE_CONVERSION_SAMPLES,
     friendly_label,
+    honor_module_name,
+    honor_resource_name,
+    honor_resource_path,
+    honor_resource_paths,
     is_safe_archive_path,
     module_category,
     normalize_archive_path,
     risk_for,
 )
 from .models import ResourceSlot, ThemeCatalog
-from .paths import unique_temp_path
+from .paths import ensure_no_symlink_parents, unique_temp_path
 from .pngmeta import extract_android_chunks
 from .xmlutil import parse_xml
 
@@ -84,7 +92,13 @@ def _is_image_payload(path: str, raw: bytes) -> bool:
     return Path(path).suffix.lower() in IMAGE_EXTENSIONS or detect_format(raw) in IMAGE_FORMATS
 
 
-def _archive_blocked_paths(infos, warnings: list[dict], *, module: str | None = None) -> set[str]:
+def _archive_blocked_paths(
+    infos,
+    warnings: list[dict],
+    *,
+    module: str | None = None,
+    fileobj=None,
+) -> set[str]:
     blocked: set[str] = set()
     prefix = "nested_" if module is not None else ""
 
@@ -101,6 +115,34 @@ def _archive_blocked_paths(infos, warnings: list[dict], *, module: str | None = 
             if normalize_archive_path(info.filename) == duplicate
         )
         item = {"kind": f"{prefix}duplicate_normalized_zip_entry", "path": duplicate}
+        if module is not None:
+            item["module"] = module
+        warnings.append(item)
+    for parent, path in archive_path_overlaps(infos):
+        blocked.update(
+            info.filename
+            for info in infos
+            if normalize_archive_path(info.filename.rstrip("/")) in {parent, path}
+        )
+        item = {"kind": f"{prefix}path_overlap", "path": path, "parent": parent}
+        if module is not None:
+            item["module"] = module
+        warnings.append(item)
+
+    for parent, path in archive_data_overlaps(infos, fileobj):
+        blocked.update(
+            info.filename
+            for info in infos
+            if info.filename in {parent, path}
+        )
+        item = {"kind": f"{prefix}data_overlap", "path": path, "overlaps": parent}
+        if module is not None:
+            item["module"] = module
+        warnings.append(item)
+
+    for path, issue in archive_local_header_issues(infos, fileobj):
+        blocked.add(path)
+        item = {"kind": f"{prefix}local_header_mismatch", "path": path, "message": issue}
         if module is not None:
             item["module"] = module
         warnings.append(item)
@@ -244,7 +286,7 @@ def _scan_module(module: str, raw: bytes, warnings: list[dict]) -> tuple[list[Re
             for path in sorted(unsafe_paths):
                 warnings.append({"kind": "unsafe_nested_path", "module": module, "path": path})
             blocked_paths = set(unsafe_paths)
-            blocked_paths.update(_archive_blocked_paths(infos, warnings, module=module))
+            blocked_paths.update(_archive_blocked_paths(infos, warnings, module=module, fileobj=archive.fp))
             try:
                 bad = None if blocked_paths else archive.testzip()
             except (BadZipFile, OSError, RuntimeError, ValueError) as exc:
@@ -356,7 +398,7 @@ def scan_theme(path: Path) -> ThemeCatalog:
         for name in sorted(unsafe_paths):
             warnings.append({"kind": "unsafe_path", "path": name})
         blocked_paths = set(unsafe_paths)
-        blocked_paths.update(_archive_blocked_paths(outer_infos, warnings))
+        blocked_paths.update(_archive_blocked_paths(outer_infos, warnings, fileobj=outer.fp))
         try:
             bad = None if blocked_paths else outer.testzip()
         except (BadZipFile, OSError, RuntimeError, ValueError) as exc:
@@ -413,17 +455,166 @@ def scan_theme(path: Path) -> ThemeCatalog:
     )
 
 
-def save_catalog(catalog: ThemeCatalog, path: Path) -> None:
+SOURCE_COMPATIBILITY_WARNING_KINDS = frozenset({
+    "duplicate_resource",
+    "image_format_mismatch",
+    "nonstandard_xml",
+})
+
+
+def _source_conversion_item(slot: ResourceSlot) -> dict | None:
+    if slot.synthetic:
+        return None
+    if slot.resource_type in {"color", "bool", "integer", "dimen", "string"}:
+        source = {
+            "module": slot.module,
+            "path": slot.container,
+            "resource_type": slot.resource_type,
+            "name": slot.name,
+        }
+        target = {
+            "module": honor_module_name(slot.module),
+            "path": honor_resource_path(slot.container),
+            "resource_type": slot.resource_type,
+            "name": honor_resource_name(slot.name),
+        }
+        targets = [target]
+        changed = target != source
+    elif slot.resource_type in {"image", "icon", "wallpaper", "preview"}:
+        source = {"module": slot.module, "path": slot.path}
+        target_module = honor_module_name(slot.module)
+        target_paths = honor_resource_paths(slot.module, slot.path)
+        targets = [{"module": target_module, "path": path} for path in target_paths]
+        changed = target_module != slot.module or target_paths != (slot.path,)
+    else:
+        return None
+    if not changed:
+        return None
+    return {
+        "slot_id": slot.id,
+        "resource_type": slot.resource_type,
+        "kind": "fanout" if len(targets) > 1 else "mapped",
+        "source": source,
+        "targets": targets,
+    }
+
+
+def source_conversion_report(catalog: ThemeCatalog) -> dict:
+    """Report bounded samples of the Honor targets derived from source slots."""
+    scanned_slots = sorted(
+        (slot for slot in catalog.resources if not slot.synthetic),
+        key=lambda slot: slot.id,
+    )
+    items: list[dict] = []
+    mapped_slots = fanout_slots = mapped_targets = 0
+    for slot in scanned_slots:
+        item = _source_conversion_item(slot)
+        if item is None:
+            continue
+        mapped_slots += 1
+        mapped_targets += len(item["targets"])
+        if item["kind"] == "fanout":
+            fanout_slots += 1
+        if len(items) < MAX_SOURCE_CONVERSION_SAMPLES:
+            items.append(item)
+    return {
+        "summary": {
+            "scanned_slots": len(scanned_slots),
+            "mapped_slots": mapped_slots,
+            "fanout_slots": fanout_slots,
+            "mapped_targets": mapped_targets,
+            "sampled_items": len(items),
+            "sample_limit": MAX_SOURCE_CONVERSION_SAMPLES,
+            "items_truncated": mapped_slots > len(items),
+        },
+        "policy": "仅统计已扫描的源资源；合成资源由其显式 targets 控制。",
+        "items": items,
+    }
+
+
+def source_compatibility_report(catalog: ThemeCatalog) -> dict:
+    """Summarize recoverable source issues without treating them as export failures."""
+    warning_items = [dict(item) for item in catalog.warnings if isinstance(item, dict)]
+    by_kind = Counter()
+    compatibility_items: list[dict] = []
+    scan_integrity_items: list[dict] = []
+    for item in warning_items:
+        raw_kind = item.get("kind")
+        kind = raw_kind if isinstance(raw_kind, str) and raw_kind else "unknown"
+        by_kind[kind] += 1
+        if kind in SOURCE_COMPATIBILITY_WARNING_KINDS:
+            compatibility_items.append(item)
+        else:
+            scan_integrity_items.append(item)
+
+    def stat(name: str) -> int:
+        value = catalog.stats.get(name, 0)
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+    return {
+        "schema": 1,
+        "source_path": catalog.source_path,
+        "source_sha256": catalog.source_sha256,
+        "generated_at": catalog.generated_at,
+        "summary": {
+            "modules": stat("modules"),
+            "resource_slots": stat("resource_slots"),
+            "total_warnings": len(warning_items),
+            "compatibility_warnings": len(compatibility_items),
+            "scan_integrity_warnings": len(scan_integrity_items),
+            "by_kind": dict(sorted(by_kind.items())),
+        },
+        "compatibility": {
+            "warning_kinds": sorted(SOURCE_COMPATIBILITY_WARNING_KINDS),
+            "items": compatibility_items,
+        },
+        "scan_integrity": {
+            "items": scan_integrity_items,
+        },
+        "honor_conversion": source_conversion_report(catalog),
+        "strict_export_validation": {
+            "performed": False,
+            "note": "此报告只描述源主题的只读扫描结果；最终导出文件仍需单独通过严格验证。",
+        },
+    }
+
+
+def _save_bounded_json(payload: dict, path: Path, *, too_large_message: str) -> None:
+    path = Path(path)
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError("资源目录输出目标不是普通文件")
+    ensure_no_symlink_parents(path, "资源目录输出目录不能包含符号链接")
     path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_no_symlink_parents(path, "资源目录输出目录不能包含符号链接")
     temp = unique_temp_path(path)
+    if temp.is_symlink() or (temp.exists() and not temp.is_file()):
+        raise ValueError("资源目录临时文件不是普通文件")
     try:
-        encoded = json.dumps(catalog.to_dict(), ensure_ascii=False, indent=2).encode("utf-8")
+        encoded = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         if len(encoded) > MAX_CATALOG_BYTES:
-            raise ValueError("保存的资源目录文件超过允许的大小限制")
+            raise ValueError(too_large_message)
         temp.write_bytes(encoded)
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError("资源目录输出目标不是普通文件")
         os.replace(temp, path)
     finally:
         temp.unlink(missing_ok=True)
+
+
+def save_catalog(catalog: ThemeCatalog, path: Path) -> None:
+    _save_bounded_json(
+        catalog.to_dict(),
+        path,
+        too_large_message="保存的资源目录文件超过允许的大小限制",
+    )
+
+
+def save_source_compatibility_report(catalog: ThemeCatalog, path: Path) -> None:
+    _save_bounded_json(
+        source_compatibility_report(catalog),
+        path,
+        too_large_message="源主题兼容性报告超过允许的大小限制",
+    )
 
 
 def _validate_catalog_resource(resource: dict, index: int) -> None:

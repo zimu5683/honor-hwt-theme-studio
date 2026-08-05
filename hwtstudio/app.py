@@ -6,8 +6,8 @@ import sys
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSettings, QSize, QStandardPaths, Qt, QThread, QTimer, QUrl
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QMouseEvent, QPixmap, QUndoStack
+from PySide6.QtCore import QSettings, QSize, QStandardPaths, Qt, QThread, QTimer, QUrl
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QPixmap, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
 import qtawesome as qta
 
 from . import __version__
-from .catalog import scan_theme
+from .catalog import scan_theme, source_compatibility_report
 from .exporter import default_export_name, export_theme, preflight_export
 from .imageops import render_image, render_placeholder
 from .models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
@@ -61,9 +61,8 @@ from .ui.phone_dialog import PhoneTransferDialog
 from .ui.resource_models import ResourceFilterModel, ResourceTableModel
 from .ui.simple_editor import SimpleEditor
 from .ui.simple_preview import PreviewRepository
-from .ui.titlebar import WindowTitleBar
 from .ui.workers import ProfileWorker, TransferWorker, UpdateWorker
-from .updater import Release, UpdateCheck, launch_update, release_page_url
+from .updater import Release, UpdateCheck, VerifiedDownload, launch_update, release_page_url
 
 
 def _compact_error_detail(detail: str, fallback: str, *, limit: int = 240) -> str:
@@ -115,7 +114,6 @@ class MainWindow(QMainWindow):
         if app is not None:
             install_qt_translations(app)
         super().__init__()
-        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.resize(1500, 920)
         self.catalog = self._load_initial_catalog()
@@ -131,8 +129,9 @@ class MainWindow(QMainWindow):
         self._update_generation = 0
         self.update_info: UpdateCheck | None = None
         self.update_progress: QProgressDialog | None = None
-        cached_profiles = [device.profile for device in PhoneRegistry().load().values() if device.profile]
-        self.phone_profile = max(cached_profiles, key=lambda item: item.updated_at, default=None)
+        profile_device_id = self.settings.value("phone/profile_device_id", "", type=str)
+        saved_devices = PhoneRegistry().load()
+        self.phone_profile = self._cached_phone_profile(saved_devices, profile_device_id)
         self.installed_packages: set[str] | None = (
             set(self.phone_profile.installed_packages) if self.phone_profile else None
         )
@@ -141,26 +140,31 @@ class MainWindow(QMainWindow):
         self._profile_generation = 0
         self._closing = False
         self._log_lines: list[str] = []
-        self._resize_margin = 6
         self.simple_resolved = resolve_all(self.catalog)
         self.preview_repository = PreviewRepository()
         self._build_ui()
-        app = QApplication.instance()
-        if app is not None:
-            app.installEventFilter(self)
         self._bind_project()
         self._update_phone_ui(cached=bool(self.phone_profile))
         self.log("已加载大雪资源目录。原始主题仅用于只读分析，不会被修改。")
+        self._log_source_compatibility_summary(self.catalog)
         if self._catalog_load_warning:
             self.log(self._catalog_load_warning)
+
+    @staticmethod
+    def _cached_phone_profile(devices: dict, preferred_device_id: str):
+        preferred = devices.get(preferred_device_id) if preferred_device_id else None
+        if preferred is not None and preferred.profile is not None:
+            return preferred.profile
+        if preferred_device_id:
+            return None
+        profiles = [device.profile for device in devices.values() if device.profile]
+        return profiles[0] if len(profiles) == 1 else None
 
     def _load_initial_catalog(self) -> ThemeCatalog:
         catalog, self._catalog_load_warning = load_preferred_catalog()
         return catalog
 
     def _build_ui(self):
-        self.title_bar = WindowTitleBar(self)
-        self.setMenuWidget(self.title_bar)
         self.setStatusBar(QStatusBar())
         self._build_toolbar()
         self.tabs = QTabWidget()
@@ -202,6 +206,9 @@ class MainWindow(QMainWindow):
         rescan_action = QAction("重新扫描资源目录", self)
         rescan_action.triggered.connect(self.rescan_source)
         advanced.addAction(rescan_action)
+        report_action = QAction("查看源主题兼容性报告", self)
+        report_action.triggered.connect(self.show_source_compatibility_report)
+        advanced.addAction(report_action)
         log_action = QAction("查看运行日志", self)
         log_action.triggered.connect(self.show_log_dialog)
         advanced.addAction(log_action)
@@ -713,7 +720,7 @@ class MainWindow(QMainWindow):
         else:
             self.update_progress.setRange(0, 0)
 
-    def _update_downloaded(self, path: Path, generation: int | None = None):
+    def _update_downloaded(self, download: VerifiedDownload, generation: int | None = None):
         if generation is not None and generation != self._update_generation:
             return
         if self._closing:
@@ -722,9 +729,10 @@ class MainWindow(QMainWindow):
         self.update_progress = None
         if progress is not None:
             progress.close()
+        path = download.path
         self.log(f"更新包已下载并通过 SHA-256 校验：{path}")
         try:
-            should_exit = launch_update(path)
+            should_exit = launch_update(download)
         except Exception:
             self.log(traceback.format_exc())
             QMessageBox.critical(self, "启动更新失败", f"更新包已保存到：\n{path}\n\n无法自动启动新版本，请手动打开该文件。")
@@ -787,11 +795,12 @@ class MainWindow(QMainWindow):
         self._profile_worker = worker
         thread.start()
 
-    def _profile_finished(self, _device, profile, generation: int | None = None):
+    def _profile_finished(self, device, profile, generation: int | None = None):
         if generation is not None and generation != self._profile_generation:
             return
         if self._closing:
             return
+        self.settings.setValue("phone/profile_device_id", device.device_id)
         self.phone_profile = profile
         self.installed_packages = set(profile.installed_packages)
         self.resource_model.set_installed_packages(self.installed_packages)
@@ -1436,6 +1445,7 @@ class MainWindow(QMainWindow):
             save_user_catalog(catalog)
             self.bind_catalog(catalog)
             self.log(f"扫描完成：{filename}，资源槽位 {len(catalog.resources)}。")
+            self._log_source_compatibility_summary(catalog)
         except Exception as exc:
             self._show_operation_error(
                 "扫描失败",
@@ -1443,6 +1453,33 @@ class MainWindow(QMainWindow):
                 "请确认选中的 HWT 文件完整且未被占用后重试。",
                 exc,
             )
+
+    def _log_source_compatibility_summary(self, catalog: ThemeCatalog) -> None:
+        summary = source_compatibility_report(catalog)["summary"]
+        self.log(
+            "源主题兼容性报告："
+            f"兼容性警告 {summary['compatibility_warnings']} 条，"
+            f"扫描完整性警告 {summary['scan_integrity_warnings']} 条；"
+            "这些警告不会直接替代导出文件的严格验证。"
+        )
+
+    def show_source_compatibility_report(self):
+        report = source_compatibility_report(self.catalog)
+        summary = report["summary"]
+        lines = [
+            f"源主题：{report['source_path'] or '未记录'}",
+            f"模块：{summary['modules']}    资源槽位：{summary['resource_slots']}",
+            f"兼容性警告：{summary['compatibility_warnings']}",
+            f"扫描完整性警告：{summary['scan_integrity_warnings']}",
+            "",
+            "警告分类：",
+        ]
+        lines.extend(
+            f"{kind}：{count}"
+            for kind, count in list(summary["by_kind"].items())[:12]
+        )
+        lines.extend(("", "严格导出验证：未在此报告中执行；导出时会单独验证生成的 HWT。"))
+        QMessageBox.information(self, "源主题兼容性报告", "\n".join(lines))
 
     def _confirm_discard(self) -> bool:
         if not self.project.dirty:
@@ -1494,46 +1531,6 @@ class MainWindow(QMainWindow):
             event.ignore()
         else:
             event.accept()
-
-    def _resize_edges_at(self, global_pos):
-        if self.isMaximized() or self.isFullScreen():
-            return Qt.Edges()
-        rect = self.frameGeometry()
-        margin = self._resize_margin
-        edges = Qt.Edges()
-        if abs(global_pos.x() - rect.left()) <= margin:
-            edges |= Qt.Edge.LeftEdge
-        if abs(global_pos.x() - rect.right()) <= margin:
-            edges |= Qt.Edge.RightEdge
-        if abs(global_pos.y() - rect.top()) <= margin:
-            edges |= Qt.Edge.TopEdge
-        if abs(global_pos.y() - rect.bottom()) <= margin:
-            edges |= Qt.Edge.BottomEdge
-        return edges
-
-    def eventFilter(self, watched, event):
-        if isinstance(watched, QWidget) and (watched is self or self.isAncestorOf(watched)):
-            if isinstance(event, QMouseEvent):
-                global_pos = event.globalPosition().toPoint()
-                edges = self._resize_edges_at(global_pos)
-                if event.type() == QEvent.Type.MouseMove and not (event.buttons() & Qt.MouseButton.LeftButton):
-                    if edges & (Qt.Edge.LeftEdge | Qt.Edge.RightEdge):
-                        if edges & (Qt.Edge.TopEdge | Qt.Edge.BottomEdge):
-                            self.setCursor(Qt.CursorShape.SizeFDiagCursor if edges & Qt.Edge.LeftEdge else Qt.CursorShape.SizeBDiagCursor)
-                        else:
-                            self.setCursor(Qt.CursorShape.SizeHorCursor)
-                    elif edges & (Qt.Edge.TopEdge | Qt.Edge.BottomEdge):
-                        self.setCursor(Qt.CursorShape.SizeVerCursor)
-                    else:
-                        self.unsetCursor()
-                elif event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton and edges:
-                    handle = self.windowHandle()
-                    if handle is not None and handle.startSystemResize(edges):
-                        event.accept()
-                        return True
-                elif event.type() == QEvent.Type.MouseButtonRelease:
-                    self.unsetCursor()
-        return super().eventFilter(watched, event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

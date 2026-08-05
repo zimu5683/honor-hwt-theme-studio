@@ -3,12 +3,50 @@ package io.github.zimu5683.hwttransfer
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ThemeStorageTest {
+    @Test
+    fun backupSelectionIsDeterministicWhenModificationTimesTie() {
+        data class Candidate(val name: String, val modified: Long)
+
+        val first = Candidate("theme.hwt.backup-100", 10L)
+        val second = Candidate("theme.hwt.backup-200", 10L)
+        val selected = selectLatestBackup(
+            listOf(second, first),
+            lastModified = { it.modified },
+            name = { it.name },
+        )
+
+        assertEquals(second, selected)
+    }
+
+    @Test
+    fun safRenameStateFailsClosedForAmbiguousProviderResults() {
+        assertEquals(SafRenameState.MOVED, classifySafRenameState(sourceExists = false, targetExists = true))
+        assertEquals(SafRenameState.NOT_MOVED, classifySafRenameState(sourceExists = true, targetExists = false))
+        assertEquals(SafRenameState.AMBIGUOUS, classifySafRenameState(sourceExists = true, targetExists = true))
+        assertEquals(SafRenameState.AMBIGUOUS, classifySafRenameState(sourceExists = false, targetExists = false))
+    }
+
+    @Test
+    fun safChildResolutionRequiresExactlyOneMatchingName() {
+        val children = listOf("theme.hwt", "other.hwt")
+
+        assertEquals("theme.hwt", selectUniqueSafChild(children, "theme.hwt") { it })
+        assertNull(selectUniqueSafChild(children, "missing.hwt") { it })
+
+        val error = assertThrows(TransferException::class.java) {
+            selectUniqueSafChild(listOf("theme.hwt", "theme.hwt"), "theme.hwt") { it }
+        }
+        assertEquals("replace_failed", error.code)
+    }
+
     @Test
     fun directBackupPrefixIsStableAndThemeSpecific() {
         val first = directThemeBackupPrefix("主题一.hwt")
@@ -22,13 +60,38 @@ class ThemeStorageTest {
     }
 
     @Test
+    fun safArtifactNamesOnlyMatchGeneratedShapes() {
+        assertTrue(isSafBackupName("theme.hwt", "theme.hwt.backup-123456"))
+        assertTrue(isSafBackupName("theme.hwt", "theme.hwt.backup--123456"))
+        assertFalse(isSafBackupName("theme.hwt", "theme.hwt.backup-user-file"))
+        assertTrue(isSafUploadName("hwt_transfer_123e4567-e89b-42d3-a456-426614174000.uploading"))
+        assertFalse(isSafUploadName("hwt_transfer_user.uploading"))
+        assertFalse(isSafUploadName("hwt_transfer_123e4567-e89b-42d3-a456-42661417400.uploading"))
+        assertFalse(isSafUploadName("hwt_transfer_123e4567-e89b-12d3-a456-4266141740000.uploading"))
+        assertFalse(isSafUploadName("hwt_transfer_123e4567-e89b-42d3-c456-426614174000.uploading"))
+        assertFalse(isSafUploadName("hwt_transfer_123e4567-e89b-42d3-a456-42661417400z.uploading"))
+    }
+
+    @Test
+    fun directArtifactNamesOnlyMatchGeneratedShapes() {
+        val themeName = "theme.hwt"
+        val backup = "${directThemeBackupPrefix(themeName)}123e4567-e89b-42d3-a456-426614174000.backup"
+
+        assertTrue(isDirectBackupName(themeName, backup))
+        assertFalse(isDirectBackupName(themeName, "${directThemeBackupPrefix(themeName)}old.backup"))
+        assertTrue(isDirectUploadName("hwt_upload_Abc123.uploading"))
+        assertFalse(isDirectUploadName("hwt_upload_old.uploading"))
+        assertFalse(isDirectUploadName("hwt_upload_Abc123.backup"))
+    }
+
+    @Test
     fun directRecoveryRestoresMatchingBackupAndKeepsUnknownLegacyBackup() {
         val root = Files.createTempDirectory("hwt-recovery-test")
         try {
             val name = "theme.hwt"
             val target = root.resolve(name).toFile()
             val backup = root.resolve(
-                "${directThemeBackupPrefix(name)}old.backup",
+                "${directThemeBackupPrefix(name)}123e4567-e89b-42d3-a456-426614174000.backup",
             ).toFile()
             val legacy = root.resolve("hwt_backup_legacy.backup").toFile()
             backup.writeText("old-theme", StandardCharsets.UTF_8)
@@ -49,19 +112,22 @@ class ThemeStorageTest {
     fun staleDirectUploadsAreRemovedButUnsafeObjectsAreRejected() {
         val root = Files.createTempDirectory("hwt-upload-cleanup-test")
         try {
-            val stale = root.resolve("hwt_upload_old.uploading").toFile()
+            val stale = root.resolve("hwt_upload_Abc123.uploading").toFile()
+            val unknown = root.resolve("hwt_upload_old.uploading").toFile()
             stale.writeText("partial", StandardCharsets.UTF_8)
+            unknown.writeText("keep", StandardCharsets.UTF_8)
 
             cleanupStaleDirectThemeUploads(root.toFile())
 
             assertFalse(stale.exists())
+            assertTrue(unknown.isFile)
         } finally {
             root.toFile().deleteRecursively()
         }
 
         val unsafeRoot = Files.createTempDirectory("hwt-upload-unsafe-test")
         try {
-            val unsafe = Files.createDirectory(unsafeRoot.resolve("hwt_upload_dir.uploading")).toFile()
+            val unsafe = Files.createDirectory(unsafeRoot.resolve("hwt_upload_Abc123.uploading")).toFile()
 
             val error = assertThrows(TransferException::class.java) {
                 cleanupStaleDirectThemeUploads(unsafeRoot.toFile())

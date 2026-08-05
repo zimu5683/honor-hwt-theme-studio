@@ -11,6 +11,11 @@ import java.util.UUID
 data class PairedClient(val name: String, val tokenHash: String, val pairedAt: Long)
 data class PairResult(val token: String, val client: PairedClient)
 
+internal const val MAX_AUTH_TOKEN_CHARS = 128
+
+internal fun isAcceptableAuthorizationToken(token: String?): Boolean =
+    !token.isNullOrBlank() && token.length <= MAX_AUTH_TOKEN_CHARS
+
 private fun normalizeClientName(value: String): String {
     val normalized = StringBuilder()
     var pendingSpace = false
@@ -42,8 +47,10 @@ class PairingManager(context: Context, private val clock: () -> Long = System::c
     private val failedAttempts = ArrayDeque<Long>()
 
     val deviceId: String = synchronized(storageLock) {
-        prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also {
-            prefs.edit().putString("device_id", it).apply()
+        prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also { generated ->
+            if (!prefs.edit().putString("device_id", generated).commit()) {
+                throw IllegalStateException("无法保存手机设备标识")
+            }
         }
     }
 
@@ -93,8 +100,9 @@ class PairingManager(context: Context, private val clock: () -> Long = System::c
     }
 
     fun isAuthorized(token: String?): Boolean {
-        if (token.isNullOrBlank()) return false
-        val candidate = hashToken(token)
+        val authorizedToken = token ?: return false
+        if (!isAcceptableAuthorizationToken(authorizedToken)) return false
+        val candidate = hashToken(authorizedToken)
         return clients().any { MessageDigest.isEqual(it.tokenHash.toByteArray(), candidate.toByteArray()) }
     }
 
@@ -113,17 +121,19 @@ class PairingManager(context: Context, private val clock: () -> Long = System::c
                     val rawName = item.opt("name")
                     val rawTokenHash = item.opt("token_hash")
                     val rawPairedAt = item.opt("paired_at")
-                    if (rawName !is String || rawTokenHash !is String || rawPairedAt !is Number) continue
+                    if (rawName !is String || rawTokenHash !is String) continue
                     val name = rawName.trim()
                     val tokenHash = rawTokenHash.lowercase()
-                    val pairedAt = rawPairedAt.toLong()
+                    val pairedAt = when (rawPairedAt) {
+                        is Int -> rawPairedAt.toLong()
+                        is Long -> rawPairedAt
+                        else -> continue
+                    }
                     if (
                         name.isBlank() ||
                         name != normalizeClientName(name) ||
                         !TOKEN_HASH_PATTERN.matches(tokenHash) ||
-                        pairedAt < 0L ||
-                        rawPairedAt is Double && (!rawPairedAt.isFinite() || rawPairedAt != pairedAt.toDouble()) ||
-                        rawPairedAt is Float && (!rawPairedAt.isFinite() || rawPairedAt != pairedAt.toFloat())
+                        pairedAt < 0L
                     ) continue
                     add(PairedClient(name, tokenHash, pairedAt))
                 }
@@ -155,7 +165,9 @@ class PairingManager(context: Context, private val clock: () -> Long = System::c
         clients.forEach {
             array.put(JSONObject().put("name", it.name).put("token_hash", it.tokenHash).put("paired_at", it.pairedAt))
         }
-        prefs.edit().putString("clients", array.toString()).apply()
+        if (!prefs.edit().putString("clients", array.toString()).commit()) {
+            throw IllegalStateException("无法保存手机配对状态")
+        }
     }
 
     private fun hashToken(token: String): String = MessageDigest.getInstance("SHA-256")

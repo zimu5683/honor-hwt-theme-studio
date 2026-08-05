@@ -14,6 +14,7 @@ MAX_ARCHIVE_ENTRIES = 20_000
 MAX_ARCHIVE_COMPRESSION_RATIO = 500.0
 MAX_CATALOG_BYTES = 32 * 1024 * 1024
 MAX_PROJECT_BYTES = 16 * 1024 * 1024
+MAX_SOURCE_CONVERSION_SAMPLES = 256
 
 
 # Mappings confirmed by the Huawei-to-Honor converter reference project. They
@@ -42,6 +43,17 @@ HONOR_PATH_ALIASES = {
 _HONOR_PATH_ALIASES_SORTED = tuple(
     sorted(HONOR_PATH_ALIASES.items(), key=lambda item: len(item[0]), reverse=True),
 )
+_HONOR_RESOURCE_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])(emui|hw)(?=[A-Za-z_]|$)")
+
+# The Huawei converter duplicates this icon for both Honor package names. Keep
+# the fan-out exact and module-scoped so a custom resource or an unrelated
+# module cannot inherit a surprising filename rewrite.
+HONOR_RESOURCE_FANOUTS = {
+    ("icons", "com.vmall.client.png"): (
+        "com.hihonor.hstore.global.png",
+        "com.hihonor.appmarket.png",
+    ),
+}
 
 
 def honor_module_name(value: str) -> str:
@@ -49,10 +61,18 @@ def honor_module_name(value: str) -> str:
 
 
 def honor_resource_name(value: str) -> str:
-    if value.startswith("emui"):
-        return "magic" + value[4:]
-    if value.startswith("hw"):
-        return "hn" + value[2:]
+    """Map Huawei resource-key tokens without rewriting ordinary substrings."""
+    return _HONOR_RESOURCE_TOKEN_RE.sub(
+        lambda match: "magic" if match.group(1) == "emui" else "hn",
+        value,
+    )
+
+
+def _honor_package_alias(value: str) -> str:
+    """Map an exact package path or a package-prefixed filename."""
+    for old, new in _HONOR_PATH_ALIASES_SORTED:
+        if value == old or value.startswith(old + "."):
+            return new + value[len(old):]
     return value
 
 
@@ -62,12 +82,24 @@ def honor_resource_path(value: str) -> str:
     for index, part in enumerate(parts):
         if part == "framework-res-hwext":
             part = "framework-res-hnext"
-        for old, new in _HONOR_PATH_ALIASES_SORTED:
-            part = part.replace(old, new)
+        else:
+            part = _honor_package_alias(part)
         if index == len(parts) - 1 and part.lower().endswith(".png"):
-            part = part.replace("emui", "magic")
+            part = re.sub(
+                r"(?<![A-Za-z0-9])emui(?=[A-Za-z_]|$)",
+                "magic",
+                part,
+            )
         converted.append(part)
     return "/".join(converted)
+
+
+def honor_resource_paths(module: str, value: str) -> tuple[str, ...]:
+    """Return all Honor paths for a scanned resource, including exact fan-out rules."""
+    fanout = HONOR_RESOURCE_FANOUTS.get((module, value))
+    if fanout is not None:
+        return fanout
+    return (honor_resource_path(value),)
 
 
 def normalize_archive_path(value: str) -> str:
@@ -79,7 +111,11 @@ def is_safe_archive_path(value: str) -> bool:
     value = normalize_archive_path(value)
     if not value or "\\" in value or ":" in value or value.startswith("/") or "\x00" in value:
         return False
-    path = PurePosixPath(value)
+    path_value = value[:-1] if value.endswith("/") else value
+    parts = path_value.split("/")
+    if not path_value or any(part in {"", ".", ".."} for part in parts):
+        return False
+    path = PurePosixPath(path_value)
     return not path.is_absolute() and all(part not in {"", ".", ".."} for part in path.parts)
 
 

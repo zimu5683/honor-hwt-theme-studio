@@ -64,26 +64,6 @@ QWidget {{
     font-size: 14px;
 }}
 QMainWindow, QDialog {{ background-color: {Colors.CANVAS}; }}
-QFrame#windowTitleBar {{
-    min-height: 44px;
-    max-height: 44px;
-    background-color: {Colors.CANVAS};
-    border-bottom: 1px solid {Colors.HAIRLINE};
-}}
-QLabel#windowTitle {{ font-size: 13px; font-weight: 500; color: {Colors.INK_MUTED}; }}
-QLabel#windowLogo {{ color: {Colors.PRIMARY}; font-size: 18px; font-weight: 600; }}
-QToolButton#windowControl {{
-    min-width: 44px;
-    max-width: 44px;
-    min-height: 44px;
-    max-height: 44px;
-    border: none;
-    border-radius: 0;
-    background: transparent;
-    color: {Colors.INK_MUTED};
-}}
-QToolButton#windowControl:hover {{ background: {Colors.SURFACE_3}; color: {Colors.INK}; }}
-QToolButton#windowControl[windowRole="close"]:hover {{ background: {Colors.ERROR}; color: {Colors.SURFACE_1}; }}
 QToolBar {{
     min-height: 56px;
     max-height: 56px;

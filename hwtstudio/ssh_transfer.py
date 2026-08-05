@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from .phone_transfer import TransferCancelled, safe_hwt_filename
@@ -141,7 +142,7 @@ def transfer_to_phone(path: Path, host: str = "phone-termux", timeout: int = 180
         raise TransferCancelled()
     filename = safe_hwt_filename(path.name)
     remote_final = f"{REMOTE_DIR}/{filename}"
-    remote_temp = remote_final + ".uploading"
+    remote_temp = f"{remote_final}.{uuid.uuid4().hex}.uploading"
     initial_signature = _file_signature(path)
     digest = local_sha256(path, cancelled=cancelled)
     _ensure_file_signature(path, initial_signature, "校验后")

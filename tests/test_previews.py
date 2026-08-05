@@ -9,7 +9,8 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PIL import Image
-from PySide6.QtWidgets import QApplication, QColorDialog, QMessageBox, QPushButton
+from PySide6.QtCore import QEvent, QObject
+from PySide6.QtWidgets import QApplication, QColorDialog, QMessageBox, QPushButton, QWidget
 
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
 from hwtstudio.semantic import SIMPLE_BY_ID, SIMPLE_SETTINGS
@@ -35,6 +36,29 @@ class PreviewTests(unittest.TestCase):
             self.assertIsNotNone(scene, setting.id)
             self.assertIn(setting.preview.target, scene.targets, setting.id)
             self.assertTrue(self.repository.highlighted_image(setting.preview), setting.id)
+
+    def test_card_construction_does_not_show_child_widgets_as_windows(self):
+        top_level_shows: list[str] = []
+
+        class ShowRecorder(QObject):
+            def eventFilter(self, watched, event):
+                if event.type() == QEvent.Type.Show and isinstance(watched, QWidget) and watched.isWindow():
+                    top_level_shows.append(type(watched).__name__)
+                return False
+
+        recorder = ShowRecorder()
+        self.app.installEventFilter(recorder)
+        try:
+            settings = (
+                next(setting for setting in SIMPLE_SETTINGS if setting.kind == "color"),
+                next(setting for setting in SIMPLE_SETTINGS if setting.kind == "image"),
+            )
+            cards = [SimpleSettingCard(setting, lambda *_args: None, lambda *_args: None) for setting in settings]
+        finally:
+            self.app.removeEventFilter(recorder)
+        for card in cards:
+            card.close()
+        self.assertEqual(top_level_shows, [])
 
     def test_uploaded_scene_targets_match_current_phone_layout(self):
         volume = self.repository.scenes["volume_overlay"].targets

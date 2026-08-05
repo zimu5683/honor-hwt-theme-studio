@@ -33,9 +33,9 @@ jobs:
           python -m ruff check hwtstudio tests tools run.py
           python -m compileall -q hwtstudio tests tools
           python -m unittest discover -s tests -v
-      - name: Build EXE
+      - name: Build portable desktop app
         run: >-
-          python -m PyInstaller --noconfirm --clean --onefile --windowed
+          python -m PyInstaller --noconfirm --clean --onedir --windowed
           --noupx
           --name "大雪主题编辑器" --add-data "assets;assets"
           --exclude-module PySide6.QtWebEngineCore
@@ -44,8 +44,12 @@ jobs:
       - name: Prepare desktop assets
         shell: pwsh
         run: |
-          $asset = "HwtThemeStudio-${{ github.ref_name }}-win64.exe"
-          Copy-Item -LiteralPath "dist\大雪主题编辑器.exe" -Destination $asset
+          $asset = "HwtThemeStudio-${{ github.ref_name }}-win64.zip"
+          $package = "dist\大雪主题编辑器"
+          if (-not (Test-Path -LiteralPath "$package\大雪主题编辑器.exe")) {
+            throw "onedir 构建结果缺少桌面程序"
+          }
+          Compress-Archive -LiteralPath $package -DestinationPath $asset -CompressionLevel Optimal
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
           "$hash  $asset" | Set-Content -Encoding ascii "$asset.sha256"
           $repo = "${{ github.repository }}"
@@ -65,8 +69,8 @@ jobs:
         with:
           name: desktop-release
           path: |
-            HwtThemeStudio-${{ github.ref_name }}-win64.exe
-            HwtThemeStudio-${{ github.ref_name }}-win64.exe.sha256
+            HwtThemeStudio-${{ github.ref_name }}-win64.zip
+            HwtThemeStudio-${{ github.ref_name }}-win64.zip.sha256
             latest.json
 
   android:

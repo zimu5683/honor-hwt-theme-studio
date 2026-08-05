@@ -129,6 +129,11 @@ class ReceiverService : Service() {
             httpServer = null
             discoveryServer = null
             try {
+                http?.shutdownTransfers()
+            } catch (exc: Exception) {
+                android.util.Log.e("ReceiverService", "Transfer cleanup failed", exc)
+            }
+            try {
                 http?.stop()
             } catch (exc: Exception) {
                 android.util.Log.e("ReceiverService", "HTTP receiver stop failed", exc)

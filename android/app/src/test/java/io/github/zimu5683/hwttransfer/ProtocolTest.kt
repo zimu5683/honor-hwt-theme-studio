@@ -7,7 +7,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -80,6 +84,14 @@ class ProtocolTest {
     }
 
     @Test
+    fun authorizationTokenInputIsBoundBeforeHashing() {
+        assertFalse(isAcceptableAuthorizationToken(null))
+        assertFalse(isAcceptableAuthorizationToken(" "))
+        assertTrue(isAcceptableAuthorizationToken("a".repeat(43)))
+        assertFalse(isAcceptableAuthorizationToken("a".repeat(MAX_AUTH_TOKEN_CHARS + 1)))
+    }
+
+    @Test
     fun pairRequestRejectsMalformedJsonAndWrongFieldTypes() {
         val malformed = assertThrows(TransferException::class.java) {
             Protocol.parsePairRequest("{")
@@ -95,6 +107,16 @@ class ProtocolTest {
             Protocol.parsePairRequest("{\"code\":\"123456\",\"client_name\":7}")
         }
         assertEquals("invalid_request", wrongNameType.code)
+    }
+
+    @Test
+    fun pairRequestRejectsInvalidCodeFormatBeforePairing() {
+        listOf("12345", "1234567", "12a456").forEach { code ->
+            val error = assertThrows(TransferException::class.java) {
+                Protocol.parsePairRequest("{\"code\":\"$code\"}")
+            }
+            assertEquals("invalid_request", error.code)
+        }
     }
 
     @Test
@@ -147,6 +169,19 @@ class ProtocolTest {
     @Test
     fun transferCancelFeatureUsesStableProtocolIdentifier() {
         assertEquals("transfer_cancel", Protocol.FEATURE_TRANSFER_CANCEL)
+    }
+
+    @Test
+    fun advertisedFeaturesAreCentralizedForEveryHandshake() {
+        assertEquals(
+            listOf(
+                Protocol.FEATURE_DEVICE_PROFILE,
+                Protocol.FEATURE_TRANSFER_CANCEL,
+                Protocol.FEATURE_TRANSFER_CHUNKED,
+                Protocol.FEATURE_TRANSFER_PREPARE,
+            ),
+            Protocol.ADVERTISED_FEATURES,
+        )
     }
 
     @Test
@@ -209,6 +244,306 @@ class ProtocolTest {
     }
 
     @Test
+    fun validateHwtAcceptsSequentialZipDataRanges() {
+        val file = File.createTempFile("sequential", ".hwt")
+        try {
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("second.bin"))
+                zip.write("normal payload".toByteArray())
+                zip.closeEntry()
+            }
+            Protocol.validateHwt(file)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsCrcCorruption() {
+        val file = File.createTempFile("crc", ".hwt")
+        val content = byteArrayOf(0x11, 0x22, 0x33, 0x44, 0x55)
+        try {
+            val entry = ZipEntry("description.xml").apply {
+                method = ZipEntry.STORED
+                size = content.size.toLong()
+                crc = CRC32().apply { update(content) }.value
+            }
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(entry)
+                zip.write(content)
+                zip.closeEntry()
+            }
+            val encoded = file.readBytes()
+            val fileNameBytes = "description.xml".toByteArray(Charsets.UTF_8)
+            val localHeaderSize = 30
+            val payloadOffset = localHeaderSize + fileNameBytes.size
+            assertEquals(0x50, encoded[0].toInt() and 0xff)
+            assertEquals(0x4b, encoded[1].toInt() and 0xff)
+            assertEquals(content.toList(), encoded.slice(payloadOffset until payloadOffset + content.size))
+            encoded[payloadOffset] = (encoded[payloadOffset].toInt() xor 0x01).toByte()
+            file.writeBytes(encoded)
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsPhysicallyOverlappingZipData() {
+        val file = File.createTempFile("data-overlap", ".hwt")
+        try {
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("second.bin"))
+                zip.write("same payload".toByteArray())
+                zip.closeEntry()
+            }
+            val encoded = file.readBytes()
+            val firstCentral = encoded.indexOfSignature(byteArrayOf(0x50, 0x4b, 0x01, 0x02))
+            val secondCentral = encoded.indexOfSignature(
+                byteArrayOf(0x50, 0x4b, 0x01, 0x02),
+                firstCentral + 4,
+            )
+            assertTrue(firstCentral >= 0)
+            assertTrue(secondCentral > firstCentral)
+            val firstOffset = ByteBuffer.wrap(encoded, firstCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .int
+            ByteBuffer.wrap(encoded, secondCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(firstOffset)
+            file.writeBytes(encoded)
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsCentralDirectoryLocalHeaderNameMismatch() {
+        val file = File.createTempFile("local-header-mismatch", ".hwt")
+        val payload = "same payload".toByteArray()
+        try {
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write(payload)
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("second.bin"))
+                zip.write(payload)
+                zip.closeEntry()
+            }
+            val encoded = file.readBytes()
+            val firstCentral = encoded.indexOfSignature(byteArrayOf(0x50, 0x4b, 0x01, 0x02))
+            val secondCentral = encoded.indexOfSignature(
+                byteArrayOf(0x50, 0x4b, 0x01, 0x02),
+                firstCentral + 4,
+            )
+            assertTrue(firstCentral >= 0)
+            assertTrue(secondCentral > firstCentral)
+            val firstOffset = ByteBuffer.wrap(encoded, firstCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .int
+            val secondOffset = ByteBuffer.wrap(encoded, secondCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .int
+            ByteBuffer.wrap(encoded, firstCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(secondOffset)
+            ByteBuffer.wrap(encoded, secondCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(firstOffset)
+            file.writeBytes(encoded)
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsLocalHeaderMetadataMismatch() {
+        val file = File.createTempFile("local-header-metadata-mismatch", ".hwt")
+        val content = "<HwTheme/>".toByteArray()
+        try {
+            val entry = ZipEntry("description.xml").apply {
+                method = ZipEntry.STORED
+                size = content.size.toLong()
+                crc = CRC32().apply { update(content) }.value
+            }
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(entry)
+                zip.write(content)
+                zip.closeEntry()
+            }
+            val encoded = file.readBytes()
+            val localCrc = ByteBuffer.wrap(encoded, 14, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .int
+            ByteBuffer.wrap(encoded, 14, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(localCrc xor 1)
+            file.writeBytes(encoded)
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsNestedCrcCorruption() {
+        val file = File.createTempFile("nested-crc", ".hwt")
+        val content = byteArrayOf(0x21, 0x32, 0x43, 0x54)
+        try {
+            val nestedBytes = ByteArrayOutputStream()
+            val entry = ZipEntry("theme.xml").apply {
+                method = ZipEntry.STORED
+                size = content.size.toLong()
+                crc = CRC32().apply { update(content) }.value
+            }
+            ZipOutputStream(nestedBytes).use { zip ->
+                zip.putNextEntry(entry)
+                zip.write(content)
+                zip.closeEntry()
+            }
+            val nested = nestedBytes.toByteArray()
+            val payloadOffset = 30 + "theme.xml".toByteArray(Charsets.UTF_8).size
+            nested[payloadOffset] = (nested[payloadOffset].toInt() xor 0x01).toByte()
+
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons"))
+                zip.write(nested)
+                zip.closeEntry()
+            }
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsPhysicallyOverlappingNestedZipData() {
+        val file = File.createTempFile("nested-data-overlap", ".hwt")
+        try {
+            val nestedBytes = ByteArrayOutputStream()
+            ZipOutputStream(nestedBytes).use { zip ->
+                zip.putNextEntry(ZipEntry("theme.xml"))
+                zip.write("<resources/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("preview.png"))
+                zip.write("same payload".toByteArray())
+                zip.closeEntry()
+            }
+            val encoded = nestedBytes.toByteArray()
+            val firstCentral = encoded.indexOfSignature(byteArrayOf(0x50, 0x4b, 0x01, 0x02))
+            val secondCentral = encoded.indexOfSignature(
+                byteArrayOf(0x50, 0x4b, 0x01, 0x02),
+                firstCentral + 4,
+            )
+            assertTrue(firstCentral >= 0)
+            assertTrue(secondCentral > firstCentral)
+            val firstOffset = ByteBuffer.wrap(encoded, firstCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .int
+            ByteBuffer.wrap(encoded, secondCentral + 42, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(firstOffset)
+
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons"))
+                zip.write(encoded)
+                zip.closeEntry()
+            }
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsNestedUnixSymlinkEntry() {
+        val file = File.createTempFile("nested-symlink", ".hwt")
+        try {
+            val nestedBytes = ByteArrayOutputStream()
+            ZipOutputStream(nestedBytes).use { zip ->
+                zip.putNextEntry(ZipEntry("link"))
+                zip.write("../outside.txt".toByteArray())
+                zip.closeEntry()
+            }
+            val encoded = nestedBytes.toByteArray()
+            val central = encoded.indexOfSignature(byteArrayOf(0x50, 0x4b, 0x01, 0x02))
+            assertTrue(central >= 0)
+            ByteBuffer.wrap(encoded, central + 4, 2)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putShort(((3 shl 8) or 20).toShort())
+            ByteBuffer.wrap(encoded, central + 38, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(Integer.MIN_VALUE or 0x20000000)
+
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons"))
+                zip.write(encoded)
+                zip.closeEntry()
+            }
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsUnsafeNestedPath() {
+        val file = File.createTempFile("nested-path", ".hwt")
+        try {
+            val nestedBytes = ByteArrayOutputStream()
+            ZipOutputStream(nestedBytes).use { zip ->
+                zip.putNextEntry(ZipEntry("../escape.xml"))
+                zip.write("<resources/>".toByteArray())
+                zip.closeEntry()
+            }
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons"))
+                zip.write(nestedBytes.toByteArray())
+                zip.closeEntry()
+            }
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun validateHwtRejectsUnsafeAndNormalizedDuplicatePaths() {
         val file = File.createTempFile("unsafe", ".hwt")
         try {
@@ -221,6 +556,49 @@ class ProtocolTest {
                 zip.closeEntry()
                 zip.putNextEntry(ZipEntry("\u00e9.txt"))
                 zip.write(byteArrayOf(2))
+                zip.closeEntry()
+            }
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsFileDirectoryPathOverlap() {
+        val file = File.createTempFile("overlap", ".hwt")
+        try {
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons/theme.png"))
+                zip.write(byteArrayOf(2))
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons"))
+                zip.write(byteArrayOf(1))
+                zip.closeEntry()
+            }
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtRejectsFileParentOfDirectoryEntry() {
+        val file = File.createTempFile("directory-overlap", ".hwt")
+        try {
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons/assets/"))
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("icons"))
+                zip.write(byteArrayOf(1))
                 zip.closeEntry()
             }
             val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
@@ -279,10 +657,32 @@ class ProtocolTest {
     }
 
     @Test
+    fun archiveExpansionBudgetIncludesNestedBytesInOuterTotal() {
+        Protocol.validateArchiveExpansionBudget(
+            Protocol.MAX_ARCHIVE_UNCOMPRESSED_BYTES - 128L,
+            128L,
+        )
+        val error = assertThrows(TransferException::class.java) {
+            Protocol.validateArchiveExpansionBudget(
+                Protocol.MAX_ARCHIVE_UNCOMPRESSED_BYTES - 128L,
+                129L,
+            )
+        }
+        assertEquals("invalid_hwt", error.code)
+    }
+
+    @Test
     fun archiveEntryCountRejectsExcessiveCentralDirectory() {
         val error = assertThrows(TransferException::class.java) {
             Protocol.validateArchiveEntryCount(Protocol.MAX_ARCHIVE_ENTRIES + 1)
         }
         assertEquals("invalid_hwt", error.code)
+    }
+
+    private fun ByteArray.indexOfSignature(signature: ByteArray, start: Int = 0): Int {
+        for (index in start..(size - signature.size)) {
+            if (copyOfRange(index, index + signature.size).contentEquals(signature)) return index
+        }
+        return -1
     }
 }

@@ -1,6 +1,8 @@
 package io.github.zimu5683.hwttransfer
 
 import android.content.Context
+import android.content.Intent
+import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Environment
 import android.os.StatFs
@@ -16,11 +18,53 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.StandardCopyOption
 import java.util.UUID
+import kotlin.coroutines.cancellation.CancellationException
 
 private val themeInstallLock = Any()
 private const val DIRECT_UPLOAD_PREFIX = "hwt_upload_"
 private const val DIRECT_UPLOAD_SUFFIX = ".uploading"
 private const val DIRECT_BACKUP_SUFFIX = ".backup"
+private val DIRECT_UPLOAD_NAME_PATTERN = Regex("^hwt_upload_[A-Za-z0-9_-]{6,64}\\.uploading$")
+private val DIRECT_BACKUP_SUFFIX_PATTERN = Regex(
+    "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+)
+private const val STORAGE_PREFERENCES_NAME = "storage"
+private const val TREE_URI_KEY = "tree_uri"
+private val SAF_UPLOAD_NAME_PATTERN = Regex(
+    "^hwt_transfer_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\\.uploading$",
+)
+private val SAF_BACKUP_SUFFIX_PATTERN = Regex("-?[0-9]+")
+
+internal enum class SafRenameState {
+    MOVED,
+    NOT_MOVED,
+    AMBIGUOUS,
+}
+
+internal fun classifySafRenameState(sourceExists: Boolean, targetExists: Boolean): SafRenameState = when {
+    targetExists && !sourceExists -> SafRenameState.MOVED
+    sourceExists && !targetExists -> SafRenameState.NOT_MOVED
+    else -> SafRenameState.AMBIGUOUS
+}
+
+internal fun <T> selectLatestBackup(
+    backups: Iterable<T>,
+    lastModified: (T) -> Long,
+    name: (T) -> String?,
+): T? = backups.maxWithOrNull(compareBy<T> { lastModified(it) }.thenBy { name(it) ?: "" })
+
+internal fun <T> selectUniqueSafChild(
+    children: Iterable<T>,
+    expectedName: String,
+    name: (T) -> String?,
+): T? {
+    val matches = children.filter { name(it) == expectedName }
+    return when (matches.size) {
+        0 -> null
+        1 -> matches.single()
+        else -> throw TransferException(503, "replace_failed", "主题目录存在多个同名对象")
+    }
+}
 
 internal fun isReplaceableDirectThemeTarget(target: File): Boolean {
     val path = target.toPath()
@@ -34,13 +78,28 @@ internal fun directThemeBackupPrefix(themeName: String): String {
     return "hwt_backup_" + digest.joinToString("") { "%02x".format(it) }
 }
 
+internal fun isDirectBackupName(themeName: String, candidate: String): Boolean {
+    val prefix = directThemeBackupPrefix(themeName)
+    if (!candidate.startsWith(prefix) || !candidate.endsWith(DIRECT_BACKUP_SUFFIX)) return false
+    return DIRECT_BACKUP_SUFFIX_PATTERN.matches(
+        candidate.removePrefix(prefix).removeSuffix(DIRECT_BACKUP_SUFFIX),
+    )
+}
+
+internal fun isDirectUploadName(candidate: String): Boolean = DIRECT_UPLOAD_NAME_PATTERN.matches(candidate)
+
+internal fun isSafBackupName(themeName: String, candidate: String): Boolean {
+    val prefix = "$themeName.backup-"
+    return candidate.startsWith(prefix) && SAF_BACKUP_SUFFIX_PATTERN.matches(candidate.removePrefix(prefix))
+}
+
+internal fun isSafUploadName(candidate: String): Boolean = SAF_UPLOAD_NAME_PATTERN.matches(candidate)
+
 internal fun recoverDirectThemeArtifacts(directory: File, target: File, name: String) {
     val children = directory.listFiles()
         ?: throw TransferException(503, "storage_unavailable", "无法读取 Honor/Themes 目录")
-    val prefix = directThemeBackupPrefix(name)
     val backups = children.filter { child ->
-        val childName = child.name
-        childName.startsWith(prefix) && childName.endsWith(DIRECT_BACKUP_SUFFIX)
+        isDirectBackupName(name, child.name)
     }
     backups.forEach { backup ->
         if (!isRegularDirectThemeFile(backup)) {
@@ -76,8 +135,7 @@ internal fun cleanupStaleDirectThemeUploads(directory: File) {
     val children = directory.listFiles()
         ?: throw TransferException(503, "storage_unavailable", "无法读取 Honor/Themes 目录")
     children.filter { child ->
-        val name = child.name
-        name.startsWith(DIRECT_UPLOAD_PREFIX) && name.endsWith(DIRECT_UPLOAD_SUFFIX)
+        isDirectUploadName(child.name)
     }.forEach { upload ->
         if (!isRegularDirectThemeFile(upload)) {
             throw TransferException(503, "replace_failed", "主题临时对象不是普通文件")
@@ -94,11 +152,17 @@ private fun isRegularDirectThemeFile(file: File): Boolean {
         Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
 }
 
+internal fun persistSafTreeUri(prefs: SharedPreferences, uri: Uri): Boolean =
+    prefs.edit().putString(TREE_URI_KEY, uri.toString()).commit()
+
+internal fun safUriToRelease(previous: Uri?, selected: Uri): Uri? =
+    previous?.takeUnless { it == selected }
+
 class ThemeStorage(private val context: Context) {
-    private val prefs = context.getSharedPreferences("storage", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences(STORAGE_PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val directDirectory = File(Environment.getExternalStorageDirectory(), "Honor/Themes")
 
-    fun treeUri(): Uri? = prefs.getString("tree_uri", null)?.let(Uri::parse)
+    fun treeUri(): Uri? = prefs.getString(TREE_URI_KEY, null)?.let(Uri::parse)
 
     fun hasSafAccess(): Boolean {
         return try {
@@ -122,6 +186,7 @@ class ThemeStorage(private val context: Context) {
     }
 
     fun validateAndPersistTree(uri: Uri) = synchronized(themeInstallLock) {
+        val previousUri = treeUri()
         val directory = DocumentFile.fromTreeUri(context, uri)
             ?: throw TransferException(503, "storage_unavailable", "无法打开所选目录")
         val documentId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()
@@ -154,7 +219,10 @@ class ThemeStorage(private val context: Context) {
             throw cleanupFailure
         }
         failure?.let { throw it }
-        prefs.edit().putString("tree_uri", uri.toString()).apply()
+        if (!persistSafTreeUri(prefs, uri)) {
+            throw TransferException(503, "storage_unavailable", "无法保存 Honor/Themes 目录授权")
+        }
+        safUriToRelease(previousUri, uri)?.let(::releaseSafPermission)
     }
 
     fun clearSaf() = synchronized(themeInstallLock) {
@@ -166,14 +234,16 @@ class ThemeStorage(private val context: Context) {
     }
 
     private fun discardSafUnlocked(uri: Uri) {
+        releaseSafPermission(uri)
+        if (treeUri() == uri) prefs.edit().remove(TREE_URI_KEY).apply()
+    }
+
+    private fun releaseSafPermission(uri: Uri) {
         runCatching {
             context.contentResolver.releasePersistableUriPermission(
                 uri,
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
             )
-        }
-        if (treeUri() == uri) {
-            prefs.edit().remove("tree_uri").apply()
         }
     }
 
@@ -329,19 +399,23 @@ class ThemeStorage(private val context: Context) {
             if (!writtenDigest.equals(digest, ignoreCase = true)) {
                 throw TransferException(422, "hash_mismatch", "写入手机存储后的 SHA-256 不一致")
             }
-            val existing = directory.findFile(name)
+            val existing = findSafChild(directory, name)
             val overwritten = existing != null
             if (existing != null) {
                 requireSafRegularFile(existing, "同名目标不是普通主题文件")
                 val backupName = "$name.backup-${System.nanoTime()}"
-                if (!existing.renameTo(backupName)) {
+                val moved = renameSafOrReconcile(directory, existing, name, backupName)
+                if (moved == null) {
                     throw TransferException(503, "replace_failed", "无法安全备份同名主题文件")
                 }
-                backup = existing
+                requireSafRegularFile(moved, "主题备份不是普通文件")
+                backup = moved
             }
-            if (temporary.renameTo(name)) {
+            val moved = renameSafOrReconcile(directory, temporary, uploadName, name)
+            if (moved != null) {
                 temporaryRenamed = true
-                published = temporary
+                requireSafRegularFile(moved, "最终主题文件不是普通文件")
+                published = moved
             } else {
                 if (!temporary.delete()) {
                     throw TransferException(503, "rename_failed", "无法清理主题临时文件")
@@ -360,7 +434,7 @@ class ThemeStorage(private val context: Context) {
                     throw TransferException(422, "hash_mismatch", "最终主题文件 SHA-256 不一致")
                 }
             }
-            val finalFile = directory.findFile(name)
+            val finalFile = findSafChild(directory, name)
                 ?: throw TransferException(503, "rename_failed", "无法确认最终主题文件")
             val finalDigest = context.contentResolver.openInputStream(finalFile.uri)?.use(::sha256Stream)
                 ?: throw TransferException(503, "rename_failed", "无法复核最终主题文件")
@@ -409,29 +483,31 @@ class ThemeStorage(private val context: Context) {
             throw TransferException(503, "storage_unavailable", "无法读取主题目录")
         }
 
+    private fun findSafChild(directory: DocumentFile, name: String): DocumentFile? =
+        selectUniqueSafChild(listSafChildren(directory), name) { it.name }
+
     private fun recoverSafArtifacts(directory: DocumentFile, name: String) {
         val children = listSafChildren(directory)
         val backups = children.filter { child ->
-            child.name?.startsWith("$name.backup-") == true
+            child.name?.let { isSafBackupName(name, it) } == true
         }
-        val current = children.firstOrNull { it.name == name }
+        val current = selectUniqueSafChild(children, name) { it.name }
         current?.let { requireSafRegularFile(it, "同名目标不是普通主题文件") }
         backups.forEach { requireSafRegularFile(it, "主题备份不是普通文件") }
-        var restoredUri: Uri? = null
+        var restoredCandidate: DocumentFile? = null
         if (current == null && backups.isNotEmpty()) {
-            val candidate = backups.maxByOrNull { it.lastModified() }!!
+            val candidate = selectLatestBackup(backups, DocumentFile::lastModified) { it.name }!!
             val backupName = candidate.name ?: ""
-            if (!candidate.renameTo(name)) {
-                throw TransferException(503, "replace_failed", "无法恢复上次未完成的主题替换")
-            }
-            val restored = directory.findFile(name)
+            val restored = renameSafOrReconcile(directory, candidate, backupName, name)
             if (restored == null || !isRegularSafFile(restored)) {
-                if (backupName.isNotBlank()) runCatching { candidate.renameTo(backupName) }
+                if (backupName.isNotBlank()) {
+                    runCatching { (restored ?: candidate).renameTo(backupName) }
+                }
                 throw TransferException(503, "replace_failed", "无法确认已恢复的主题文件")
             }
-            restoredUri = candidate.uri
+            restoredCandidate = candidate
         }
-        backups.filter { it.uri != restoredUri }.forEach { backup ->
+        backups.filter { it !== restoredCandidate }.forEach { backup ->
             if (!backup.delete()) {
                 throw TransferException(503, "replace_failed", "无法清理残留主题备份")
             }
@@ -442,7 +518,7 @@ class ThemeStorage(private val context: Context) {
         listSafChildren(directory)
             .filter { child ->
                 val name = child.name ?: return@filter false
-                if (!name.startsWith("hwt_transfer_") || !name.endsWith(".uploading")) {
+                if (!isSafUploadName(name)) {
                     return@filter false
                 }
                 requireSafRegularFile(child, "主题临时对象不是普通文件")
@@ -458,9 +534,51 @@ class ThemeStorage(private val context: Context) {
     private fun isRegularSafFile(file: DocumentFile): Boolean =
         file.exists() && file.isFile && !file.isDirectory
 
+    private fun resolveSafRenameAfterFailure(
+        directory: DocumentFile,
+        sourceName: String,
+        targetName: String,
+    ): DocumentFile? {
+        val source = findSafChild(directory, sourceName)
+        val target = findSafChild(directory, targetName)
+        return when (classifySafRenameState(source != null, target != null)) {
+            SafRenameState.MOVED -> target
+                ?: throw TransferException(503, "rename_failed", "无法确认主题文件改名状态")
+            SafRenameState.NOT_MOVED -> null
+            SafRenameState.AMBIGUOUS -> throw TransferException(503, "rename_failed", "无法确认主题文件改名状态")
+        }
+    }
+
+    private fun renameSafOrReconcile(
+        directory: DocumentFile,
+        source: DocumentFile,
+        sourceName: String,
+        targetName: String,
+    ): DocumentFile? {
+        val renamed = try {
+            source.renameTo(targetName)
+        } catch (exc: CancellationException) {
+            throw exc
+        } catch (exc: Exception) {
+            return try {
+                resolveSafRenameAfterFailure(directory, sourceName, targetName)
+            } catch (failure: TransferException) {
+                failure.addSuppressed(exc)
+                throw failure
+            }
+        }
+        if (renamed) {
+            // DocumentFile updates its URI after a successful rename. Avoid a second
+            // provider query here so cleanup cannot mistake the published object for
+            // an unrenamed temporary object when that query itself fails.
+            return source
+        }
+        return resolveSafRenameAfterFailure(directory, sourceName, targetName)
+    }
+
     private fun restoreSafBackup(directory: DocumentFile, backup: DocumentFile, name: String): Boolean {
-        if (!backup.renameTo(name)) return false
-        val restored = directory.findFile(name) ?: return false
+        val backupName = backup.name ?: return false
+        val restored = renameSafOrReconcile(directory, backup, backupName, name) ?: return false
         return isRegularSafFile(restored)
     }
 

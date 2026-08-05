@@ -8,9 +8,57 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.util.Collections
 import java.util.LinkedHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+
+private val STALE_CHUNK_UPLOAD_PATTERN = Regex("^hwt_chunk_[A-Za-z0-9_-]{16,64}\\.uploading$")
+private val liveChunkCommitFiles = Collections.synchronizedSet(mutableSetOf<File>())
+
+internal fun staleChunkUploadFiles(directory: File, protectedFile: File? = null): List<File> =
+    staleChunkUploadFiles(directory, protectedFile?.let { setOf(it) } ?: emptySet())
+
+internal fun staleChunkUploadFiles(directory: File, protectedFiles: Set<File>): List<File> =
+    directory.listFiles().orEmpty().filter { file ->
+        STALE_CHUNK_UPLOAD_PATTERN.matches(file.name) &&
+            Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS) &&
+            protectedFiles.none { protected -> file.toPath() == protected.toPath() }
+    }
+
+internal fun cleanupStaleChunkUploadFiles(directory: File, protectedFile: File? = null): List<File> =
+    cleanupStaleChunkUploadFiles(directory, protectedFile?.let { setOf(it) } ?: emptySet())
+
+internal fun cleanupStaleChunkUploadFiles(directory: File, protectedFiles: Set<File>): List<File> =
+    staleChunkUploadFiles(directory, protectedFiles).filterNot { it.delete() }
+
+internal fun deleteParsedUploadFile(file: File): Boolean {
+    val path = file.toPath()
+    return !Files.exists(path, LinkOption.NOFOLLOW_LINKS) ||
+        (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && file.delete())
+}
+
+internal fun validateEmptyRequestLength(declaredSize: Long) {
+    if (declaredSize != 0L) {
+        throw TransferException(400, "invalid_body", "分块提交请求必须为空")
+    }
+}
+
+internal fun validateCachedTransfer(
+    cached: InstallResult,
+    requestedName: String,
+    declaredSize: Long,
+    expectedHash: String,
+) {
+    if (cached.storedName != requestedName ||
+        cached.size != declaredSize ||
+        !cached.sha256.equals(expectedHash, ignoreCase = true)
+    ) {
+        throw TransferException(409, "transfer_id_reused", "上传会话标识已用于其他文件")
+    }
+}
 
 class ReceiverServer(
     context: Context,
@@ -30,19 +78,47 @@ class ReceiverServer(
 
     private val appContext = context.applicationContext
     private val uploading = AtomicBoolean(false)
+    private val stopping = AtomicBoolean(false)
     private val activeRequests = AtomicInteger(0)
     private val transferLock = Any()
     private var activeTransferId: String? = null
     private var cancelRequested = false
     private var chunkTransfer: ChunkTransfer? = null
     private var committingTransferId: String? = null
+    private var committingTransferFile: File? = null
     private val completedTransfers = LinkedHashMap<String, InstallResult>(8, 0.75f, true)
 
+    init {
+        cleanupStaleChunkFiles()
+    }
+
     fun hasActiveRequests(): Boolean = activeRequests.get() > 0
+
+    /** Cancel transfer state and clean stale chunks without touching an active commit. */
+    fun shutdownTransfers() {
+        stopping.set(true)
+        val (abandoned, protectedFile) = synchronized(transferLock) {
+            val file = chunkTransfer?.file
+            chunkTransfer = null
+            activeTransferId = null
+            cancelRequested = false
+            if (committingTransferId == null) uploading.set(false)
+            file to committingTransferFile
+        }
+        abandoned?.let { file ->
+            if (!deleteRegularChunkFile(file)) {
+                android.util.Log.w("ReceiverServer", "Unable to remove abandoned chunk file")
+            }
+        }
+        cleanupStaleChunkFiles(protectedFile)
+    }
 
     override fun serve(session: IHTTPSession): Response {
         activeRequests.incrementAndGet()
         return try {
+            if (stopping.get()) {
+                throw TransferException(503, "receiver_stopped", "接收服务正在停止")
+            }
             onActivity()
             when {
                 session.method == Method.GET && session.uri == "/api/v1/status" -> status()
@@ -73,12 +149,7 @@ class ReceiverServer(
         .put("device_id", pairing.deviceId)
         .put("name", android.os.Build.MODEL)
         .put("app_version", BuildConfig.VERSION_NAME)
-        .put("features", JSONArray(listOf(
-            "device_profile",
-            Protocol.FEATURE_TRANSFER_CANCEL,
-            Protocol.FEATURE_TRANSFER_CHUNKED,
-            Protocol.FEATURE_TRANSFER_PREPARE,
-        )))
+        .put("features", JSONArray(Protocol.ADVERTISED_FEATURES))
         .put("running", true)
         .put("storage_ready", storage.isAvailable()))
 
@@ -103,12 +174,7 @@ class ReceiverServer(
             .put("device_id", pairing.deviceId)
             .put("name", android.os.Build.MODEL)
             .put("app_version", BuildConfig.VERSION_NAME)
-            .put("features", JSONArray(listOf(
-                "device_profile",
-                Protocol.FEATURE_TRANSFER_CANCEL,
-                Protocol.FEATURE_TRANSFER_CHUNKED,
-                Protocol.FEATURE_TRANSFER_PREPARE,
-            )))
+            .put("features", JSONArray(Protocol.ADVERTISED_FEATURES))
             .put("token", result.token))
     }
 
@@ -216,7 +282,11 @@ class ReceiverServer(
                 false
             }
         }
-        abandonedFile?.delete()
+        abandonedFile?.let { file ->
+            if (!deleteRegularChunkFile(file)) {
+                android.util.Log.w("ReceiverServer", "Unable to remove cancelled chunk file")
+            }
+        }
         return if (accepted) {
             json(202, JSONObject().put("code", "cancel_requested").put("transfer_id", id))
         } else {
@@ -232,6 +302,7 @@ class ReceiverServer(
         offset: Long,
     ): ChunkTransfer {
         return synchronized(transferLock) {
+            if (stopping.get()) throw TransferException(503, "receiver_stopped", "接收服务正在停止")
             if (uploading.get()) throw TransferException(409, "busy", "手机正在接收另一个数据块")
             val current = chunkTransfer
             if (current == null) {
@@ -239,8 +310,10 @@ class ReceiverServer(
                     throw TransferException(409, "unexpected_offset", "上传必须从偏移量 0 开始")
                 }
                 val temporary = File(appContext.cacheDir, "hwt_chunk_$id.uploading")
-                if (temporary.exists() && !temporary.delete()) {
-                    throw TransferException(503, "storage_unavailable", "无法清理旧的分块临时文件")
+                if (Files.exists(temporary.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+                    if (!Files.isRegularFile(temporary.toPath(), LinkOption.NOFOLLOW_LINKS) || !temporary.delete()) {
+                        throw TransferException(503, "storage_unavailable", "无法清理旧的分块临时文件")
+                    }
                 }
                 ChunkTransfer(id, temporary, fileName, totalSize, expectedHash).also {
                     chunkTransfer = it
@@ -343,7 +416,11 @@ class ReceiverServer(
                 .put("total", state.totalSize)
                 .put("next_offset", state.received))
         } finally {
-            incoming?.delete()
+            incoming?.let { file ->
+                if (!deleteParsedUploadFile(file)) {
+                    android.util.Log.w("ReceiverServer", "Unable to remove parsed chunk file: ${file.name}")
+                }
+            }
             synchronized(transferLock) { uploading.set(false) }
         }
     }
@@ -351,11 +428,12 @@ class ReceiverServer(
     private fun completeChunk(session: IHTTPSession): Response {
         requireAuthorized(session)
         val id = chunkCommitId(session.uri)
+        validateEmptyRequestLength(requiredLong(session, "content-length"))
         val cached = cachedTransfer(id)
-        if (cached != null) return installResponse(cached)
+        if (cached != null) return installResponse(cached, transferId = id)
         val state = synchronized(transferLock) {
             // Recheck under the state lock so a retry cannot observe the hand-off gap.
-            completedTransfers[id]?.let { return installResponse(it) }
+            completedTransfers[id]?.let { return installResponse(it, transferId = id) }
             if (committingTransferId == id) {
                 return json(202, JSONObject()
                     .put("state", "committing")
@@ -372,6 +450,8 @@ class ReceiverServer(
                 throw TransferException(409, "incomplete_upload", "上传分块尚未全部收到")
             }
             committingTransferId = id
+            committingTransferFile = current.file
+            liveChunkCommitFiles.add(current.file)
             chunkTransfer = null
             activeTransferId = id
             cancelRequested = false
@@ -383,15 +463,21 @@ class ReceiverServer(
             rememberCompleted(id, result)
             runCatching { onTransfer(result) }
                 .onFailure { android.util.Log.e("ReceiverServer", "Transfer callback failed", it) }
-            return installResponse(result)
+            return installResponse(result, transferId = id)
         } finally {
             state.file.delete()
-            synchronized(transferLock) {
-                if (committingTransferId == id) committingTransferId = null
+            val cleanupAfterCommit = synchronized(transferLock) {
+                if (committingTransferId == id) {
+                    committingTransferId = null
+                    committingTransferFile = null
+                }
                 if (activeTransferId == id) activeTransferId = null
                 cancelRequested = false
                 uploading.set(false)
+                liveChunkCommitFiles.remove(state.file)
+                stopping.get()
             }
+            if (cleanupAfterCommit) cleanupStaleChunkFiles()
         }
     }
 
@@ -400,7 +486,7 @@ class ReceiverServer(
         val id = transferId(session.uri)
         val completed = cachedTransfer(id)
         if (completed != null) {
-            return installResponse(completed, 200, "completed")
+            return installResponse(completed, 200, "completed", id)
         }
         val committing = synchronized(transferLock) { committingTransferId == id }
         if (committing) {
@@ -427,7 +513,7 @@ class ReceiverServer(
 
     private fun acquireFullTransfer(id: String?): Boolean {
         return synchronized(transferLock) {
-            if (uploading.get() || chunkTransfer != null || committingTransferId != null || activeTransferId != null) {
+            if (stopping.get() || uploading.get() || chunkTransfer != null || committingTransferId != null || activeTransferId != null) {
                 false
             } else {
                 uploading.set(true)
@@ -439,9 +525,10 @@ class ReceiverServer(
     }
 
     private fun claimTransferForInstall(id: String?): Boolean {
+        if (stopping.get()) return false
         if (id == null) return true
         return synchronized(transferLock) {
-            if (activeTransferId != id || cancelRequested) {
+            if (stopping.get() || activeTransferId != id || cancelRequested) {
                 if (activeTransferId == id) {
                     activeTransferId = null
                     cancelRequested = false
@@ -467,6 +554,27 @@ class ReceiverServer(
         }
     }
 
+    private fun cleanupStaleChunkFiles(protectedFile: File? = null) {
+        val protectedFiles = synchronized(liveChunkCommitFiles) {
+            liveChunkCommitFiles.toMutableSet().apply {
+                protectedFile?.let(::add)
+            }
+        }
+        runCatching { cleanupStaleChunkUploadFiles(appContext.cacheDir, protectedFiles) }
+            .getOrElse {
+                android.util.Log.w("ReceiverServer", "Unable to enumerate stale chunk files", it)
+                return
+            }
+            .forEach { file ->
+                android.util.Log.w("ReceiverServer", "Unable to remove stale chunk file: ${file.name}")
+            }
+    }
+
+    private fun deleteRegularChunkFile(file: File): Boolean {
+        val path = file.toPath()
+        return Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && file.delete()
+    }
+
     private fun cachedTransfer(id: String?): InstallResult? {
         if (id == null) return null
         return synchronized(transferLock) { completedTransfers[id] }
@@ -485,8 +593,16 @@ class ReceiverServer(
         }
     }
 
-    private fun installResponse(result: InstallResult, status: Int = 201, state: String? = null): Response = json(status, JSONObject()
-        .apply { if (state != null) put("state", state) }
+    private fun installResponse(
+        result: InstallResult,
+        status: Int = 201,
+        state: String? = null,
+        transferId: String? = null,
+    ): Response = json(status, JSONObject()
+        .apply {
+            if (state != null) put("state", state)
+            if (transferId != null) put("transfer_id", transferId)
+        }
         .put("stored_name", result.storedName)
         .put("destination", result.destination)
         .put("size", result.size)
@@ -509,6 +625,7 @@ class ReceiverServer(
         if (!acquireFullTransfer(transferId)) {
             throw TransferException(409, "busy", "手机正在接收另一个主题")
         }
+        var temporary: File? = null
         try {
             val encodedName = session.uri.removePrefix("/api/v1/themes/")
             val name = Protocol.safeFileName(Uri.decode(encodedName))
@@ -516,29 +633,33 @@ class ReceiverServer(
             session.parseBody(files)
             val tempPath = files["content"] ?: files["postData"]
                 ?: throw TransferException(400, "missing_body", "没有收到文件内容")
-            val temporary = File(tempPath)
-            if (!temporary.isFile || temporary.length() != declaredSize) {
+            val tempFile = File(tempPath)
+            temporary = tempFile
+            if (!tempFile.isFile || tempFile.length() != declaredSize) {
                 throw TransferException(400, "incomplete_upload", "上传内容不完整")
             }
             val cached = cachedTransfer(transferId)
             if (cached != null) {
-                if (cached.size != declaredSize || !cached.sha256.equals(expectedHash, ignoreCase = true)) {
-                    throw TransferException(409, "transfer_id_reused", "上传会话标识已用于其他文件")
-                }
-                if (!Protocol.sha256(temporary).equals(cached.sha256, ignoreCase = true)) {
+                validateCachedTransfer(cached, name, declaredSize, expectedHash)
+                if (!Protocol.sha256(tempFile).equals(cached.sha256, ignoreCase = true)) {
                     throw TransferException(422, "hash_mismatch", "重试文件的 SHA-256 与原上传不一致")
                 }
-                return installResponse(cached)
+                return installResponse(cached, transferId = transferId)
             }
             if (!claimTransferForInstall(transferId)) {
                 throw TransferException(499, "cancelled", "上传已取消")
             }
-            val result = storage.install(temporary, name, expectedHash)
+            val result = storage.install(tempFile, name, expectedHash)
             if (transferId != null) rememberCompleted(transferId, result)
             runCatching { onTransfer(result) }
                 .onFailure { android.util.Log.e("ReceiverServer", "Transfer callback failed", it) }
-            return installResponse(result)
+            return installResponse(result, transferId = transferId)
         } finally {
+            temporary?.let { file ->
+                if (!deleteParsedUploadFile(file)) {
+                    android.util.Log.w("ReceiverServer", "Unable to remove parsed upload file: ${file.name}")
+                }
+            }
             clearTransfer(transferId)
         }
     }
