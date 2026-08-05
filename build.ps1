@@ -8,7 +8,7 @@ python -m unittest discover -s tests -v
 python -m PyInstaller `
   --noconfirm `
   --clean `
-  --onefile `
+  --onedir `
   --noupx `
   --windowed `
   --name "大雪主题编辑器" `
@@ -18,5 +18,8 @@ python -m PyInstaller `
   --exclude-module PySide6.QtWebEngineQuick `
   run.py
 
-Write-Host "构建完成：$Root\dist\大雪主题编辑器.exe"
+if (-not (Test-Path -LiteralPath "$Root\dist\大雪主题编辑器\大雪主题编辑器.exe")) {
+    throw "构建结果缺少桌面程序"
+}
 
+Write-Host "构建完成：$Root\dist\大雪主题编辑器"

@@ -1,6 +1,6 @@
 # 大雪主题编辑器
 
-当前版本：`0.1.6.2`
+当前版本：`0.1.6.3`
 
 一个面向荣耀 `.hwt` 主题的中文可视化编辑器。程序只读分析
 `30039574_大雪.hwt`，把资源位置整理成目录；新主题从空白模板生成，
@@ -34,7 +34,7 @@
 
 ## 使用步骤
 
-1. 双击 `大雪主题编辑器.exe`。
+1. 下载 Windows 版 ZIP，解压后双击 `大雪主题编辑器\大雪主题编辑器.exe`。
 2. 在“简洁编辑”顶部展开“主题信息”，填写方案名称和主题身份。
 3. 在“简洁编辑”中直接设置壁纸、全局配色、系统界面、桌面或常用应用；需要逐项调整时进入“高级编辑”。
 4. 简洁项目会自动同步所有相关兼容资源；可在“修改记录”查看实际影响数量。
@@ -50,8 +50,8 @@
 ## 自动更新
 
 桌面端启动后会在后台检查本仓库的 GitHub Release；也可以在“更多 → 检查更新”中手动检查。
-更新只选择 Windows 桌面 EXE，下载后会校验发布页提供的 SHA-256。校验通过后，正式打包的程序会
-启动替换助手并自动重启；开发运行时则打开已下载的新 EXE。更新源固定为本项目 GitHub Release，
+更新只选择 Windows 桌面 ZIP，下载后会校验发布页提供的 SHA-256。校验通过后，正式打包的程序会
+安全解包并启动替换助手；开发运行时则打开已解压的新 EXE。更新源固定为本项目 GitHub Release，
 不要从其他来源替换程序文件。
 
 ## 开发运行
@@ -77,11 +77,12 @@ python -m unittest discover -s tests -v
 
 真机参考图来自 ADB `exec-out screencap -p` 和隐私空间中的授权截图；发布包只包含缩放图和元数据，原始 PNG/JPG/XML 保存在工作目录外，不进入 Git 或 EXE。
 
-输出程序位于 `dist/大雪主题编辑器.exe`。
+输出程序目录位于 `dist/大雪主题编辑器`；发布时将整个目录压缩为 ZIP。
 
-Windows 版使用 PyInstaller 单文件构建并关闭 UPX 压缩，以减少安全软件对自解压载荷的启发式误报。
-如果本机 Defender 仍提示 `Trojan:Win32/Sabsik.TE.A!ml`，请先核对发布页中的 SHA-256，再将该文件提交到
-Microsoft Security Intelligence 的误报分析入口；不要从非 GitHub Release 来源下载或替换程序文件。
+Windows 版使用 PyInstaller onedir 构建并关闭 UPX 压缩，发布 ZIP 而不是单文件自解压 EXE，降低安全软件
+对自解压载荷的启发式误报。如果本机 Defender 仍提示 `Trojan:Win32/Sabsik.TE.A!ml`，请先核对发布页中的
+SHA-256，再将发布包提交到 Microsoft Security Intelligence 的误报分析入口；不要从非 GitHub Release
+来源下载或替换程序文件。
 
 ## Android 传输助手
 

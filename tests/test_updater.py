@@ -5,12 +5,16 @@ import os
 import tempfile
 import threading
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 from hwtstudio.updater import (
     _sha256,
     _fetch_json,
+    _extract_portable_archive,
+    APP_NAME,
+    PORTABLE_EXECUTABLE_NAME,
     ReleaseAsset,
     VerifiedDownload,
     download_asset,
@@ -132,6 +136,15 @@ class UpdaterTests(unittest.TestCase):
         selected = select_update_asset(assets)
         self.assertIsNotNone(selected)
         self.assertEqual(selected.name, "HwtThemeStudio-v0.2.0-win64.exe")
+
+    def test_asset_selection_prefers_portable_zip(self):
+        assets = [
+            ReleaseAsset("HwtThemeStudio-v0.2.0-win64.exe", "https://example.test/studio.exe"),
+            ReleaseAsset("HwtThemeStudio-v0.2.0-win64.zip", "https://example.test/studio.zip"),
+        ]
+        selected = select_update_asset(assets)
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.name, "HwtThemeStudio-v0.2.0-win64.zip")
 
     def test_github_api_payload_prefers_browser_download_url(self):
         release = release_from_payload(
@@ -312,6 +325,42 @@ class UpdaterTests(unittest.TestCase):
                     download_asset(release, download_dir=cache)
             urlopen.assert_not_called()
             self.assertFalse((outside / "updates").exists())
+
+    def test_portable_archive_extracts_expected_layout(self):
+        payload = b"portable executable"
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "studio.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr(f"{APP_NAME}/", b"")
+                bundle.writestr(f"{APP_NAME}/{PORTABLE_EXECUTABLE_NAME}", payload)
+            app_dir, staging_root = _extract_portable_archive(archive)
+            self.assertEqual(app_dir.name, APP_NAME)
+            self.assertEqual((app_dir / PORTABLE_EXECUTABLE_NAME).read_bytes(), payload)
+            self.assertEqual(staging_root.parent, archive.parent)
+
+    def test_portable_archive_rejects_path_traversal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "studio.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr("../outside.txt", b"escape")
+            with self.assertRaisesRegex(ValueError, "路径穿越"):
+                _extract_portable_archive(archive)
+            self.assertFalse((Path(directory).parent / "outside.txt").exists())
+
+    def test_launch_portable_archive_after_hash_verification(self):
+        payload = b"portable executable"
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "studio.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr(f"{APP_NAME}/{PORTABLE_EXECUTABLE_NAME}", payload)
+            checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+            download = VerifiedDownload(path=archive, sha256=checksum)
+            with patch("hwtstudio.updater.subprocess.Popen") as popen:
+                self.assertFalse(launch_update(download))
+            popen.assert_called_once()
+            launched = Path(popen.call_args.args[0][0])
+            self.assertEqual(launched.name, PORTABLE_EXECUTABLE_NAME)
+            self.assertTrue(launched.is_file())
 
     def test_launch_update_rejects_file_changed_after_download(self):
         payload = b"verified update payload"
