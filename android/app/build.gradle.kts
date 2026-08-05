@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.zimu5683.hwttransfer"
         minSdk = 33
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.1.6.1"
+        versionCode = 10
+        versionName = "0.1.6.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
