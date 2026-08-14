@@ -30,7 +30,6 @@ from ..phone_transfer import (
     discover_phones,
 )
 from .design_system import set_role, set_state
-from .qr_scan import ZXING_AVAILABLE, QrScanDialog, is_hwt_qr, parse_hwt_url
 from ..qr_pairing import QrPairingServer, make_qr_image, qr_connect_url
 
 
@@ -173,18 +172,7 @@ class PhoneTransferDialog(QDialog):
 
         self.manual = QLineEdit()
         self.manual.setPlaceholderText("高级：通常无需填写；自动搜索不到时输入手机 IP（如 192.168.0.154，端口默认 48621）")
-        manual_row = QHBoxLayout()
-        manual_row.addWidget(self.manual, 1)
-        self.scan_button = QPushButton("扫码")
-        self.scan_button.setToolTip(
-            "让手机上的“荣耀主题传输助手”显示二维码，对准电脑摄像头即可自动填入地址。"
-        )
-        self.scan_button.clicked.connect(self.scan_qr)
-        if not ZXING_AVAILABLE:
-            self.scan_button.setEnabled(False)
-            self.scan_button.setToolTip("缺少 zxing-cpp 依赖，无法扫码；请安装后重启，或手动输入地址。")
-        manual_row.addWidget(self.scan_button)
-        form.addRow("手动地址", manual_row)
+        form.addRow("手动地址", self.manual)
         self.code = QLineEdit()
         self.code.setPlaceholderText("已配对设备可留空")
         self.code.setMaxLength(6)
@@ -400,26 +388,6 @@ class PhoneTransferDialog(QDialog):
         if not host or not 1 <= port <= 65535:
             raise ValueError("手动地址格式不正确")
         return PhoneDevice(device_id=f"manual:{host}:{port}", name="手动连接的荣耀手机", host=host, port=port)
-
-    def scan_qr(self):
-        if not ZXING_AVAILABLE:
-            QMessageBox.warning(self, "无法扫码", "缺少 zxing-cpp 依赖，请安装后重启应用。")
-            return
-        dialog = QrScanDialog(self)
-        if dialog.exec() != QDialog.Accepted or not dialog.result_url:
-            return
-        if not is_hwt_qr(dialog.result_url):
-            QMessageBox.warning(self, "扫码失败", "这不是“荣耀主题传输助手”的二维码，请对准手机屏幕上的二维码重试。")
-            return
-        parsed = parse_hwt_url(dialog.result_url)
-        if parsed is None:
-            QMessageBox.warning(self, "扫码失败", "二维码中的地址无法识别，请重试或手动输入。")
-            return
-        host, port = parsed
-        address = host if port == HTTP_PORT else f"{host}:{port}"
-        self.manual.setText(address)
-        self.status.setText(f"已从二维码读取手机地址：{address}")
-        set_state(self.status, "success")
 
     def accept_phone(self):
         try:
