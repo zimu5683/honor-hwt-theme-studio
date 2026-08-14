@@ -378,6 +378,39 @@ class UpdaterTests(unittest.TestCase):
             self.assertEqual(launched.name, PORTABLE_EXECUTABLE_NAME)
             self.assertTrue(launched.is_file())
 
+    def test_portable_update_replaces_running_dir_in_place(self):
+        """便携版更新必须原地替换当前 exe 所在目录，绝不新建 APP_NAME 子目录。"""
+        payload = b"portable executable"
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "studio.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr(f"{APP_NAME}/{PORTABLE_EXECUTABLE_NAME}", payload)
+            checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+            download = VerifiedDownload(path=archive, sha256=checksum)
+
+            # 模拟已安装的便携版：当前 exe 位于一个名为 APP_NAME 的目录内。
+            install_root = Path(directory) / "installed"
+            app_dir = install_root / APP_NAME
+            app_dir.mkdir(parents=True)
+            running_exe = app_dir / PORTABLE_EXECUTABLE_NAME
+            running_exe.write_bytes(b"old")
+
+            with (
+                patch("hwtstudio.updater.os.name", "nt"),
+                patch("hwtstudio.updater.sys.frozen", True, create=True),
+                patch("hwtstudio.updater.subprocess.Popen") as popen,
+                patch("hwtstudio.updater._launch_portable_update", return_value=True) as launch,
+            ):
+                import hwtstudio.updater as updater
+                with patch.object(updater.sys, "executable", str(running_exe)):
+                    self.assertTrue(launch_update(download))
+
+            launch.assert_called_once()
+            target_dir = launch.call_args.args[2]
+            self.assertEqual(target_dir, app_dir.resolve())
+            # 更新目标就是当前 exe 的父目录，而不是父目录之下再套一层 APP_NAME。
+            self.assertNotEqual(target_dir, app_dir / APP_NAME)
+
     def test_launch_setup_directly_without_legacy_replacement(self):
         payload = b"verified setup"
         with tempfile.TemporaryDirectory() as directory:

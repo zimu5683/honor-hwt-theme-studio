@@ -679,6 +679,7 @@ def _launch_portable_update(
     archive = source_archive.absolute()
     executable = PORTABLE_EXECUTABLE_NAME.replace("'", "''")
     script = f"""
+$ErrorActionPreference = 'Stop'
 $processId = {os.getpid()}
 $source = '{str(source).replace("'", "''")}'
 $staging = '{str(staging).replace("'", "''")}'
@@ -710,9 +711,14 @@ try {{
     if ((Get-Sha256 $archive) -ne $expected) {{ throw 'source checksum mismatch' }}
     if (-not (Test-Path -LiteralPath (Join-Path $source '{executable}') -PathType Leaf)) {{ throw 'portable executable missing' }}
     Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+    # 先把旧目录整体移走，确保 target 路径此刻不存在，避免 Move-Item 把
+    # 新版本“移入已存在的 target 内部”造成一层层嵌套。
     if (Test-Path -LiteralPath $target) {{ Move-Item -LiteralPath $target -Destination $backup -Force }}
     Move-Item -LiteralPath $source -Destination $target -Force
     $moved = $true
+    if (-not (Test-Path -LiteralPath (Join-Path $target '{executable}') -PathType Leaf)) {{
+        throw '更新后未找到桌面程序'
+    }}
     Start-Process -FilePath (Join-Path $target '{executable}')
     Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
@@ -752,10 +758,9 @@ def launch_update(download: VerifiedDownload) -> bool:
             subprocess.Popen([str(staged_app / PORTABLE_EXECUTABLE_NAME)])
             return False
         current = Path(sys.executable).resolve()
-        if current.name == PORTABLE_EXECUTABLE_NAME and current.parent.name == APP_NAME:
-            target_dir = current.parent
-        else:
-            target_dir = current.parent / APP_NAME
+        # 便携版一律原地替换：新版本写入当前 exe 所在目录，绝不新建子目录，
+        # 否则每次更新都会多一层「大雪主题编辑器」嵌套。
+        target_dir = current.parent
         return _launch_portable_update(
             staged_app,
             staging_root,
