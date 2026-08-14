@@ -94,6 +94,28 @@ jobs:
               @{ name = "$zipAsset.sha256"; url = "$baseUrl/$zipAsset.sha256" }
             )
           } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 latest.json
+      - name: Generate differential patch and merge into latest.json
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python -m pip install bsdiff4
+          $zip = "HwtThemeStudio-${{ github.ref_name }}-win64.zip"
+          python tools/generate_patch.py $zip "${{ github.ref_name }}"
+          if (Test-Path -LiteralPath "patch-meta.json") {
+            $meta = Get-Content -Raw -LiteralPath "patch-meta.json" | ConvertFrom-Json
+            $latest = Get-Content -Raw -LiteralPath "latest.json" | ConvertFrom-Json
+            $patchObj = [ordered]@{
+              name          = $meta.name
+              url           = $meta.url
+              sha256        = $meta.sha256
+              from_sha256   = $meta.from_sha256
+              target_sha256 = $meta.target_sha256
+            }
+            $latest | Add-Member -NotePropertyName "patches" -NotePropertyValue @($patchObj) -Force
+            $latest | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 latest.json
+          }
       - name: Verify custom-path install and uninstall
         shell: pwsh
         run: |
@@ -139,6 +161,7 @@ jobs:
             HwtThemeStudio-${{ github.ref_name }}-win64.zip.sha256
             HwtThemeStudio-${{ github.ref_name }}-win64-Setup.exe
             HwtThemeStudio-${{ github.ref_name }}-win64-Setup.exe.sha256
+            *.patch
             latest.json
 
   android:

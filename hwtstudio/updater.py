@@ -19,6 +19,7 @@ from typing import Any, Callable
 import zipfile
 
 from . import __version__
+from . import bspatch
 from .paths import APP_NAME, data_dir, ensure_no_symlink_parents
 
 
@@ -43,6 +44,14 @@ def _check_cancelled(cancelled: threading.Event | None):
         raise RuntimeError("更新任务已取消")
 
 
+def _is_portable_runtime() -> bool:
+    """判断当前是否以「便携版」方式运行（即从 APP_NAME 目录启动）。"""
+    if os.name != "nt" or not getattr(sys, "frozen", False):
+        return False
+    current = Path(sys.executable).resolve()
+    return current.name == PORTABLE_EXECUTABLE_NAME and current.parent.name == APP_NAME
+
+
 @dataclass(frozen=True)
 class ReleaseAsset:
     name: str
@@ -51,11 +60,21 @@ class ReleaseAsset:
 
 
 @dataclass(frozen=True)
+class PatchAsset:
+    name: str
+    url: str
+    sha256: str = ""
+    from_sha256: str = ""
+    target_sha256: str = ""
+
+
+@dataclass(frozen=True)
 class Release:
     version: str
     url: str
     body: str
     asset: ReleaseAsset | None
+    patches: tuple[PatchAsset, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -112,7 +131,7 @@ def _payload_assets(payload: dict[str, Any]) -> list[ReleaseAsset]:
     return assets
 
 
-def release_from_payload(payload: dict[str, Any]) -> Release:
+def release_from_payload(payload: dict[str, Any], *, portable: bool = False) -> Release:
     version = payload.get("version") or payload.get("tag_name")
     if not isinstance(version, str) or not version.strip():
         raise ValueError("更新清单缺少 version/tag_name")
@@ -129,20 +148,58 @@ def release_from_payload(payload: dict[str, Any]) -> Release:
         version=version,
         url=url.strip() if isinstance(url, str) else "",
         body=body,
-        asset=select_update_asset(assets),
+        asset=select_update_asset(assets, portable=portable),
+        patches=_payload_patches(payload),
     )
 
 
-def select_update_asset(assets: list[ReleaseAsset]) -> ReleaseAsset | None:
+def _payload_patches(payload: dict[str, Any]) -> tuple[PatchAsset, ...]:
+    """解析 latest.json 里的差分补丁清单，过滤掉不完整或不受信任的条目。"""
+    raw_patches = payload.get("patches")
+    if not isinstance(raw_patches, list):
+        return ()
+    patches: list[PatchAsset] = []
+    for raw in raw_patches:
+        if not isinstance(raw, dict):
+            continue
+        name = raw.get("name")
+        url = raw.get("url") or raw.get("browser_download_url")
+        sha256 = raw.get("sha256")
+        from_sha256 = raw.get("from_sha256")
+        target_sha256 = raw.get("target_sha256")
+        if (
+            not isinstance(name, str)
+            or not isinstance(url, str)
+            or not url.startswith("https://")
+            or not all(
+                isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value.strip().lower())
+                for value in (sha256, from_sha256, target_sha256)
+            )
+        ):
+            continue
+        patches.append(
+            PatchAsset(
+                name=name,
+                url=url,
+                sha256=sha256.strip().lower(),
+                from_sha256=from_sha256.strip().lower(),
+                target_sha256=target_sha256.strip().lower(),
+            )
+        )
+    return tuple(patches)
+
+
+def select_update_asset(assets: list[ReleaseAsset], *, portable: bool = False) -> ReleaseAsset | None:
     candidates: list[tuple[int, ReleaseAsset]] = []
     for asset in assets:
         lower = asset.name.lower()
         if not is_windows_installer_asset(lower):
             continue
         if is_windows_setup_asset(lower):
-            package_rank = 0
+            # 便携版优先 ZIP（可走差分更新），安装版优先 Setup 安装器。
+            package_rank = 1 if portable else 0
         elif lower.endswith(".zip"):
-            package_rank = 1
+            package_rank = 0 if portable else 1
         else:
             package_rank = 2
         architecture_rank = 0 if "win64" in lower or "windows-x64" in lower or "win-x64" in lower else 1
@@ -207,11 +264,12 @@ def _fetch_json(url: str, *, cancelled: threading.Event | None = None) -> dict[s
     return payload
 
 
-def fetch_latest_release(*, cancelled: threading.Event | None = None) -> Release:
+def fetch_latest_release(*, cancelled: threading.Event | None = None, portable: bool | None = None) -> Release:
+    portable = _is_portable_runtime() if portable is None else portable
     errors: list[str] = []
     for endpoint in (DEFAULT_LATEST_JSON_URL, DEFAULT_RELEASES_API_URL):
         try:
-            return release_from_payload(_fetch_json(endpoint, cancelled=cancelled))
+            return release_from_payload(_fetch_json(endpoint, cancelled=cancelled), portable=portable)
         except RuntimeError:
             raise
         except Exception as exc:  # pragma: no cover - network failures vary by machine
@@ -292,6 +350,83 @@ def _sha256(path: Path, *, cancelled: threading.Event | None = None) -> str:
     return digest.hexdigest()
 
 
+def _find_patch_and_base(
+    release: Release,
+    expected: str,
+    target_dir: Path,
+    cancelled: threading.Event | None,
+) -> tuple[PatchAsset | None, Path | None]:
+    """在缓存目录里找到能生成 ``expected`` 的补丁及其旧包 base。
+
+    只有便携 ZIP 资产（且补丁 target 匹配）才会命中；否则返回 (None, None)，
+    由调用方回退到全量下载。
+    """
+    asset = release.asset
+    if asset is None or not asset.name.lower().endswith(".zip") or not release.patches:
+        return None, None
+    for patch in release.patches:
+        if patch.target_sha256 != expected:
+            continue
+        _check_cancelled(cancelled)
+        for entry in target_dir.iterdir():
+            if entry.is_symlink() or not entry.is_file():
+                continue
+            try:
+                if _sha256(entry, cancelled=cancelled) == patch.from_sha256:
+                    return patch, entry
+            except OSError:
+                continue
+    return None, None
+
+
+def _download_and_apply_patch(
+    release: Release,
+    patch: PatchAsset,
+    base: Path,
+    target: Path,
+    target_dir: Path,
+    expected: str,
+    progress: ProgressCallback | None,
+    cancelled: threading.Event | None,
+) -> VerifiedDownload:
+    """下载差分补丁，用缓存的旧包还原出完整新版并校验。"""
+    patch_partial = target_dir / f".{patch.name}.{os.getpid()}.{threading.get_ident()}.part"
+    patch_partial.unlink(missing_ok=True)
+    try:
+        if progress:
+            progress(0, 0, "正在下载差分补丁…")
+        _check_cancelled(cancelled)
+        with urllib.request.urlopen(_request(patch.url, accept="application/octet-stream"), timeout=60) as response:
+            with patch_partial.open("wb") as handle:
+                while True:
+                    _check_cancelled(cancelled)
+                    block = response.read(1024 * 1024)
+                    if not block:
+                        break
+                    handle.write(block)
+        _check_cancelled(cancelled)
+        if _sha256(patch_partial, cancelled=cancelled) != patch.sha256:
+            raise ValueError("补丁 SHA-256 校验失败，已拒绝差分更新")
+        if progress:
+            progress(0, 0, "正在应用差分补丁…")
+        new_partial = target_dir / f".{target.name}.{os.getpid()}.{threading.get_ident()}.new"
+        bspatch.apply_file(base, patch_partial, new_partial)
+        _check_cancelled(cancelled)
+        if _sha256(new_partial, cancelled=cancelled) != expected:
+            raise ValueError("还原后的文件 SHA-256 校验失败，已拒绝差分更新")
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            raise ValueError("更新包缓存目标已变为非普通文件")
+        os.replace(new_partial, target)
+    except Exception:
+        new_partial.unlink(missing_ok=True)
+        raise
+    finally:
+        patch_partial.unlink(missing_ok=True)
+    if progress:
+        progress(target.stat().st_size, target.stat().st_size, "差分更新包已就绪")
+    return VerifiedDownload(path=target, sha256=expected)
+
+
 def download_asset(
     release: Release,
     download_dir: Path | None = None,
@@ -326,6 +461,13 @@ def download_asset(
         if progress:
             progress(target.stat().st_size, target.stat().st_size, "已复用已校验的更新包")
         return VerifiedDownload(path=target, sha256=expected)
+
+    # 差分更新：缓存里存在与补丁 from_sha256 匹配的旧包时，只下载小补丁。
+    patch, base = _find_patch_and_base(release, expected, target_dir, cancelled)
+    if patch is not None and base is not None:
+        return _download_and_apply_patch(
+            release, patch, base, target, target_dir, expected, progress, cancelled
+        )
 
     partial = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.part")
     if partial.is_symlink():
@@ -513,7 +655,6 @@ try {{
     Start-Process -FilePath (Join-Path $target '{executable}')
     Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
 }} catch {{
     if ($moved -and (Test-Path -LiteralPath $target)) {{ Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue }}
     if (Test-Path -LiteralPath $backup) {{ Move-Item -LiteralPath $backup -Destination $target -Force }}
