@@ -14,6 +14,10 @@
         tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+
     <queries>
         <package android:name="com.android.contacts" />
         <package android:name="com.android.deskclock" />
