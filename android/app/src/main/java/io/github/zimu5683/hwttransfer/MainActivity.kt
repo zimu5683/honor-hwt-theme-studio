@@ -1,9 +1,11 @@
 package io.github.zimu5683.hwttransfer
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
@@ -11,7 +13,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import com.google.zxing.integration.android.IntentIntegrator
+import org.json.JSONObject
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,8 +49,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -63,6 +74,81 @@ class MainActivity : ComponentActivity() {
             startReceiverNow()
         } else {
             toast("未授予通知权限，无法启动后台接收服务")
+        }
+    }
+
+    private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            launchQrScan()
+        } else {
+            toast("未授予相机权限，无法扫码连接电脑")
+        }
+    }
+
+    private val qrScanner = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val content = IntentIntegrator.parseActivityResult(result.resultCode, result.data)?.contents
+        if (content.isNullOrBlank()) {
+            toast("未识别到二维码")
+        } else {
+            registerWithComputer(content)
+        }
+    }
+
+    private fun launchQrScan() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            cameraPermission.launch(Manifest.permission.CAMERA)
+            return
+        }
+        runCatching {
+            qrScanner.launch(IntentIntegrator(this).apply {
+                setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
+                setPrompt("将电脑屏幕上的二维码放入框内")
+                setBeepEnabled(false)
+                setOrientationLocked(false)
+            }.createScanIntent())
+        }.onFailure {
+            toast("无法打开相机，请检查相机权限")
+        }
+    }
+
+    /** 解析电脑二维码（hwtstudio://IP:端口?s=会话）并把本机地址与配对码注册到电脑。 */
+    private fun registerWithComputer(url: String) {
+        val parsed = parseConnectUrl(url) ?: run {
+            toast("这不是“大雪主题编辑器”的连接二维码")
+            return
+        }
+        val (host, port, session) = parsed
+        lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val body = JSONObject()
+                        .put("s", session)
+                        .put("name", Build.MODEL)
+                        .put("device_id", pairing.deviceId)
+                        .put("http_port", Protocol.HTTP_PORT)
+                        .put("pair_code", pairing.code)
+                        .toString()
+                    val connection = URL("http://$host:$port/api/v1/register").openConnection() as HttpURLConnection
+                    try {
+                        connection.requestMethod = "POST"
+                        connection.connectTimeout = 5000
+                        connection.readTimeout = 8000
+                        connection.doOutput = true
+                        connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                        OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body) }
+                        connection.responseCode
+                    } finally {
+                        connection.disconnect()
+                    }
+                }
+                if (result == 200) {
+                    toast("已把手机信息发送给电脑，请在电脑上点击“发送”")
+                } else {
+                    toast("电脑拒绝了扫码连接（错误 $result），请刷新电脑二维码后重试")
+                }
+            } catch (exc: Exception) {
+                toast("无法连接电脑：${exc.message ?: "网络异常"}")
+            }
         }
     }
 
@@ -283,6 +369,27 @@ class MainActivity : ComponentActivity() {
                             }
                             Text("手机地址：${state.addresses.joinToString().ifBlank { "等待网络地址" }}")
                             Text("端口：${Protocol.HTTP_PORT}；30 分钟无活动自动停止", style = MaterialTheme.typography.bodySmall)
+                            val firstAddress = state.addresses.firstOrNull()
+                            val qrContent = firstAddress?.let { connectUrl(it) }
+                            val qrBitmap = remember(qrContent) { qrContent?.let(::qrBitmap) }
+                            if (qrContent != null && qrBitmap != null) {
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Color.White,
+                                    border = BorderStroke(1.dp, StudioSemanticColors.hairline),
+                                ) {
+                                    Image(
+                                        bitmap = qrBitmap.asImageBitmap(),
+                                        contentDescription = "电脑扫码连接二维码",
+                                        modifier = Modifier.size(180.dp).padding(8.dp),
+                                    )
+                                }
+                                Text(
+                                    "电脑上点击“扫码”扫描此二维码即可连接，无需手动输入地址。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = StudioSemanticColors.muted,
+                                )
+                            }
                         }
                         StudioButtonRow(compact) {
                             StudioButton(
@@ -300,6 +407,17 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         }
+                        StudioButton(
+                            text = "扫电脑码连接",
+                            onClick = ::launchQrScan,
+                            kind = StudioButtonKind.Secondary,
+                            modifier = Modifier.weightOrFill(compact),
+                        )
+                        Text(
+                            "电脑上打开配对窗口后点击“手机扫码”标签，用本机扫描电脑屏幕上的二维码，即可免输地址配对。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = StudioSemanticColors.muted,
+                        )
                     }
                 }
 
@@ -508,4 +626,42 @@ private fun Modifier.weightOrFill(compact: Boolean): Modifier = if (compact) {
     fillMaxWidth()
 } else {
     this
+}
+
+/** 解析电脑二维码内容，返回 (主机, 端口, 会话令牌)；格式不符返回 null。 */
+internal fun parseConnectUrl(raw: String): Triple<String, Int, String>? {
+    val url = raw.trim()
+    if (!url.startsWith("hwtstudio://")) return null
+    val rest = url.removePrefix("hwtstudio://")
+    val queryIndex = rest.indexOf('?')
+    val session = if (queryIndex >= 0) rest.substring(queryIndex + 1).removePrefix("s=") else ""
+    val hostPort = if (queryIndex >= 0) rest.substring(0, queryIndex) else rest
+    var host = hostPort
+    var port = Protocol.HTTP_PORT
+    if (hostPort.startsWith("[")) {
+        val closing = hostPort.indexOf(']')
+        if (closing <= 1) return null
+        host = hostPort.substring(1, closing)
+        val suffix = hostPort.substring(closing + 1)
+        if (suffix.isNotEmpty()) {
+            if (!suffix.startsWith(":") || suffix.length == 1) return null
+            port = suffix.substring(1).toIntOrNull() ?: return null
+        }
+    } else {
+        val colon = hostPort.lastIndexOf(':')
+        if (colon >= 0) {
+            val candidatePort = hostPort.substring(colon + 1).toIntOrNull()
+            if (candidatePort == null) {
+                return null
+            }
+            if (candidatePort in 1..65535) {
+                host = hostPort.substring(0, colon)
+                port = candidatePort
+            } else {
+                return null
+            }
+        }
+    }
+    if (host.isBlank() || port !in 1..65535 || session.isBlank()) return null
+    return Triple(host, port, session)
 }
