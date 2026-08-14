@@ -14,6 +14,9 @@ data class ReceiverUiState(
     val lastTransfer: String = "暂无",
     val clients: List<PairedClient> = emptyList(),
     val error: String = "",
+    val updateMessage: String = "",
+    val updateAvailable: AndroidUpdate? = null,
+    val updateBusy: Boolean = false,
 )
 
 object ReceiverState {

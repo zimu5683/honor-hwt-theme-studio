@@ -71,6 +71,7 @@ class MainActivity : ComponentActivity() {
         storage = ThemeStorage(this)
         pairing = PairingManager(this)
         refreshState()
+        checkUpdates()
         setContent {
             StudioSoftTheme {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -144,6 +145,36 @@ class MainActivity : ComponentActivity() {
     private fun openThemeManager() {
         val intent = packageManager.getLaunchIntentForPackage("com.hihonor.android.thememanager")
         if (intent == null) toast("未找到荣耀主题应用") else startActivity(intent)
+    }
+
+    private fun checkUpdates() {
+        ReceiverState.update { it.copy(updateBusy = true, updateMessage = "正在检查更新…") }
+        lifecycleScope.launch {
+            val result = runCatching { Updater.checkForUpdate() }
+            val message = when {
+                result.isFailure -> "检查更新失败：${(result.exceptionOrNull() as? UpdateException)?.message ?: "网络异常"}"
+                result.getOrNull() == null -> "已是最新版本"
+                else -> "发现新版本 ${result.getOrNull()!!.version}"
+            }
+            ReceiverState.update { it.copy(updateBusy = false, updateMessage = message, updateAvailable = result.getOrNull()) }
+        }
+    }
+
+    private fun downloadAndInstall(update: AndroidUpdate) {
+        ReceiverState.update { it.copy(updateBusy = true, updateMessage = "正在下载更新…") }
+        lifecycleScope.launch {
+            try {
+                val apk = Updater.downloadApk(this@MainActivity, update) { _, _ -> }
+                ReceiverState.update { it.copy(updateBusy = false, updateMessage = "下载完成，准备安装…") }
+                if (!Updater.installApk(this@MainActivity, apk)) {
+                    ReceiverState.update { it.copy(updateMessage = "请在系统弹窗中允许安装未知来源，然后重新点击更新") }
+                }
+            } catch (exc: Exception) {
+                ReceiverState.update {
+                    it.copy(updateBusy = false, updateMessage = "更新失败：${(exc as? UpdateException)?.message ?: exc.message ?: "未知错误"}")
+                }
+            }
+        }
     }
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
@@ -323,16 +354,36 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                val updateSection: @Composable () -> Unit = {
+                    StudioSection("应用更新", StudioSemanticColors.mint) {
+                        if (state.updateMessage.isNotBlank()) {
+                            Text(state.updateMessage, style = MaterialTheme.typography.bodyLarge)
+                        }
+                        val update = state.updateAvailable
+                        StudioButtonRow(compact) {
+                            StudioButton(
+                                text = if (update != null) "下载并安装 v${update.version}" else "检查更新",
+                                onClick = { if (update != null) downloadAndInstall(update) else checkUpdates() },
+                                kind = StudioButtonKind.Primary,
+                                enabled = !state.updateBusy,
+                                modifier = Modifier.weightOrFill(compact),
+                            )
+                        }
+                    }
+                }
+
                 if (compact) {
                     directorySection()
                     receiverSection()
                     importSection()
                     clientsSection()
+                    updateSection()
                 } else {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             directorySection()
                             importSection()
+                            updateSection()
                         }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             receiverSection()
@@ -345,8 +396,7 @@ class MainActivity : ComponentActivity() {
                     StudioStatusLine(text = "错误：${state.error}", color = StudioSemanticColors.error, background = StudioSemanticColors.rose)
                 }
                 Spacer(Modifier.height(8.dp))
-                Text("协议 v${Protocol.VERSION} · APK ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = StudioSemanticColors.subtle)
-            }
+                Text("协议 v${Protocol.VERSION} · APK ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = StudioSemanticColors.subtle)            }
         }
     }
 
