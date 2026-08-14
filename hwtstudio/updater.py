@@ -139,9 +139,14 @@ def select_update_asset(assets: list[ReleaseAsset]) -> ReleaseAsset | None:
         lower = asset.name.lower()
         if not is_windows_installer_asset(lower):
             continue
-        portable_rank = 0 if lower.endswith(".zip") else 1
+        if is_windows_setup_asset(lower):
+            package_rank = 0
+        elif lower.endswith(".zip"):
+            package_rank = 1
+        else:
+            package_rank = 2
         architecture_rank = 0 if "win64" in lower or "windows-x64" in lower or "win-x64" in lower else 1
-        rank = portable_rank * 2 + architecture_rank
+        rank = package_rank * 2 + architecture_rank
         candidates.append((rank, asset))
     candidates.sort(key=lambda item: (item[0], item[1].name.lower()))
     return candidates[0][1] if candidates else None
@@ -156,6 +161,11 @@ def is_windows_installer_asset(name: str) -> bool:
         and ".sha256" not in lower
         and "source" not in lower
     )
+
+
+def is_windows_setup_asset(name: str) -> bool:
+    lower = name.lower()
+    return lower.endswith(".exe") and lower.removesuffix(".exe").endswith(("-setup", "_setup"))
 
 
 def _request(url: str, *, accept: str = "application/json") -> urllib.request.Request:
@@ -529,6 +539,10 @@ def launch_update(download: VerifiedDownload) -> bool:
     actual = _sha256(downloaded_path)
     if actual != expected:
         raise ValueError(f"启动前更新包 SHA-256 校验失败：期望 {expected}，实际 {actual}")
+
+    if is_windows_setup_asset(downloaded_path.name):
+        subprocess.Popen([str(downloaded_path)])
+        return os.name == "nt" and bool(getattr(sys, "frozen", False))
 
     if downloaded_path.suffix.lower() == ".zip":
         staged_app, staging_root = _extract_portable_archive(downloaded_path)

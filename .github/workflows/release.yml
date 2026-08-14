@@ -18,7 +18,9 @@ jobs:
           python-version: "3.13"
           cache: pip
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt ruff==0.15.22
+        run: |
+          python -m pip install -r requirements.txt ruff==0.15.22
+          choco install innosetup --no-progress --yes
       - name: Verify version
         shell: pwsh
         run: |
@@ -41,36 +43,102 @@ jobs:
           --exclude-module PySide6.QtWebEngineCore
           --exclude-module PySide6.QtWebEngineWidgets
           --exclude-module PySide6.QtWebEngineQuick run.py
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $version = python -c "from hwtstudio import __version__; print(__version__)"
+          $source = (Resolve-Path -LiteralPath "dist\大雪主题编辑器").Path
+          $output = (Get-Location).Path
+          $baseName = "HwtThemeStudio-${{ github.ref_name }}-win64-Setup"
+          $language = Join-Path $env:RUNNER_TEMP "ChineseSimplified.isl"
+          $languageUrl = "https://raw.githubusercontent.com/jrsoftware/issrc/c43704780a8e9862376348c580ac8920ed2c123b/Files/Languages/ChineseSimplified.isl"
+          $languageHash = "e0b0b350e2245f3c5e65586dfe43d574f6e7f06f2261149aba284954b3fc9a8d"
+          Invoke-WebRequest -UseBasicParsing -Uri $languageUrl -OutFile $language
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $language).Hash.ToLowerInvariant() -ne $languageHash) {
+            throw "Inno Setup 简体中文语言文件校验失败"
+          }
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            throw "Inno Setup compiler not found: $iscc"
+          }
+          & $iscc "/DAppVersion=$version" "/DSourceDir=$source" "/DOutputDir=$output" "/DOutputBaseFilename=$baseName" "/DLanguageFile=$language" "installer\HwtThemeStudio.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prepare desktop assets
         shell: pwsh
         run: |
-          $asset = "HwtThemeStudio-${{ github.ref_name }}-win64.zip"
+          $zipAsset = "HwtThemeStudio-${{ github.ref_name }}-win64.zip"
+          $setupAsset = "HwtThemeStudio-${{ github.ref_name }}-win64-Setup.exe"
           $package = "dist\大雪主题编辑器"
           if (-not (Test-Path -LiteralPath "$package\大雪主题编辑器.exe")) {
             throw "onedir 构建结果缺少桌面程序"
           }
-          Compress-Archive -LiteralPath $package -DestinationPath $asset -CompressionLevel Optimal
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
-          "$hash  $asset" | Set-Content -Encoding ascii "$asset.sha256"
+          if (-not (Test-Path -LiteralPath $setupAsset)) {
+            throw "Inno Setup 构建结果缺少安装器"
+          }
+          Compress-Archive -LiteralPath $package -DestinationPath $zipAsset -CompressionLevel Optimal
+          $zipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipAsset).Hash.ToLowerInvariant()
+          $setupHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $setupAsset).Hash.ToLowerInvariant()
+          "$zipHash  $zipAsset" | Set-Content -Encoding ascii "$zipAsset.sha256"
+          "$setupHash  $setupAsset" | Set-Content -Encoding ascii "$setupAsset.sha256"
           $repo = "${{ github.repository }}"
           $tag = "${{ github.ref_name }}"
-          $assetUrl = "https://github.com/$repo/releases/download/$tag/$asset"
-          $checksumUrl = "${assetUrl}.sha256"
+          $baseUrl = "https://github.com/$repo/releases/download/$tag"
           @{
             version = $tag
             url = "https://github.com/$repo/releases/tag/$tag"
             body = "GitHub Release $tag"
             assets = @(
-              @{ name = $asset; url = $assetUrl; sha256 = $hash }
-              @{ name = "$asset.sha256"; url = $checksumUrl }
+              @{ name = $setupAsset; url = "$baseUrl/$setupAsset"; sha256 = $setupHash }
+              @{ name = "$setupAsset.sha256"; url = "$baseUrl/$setupAsset.sha256" }
+              @{ name = $zipAsset; url = "$baseUrl/$zipAsset"; sha256 = $zipHash }
+              @{ name = "$zipAsset.sha256"; url = "$baseUrl/$zipAsset.sha256" }
             )
           } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 latest.json
+      - name: Verify custom-path install and uninstall
+        shell: pwsh
+        run: |
+          $setup = (Resolve-Path -LiteralPath "HwtThemeStudio-${{ github.ref_name }}-win64-Setup.exe").Path
+          $installDir = Join-Path $env:RUNNER_TEMP "Hwt Studio Custom Install"
+          $markerDir = Join-Path $env:LOCALAPPDATA "HwtThemeStudio"
+          $marker = Join-Path $markerDir "installer-data-preserved.txt"
+          New-Item -ItemType Directory -Force -Path $markerDir | Out-Null
+          Set-Content -Encoding utf8 -LiteralPath $marker -Value "preserve"
+          $installArgs = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS=desktopicon', "/DIR=`"$installDir`"")
+          $install = Start-Process -FilePath $setup -ArgumentList $installArgs -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Setup failed with exit code $($install.ExitCode)" }
+          $exe = Join-Path $installDir "大雪主题编辑器.exe"
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          if (-not (Test-Path -LiteralPath $exe) -or -not (Test-Path -LiteralPath $uninstaller) -or -not (Test-Path -LiteralPath (Join-Path $installDir '_internal'))) {
+            throw "自定义路径安装结果不完整"
+          }
+          $programShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) "大雪主题编辑器\大雪主题编辑器.lnk"
+          $desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) "大雪主题编辑器.lnk"
+          if (-not (Test-Path -LiteralPath $programShortcut) -or -not (Test-Path -LiteralPath $desktopShortcut)) {
+            throw "安装器未创建预期快捷方式"
+          }
+          $app = Start-Process -FilePath $exe -PassThru
+          $deadline = (Get-Date).AddSeconds(20)
+          do {
+            Start-Sleep -Milliseconds 250
+            $app.Refresh()
+          } while (-not $app.HasExited -and $app.MainWindowHandle -eq 0 -and (Get-Date) -lt $deadline)
+          if ($app.HasExited -or $app.MainWindowHandle -eq 0 -or $app.MainWindowTitle -notlike '大雪主题编辑器*') {
+            throw "安装后的主程序未正常显示主窗口"
+          }
+          Stop-Process -Id $app.Id -Force
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstall failed with exit code $($uninstall.ExitCode)" }
+          if (Test-Path -LiteralPath $exe) { throw "卸载后主程序仍然存在" }
+          if (-not (Test-Path -LiteralPath $marker)) { throw "卸载错误删除了用户数据" }
+          Remove-Item -LiteralPath $marker -Force
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-release
           path: |
             HwtThemeStudio-${{ github.ref_name }}-win64.zip
             HwtThemeStudio-${{ github.ref_name }}-win64.zip.sha256
+            HwtThemeStudio-${{ github.ref_name }}-win64-Setup.exe
+            HwtThemeStudio-${{ github.ref_name }}-win64-Setup.exe.sha256
             latest.json
 
   android:
@@ -103,14 +171,27 @@ jobs:
       - name: Prepare Android assets
         run: |
           ASSET="HwtThemeReceiver-${{ github.ref_name }}.apk"
+          VERSION_CODE=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' android/app/build.gradle.kts | head -1)
           cp android/app/build/outputs/apk/release/app-release.apk "$ASSET"
           sha256sum "$ASSET" > "$ASSET.sha256"
+          APK_SHA256=$(cut -d' ' -f1 "$ASSET.sha256")
+          REPO="${{ github.repository }}"
+          TAG="${{ github.ref_name }}"
+          jq -n \
+            --arg version "$TAG" \
+            --argjson versionCode "$VERSION_CODE" \
+            --arg apk_url "https://github.com/$REPO/releases/download/$TAG/$ASSET" \
+            --arg apk_sha256 "$APK_SHA256" \
+            --arg body "GitHub Release $TAG" \
+            '{version: $version, versionCode: $versionCode, apk_url: $apk_url, apk_sha256: $apk_sha256, body: $body}' \
+            > latest-android.json
       - uses: actions/upload-artifact@v4
         with:
           name: android-release
           path: |
             HwtThemeReceiver-${{ github.ref_name }}.apk
             HwtThemeReceiver-${{ github.ref_name }}.apk.sha256
+            latest-android.json
 
   publish:
     needs: [desktop, android]

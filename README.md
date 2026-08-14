@@ -1,6 +1,6 @@
 # 大雪主题编辑器
 
-当前版本：`0.1.6.4`
+当前版本：`0.1.6.5`
 
 一个面向荣耀 `.hwt` 主题的中文可视化编辑器。程序只读分析
 `30039574_大雪.hwt`，把资源位置整理成目录；新主题从空白模板生成，
@@ -50,9 +50,9 @@
 ## 自动更新
 
 桌面端启动后会在后台检查本仓库的 GitHub Release；也可以在“更多 → 检查更新”中手动检查。
-更新只选择 Windows 桌面 ZIP，下载后会校验发布页提供的 SHA-256。校验通过后，正式打包的程序会
-安全解包并启动替换助手；开发运行时则打开已解压的新 EXE。更新源固定为本项目 GitHub Release，
-不要从其他来源替换程序文件。
+新版优先选择 Windows Setup 安装器，下载后会校验发布页提供的 SHA-256，再启动安装向导并退出旧版；
+ZIP 便携包继续用于旧版兼容和故障回退。更新源固定为本项目 GitHub Release，不要从其他来源替换
+程序文件。
 
 ## 开发运行
 
@@ -77,12 +77,12 @@ python -m unittest discover -s tests -v
 
 真机参考图来自 ADB `exec-out screencap -p` 和隐私空间中的授权截图；发布包只包含缩放图和元数据，原始 PNG/JPG/XML 保存在工作目录外，不进入 Git 或 EXE。
 
-输出程序目录位于 `dist/大雪主题编辑器`；发布时将整个目录压缩为 ZIP。
+输出程序目录位于 `dist/大雪主题编辑器`；发布时同时生成 Setup 安装器和 ZIP 便携包。
 
-Windows 版使用 PyInstaller onedir 构建并关闭 UPX 压缩，发布 ZIP 而不是单文件自解压 EXE，降低安全软件
-对自解压载荷的启发式误报。如果本机 Defender 仍提示 `Trojan:Win32/Sabsik.TE.A!ml`，请先核对发布页中的
-SHA-256，再将发布包提交到 Microsoft Security Intelligence 的误报分析入口；不要从非 GitHub Release
-来源下载或替换程序文件。
+Windows 版先使用 PyInstaller onedir 构建并关闭 UPX 压缩，再用 Inno Setup 生成可自定义路径的当前用户
+安装器。默认安装到 `%LOCALAPPDATA%\Programs\HwtThemeStudio`，不需要管理员权限。安装器暂未进行
+Authenticode 签名，SmartScreen 可能显示“未知发布者”；请先核对发布页中的 SHA-256，并只从本项目
+GitHub Release 下载。
 
 ## Android 传输助手
 

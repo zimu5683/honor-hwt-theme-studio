@@ -19,6 +19,7 @@ from hwtstudio.updater import (
     VerifiedDownload,
     download_asset,
     is_newer_version,
+    is_windows_setup_asset,
     launch_update,
     release_from_payload,
     safe_asset_name,
@@ -137,7 +138,17 @@ class UpdaterTests(unittest.TestCase):
         self.assertIsNotNone(selected)
         self.assertEqual(selected.name, "HwtThemeStudio-v0.2.0-win64.exe")
 
-    def test_asset_selection_prefers_portable_zip(self):
+    def test_asset_selection_prefers_setup_over_portable_zip_and_legacy_exe(self):
+        assets = [
+            ReleaseAsset("HwtThemeStudio-v0.2.0-win64.exe", "https://example.test/studio.exe"),
+            ReleaseAsset("HwtThemeStudio-v0.2.0-win64.zip", "https://example.test/studio.zip"),
+            ReleaseAsset("HwtThemeStudio-v0.2.0-win64-Setup.exe", "https://example.test/setup.exe"),
+        ]
+        selected = select_update_asset(assets)
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.name, "HwtThemeStudio-v0.2.0-win64-Setup.exe")
+
+    def test_asset_selection_keeps_zip_as_pre_setup_fallback(self):
         assets = [
             ReleaseAsset("HwtThemeStudio-v0.2.0-win64.exe", "https://example.test/studio.exe"),
             ReleaseAsset("HwtThemeStudio-v0.2.0-win64.zip", "https://example.test/studio.zip"),
@@ -145,6 +156,11 @@ class UpdaterTests(unittest.TestCase):
         selected = select_update_asset(assets)
         self.assertIsNotNone(selected)
         self.assertEqual(selected.name, "HwtThemeStudio-v0.2.0-win64.zip")
+
+    def test_setup_asset_name_is_explicit(self):
+        self.assertTrue(is_windows_setup_asset("HwtThemeStudio-v0.2.0-win64-Setup.exe"))
+        self.assertFalse(is_windows_setup_asset("HwtThemeStudio-v0.2.0-win64.exe"))
+        self.assertFalse(is_windows_setup_asset("HwtThemeStudio-v0.2.0-win64.zip"))
 
     def test_github_api_payload_prefers_browser_download_url(self):
         release = release_from_payload(
@@ -361,6 +377,38 @@ class UpdaterTests(unittest.TestCase):
             launched = Path(popen.call_args.args[0][0])
             self.assertEqual(launched.name, PORTABLE_EXECUTABLE_NAME)
             self.assertTrue(launched.is_file())
+
+    def test_launch_setup_directly_without_legacy_replacement(self):
+        payload = b"verified setup"
+        with tempfile.TemporaryDirectory() as directory:
+            setup = Path(directory) / "HwtThemeStudio-v0.2.0-win64-Setup.exe"
+            setup.write_bytes(payload)
+            download = VerifiedDownload(path=setup, sha256=hashlib.sha256(payload).hexdigest())
+            with (
+                patch("hwtstudio.updater.os.name", "nt"),
+                patch("hwtstudio.updater.sys.frozen", True, create=True),
+                patch("hwtstudio.updater.subprocess.Popen") as popen,
+                patch("hwtstudio.updater._spawn_encoded_powershell") as spawn_helper,
+            ):
+                self.assertTrue(launch_update(download))
+            popen.assert_called_once_with([str(setup.absolute())])
+            spawn_helper.assert_not_called()
+
+    def test_launch_legacy_exe_keeps_replacement_helper(self):
+        payload = b"verified legacy executable"
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "HwtThemeStudio-v0.2.0-win64.exe"
+            executable.write_bytes(payload)
+            download = VerifiedDownload(path=executable, sha256=hashlib.sha256(payload).hexdigest())
+            with (
+                patch("hwtstudio.updater.os.name", "nt"),
+                patch("hwtstudio.updater.sys.frozen", True, create=True),
+                patch("hwtstudio.updater.subprocess.Popen") as popen,
+                patch("hwtstudio.updater._spawn_encoded_powershell") as spawn_helper,
+            ):
+                self.assertTrue(launch_update(download))
+            popen.assert_not_called()
+            spawn_helper.assert_called_once()
 
     def test_launch_update_rejects_file_changed_after_download(self):
         payload = b"verified update payload"
