@@ -35,6 +35,18 @@ object Updater {
     private const val MANIFEST_URL =
         "https://github.com/zimu5683/honor-hwt-theme-studio/releases/latest/download/latest-android.json"
 
+    // GitHub 直连在国内经常不可达，依次尝试：直连 → 国内加速镜像。
+    private val MIRROR_PREFIXES = listOf(
+        "https://ghfast.top/https://github.com/",
+        "https://gh-proxy.com/https://github.com/",
+    )
+
+    /** 返回 [直连, 镜像1, 镜像2...]，镜像只对 github.com 的 URL 生效。 */
+    private fun urlCandidates(url: String): List<String> {
+        if (!url.startsWith("https://github.com/")) return listOf(url)
+        return listOf(url) + MIRROR_PREFIXES.map { prefix -> "$prefix$url" }
+    }
+
     /** 拉取更新清单；无更新返回 null，网络/清单异常抛 [UpdateException]。 */
     suspend fun checkForUpdate(): AndroidUpdate? = withContext(Dispatchers.IO) {
         val payload = fetchManifest()
@@ -61,9 +73,30 @@ object Updater {
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         val target = File(dir, "HwtThemeReceiver-${update.version}.apk")
         val part = File(dir, "${target.name}.part")
+        var lastError: Exception? = null
+        for (candidate in urlCandidates(update.apkUrl)) {
+            part.delete()
+            try {
+                downloadFrom(candidate, part, update.apkSha256, onProgress)
+                if (target.exists()) target.delete()
+                if (!part.renameTo(target)) throw UpdateException("无法保存更新包")
+                return@withContext target
+            } catch (exc: Exception) {
+                lastError = exc
+            }
+        }
+        throw lastError ?: UpdateException("下载失败")
+    }
+
+    private fun downloadFrom(
+        url: String,
+        part: File,
+        expectedSha256: String,
+        onProgress: (Long, Long) -> Unit,
+    ) {
         var connection: HttpURLConnection? = null
         try {
-            connection = (URL(update.apkUrl).openConnection() as HttpURLConnection).apply {
+            connection = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = 15_000
                 readTimeout = 60_000
@@ -86,15 +119,11 @@ object Updater {
                     }
                 }
             }
-            if (sha256(part) != update.apkSha256) {
+            if (sha256(part) != expectedSha256) {
                 throw UpdateException("下载校验失败：SHA-256 不一致")
             }
-            if (target.exists()) target.delete()
-            if (!part.renameTo(target)) throw UpdateException("无法保存更新包")
-            target
         } finally {
             connection?.disconnect()
-            part.delete()
         }
     }
 
@@ -124,22 +153,30 @@ object Updater {
     }
 
     private fun fetchManifest(): JSONObject {
-        var connection: HttpURLConnection? = null
-        try {
-            connection = (URL(MANIFEST_URL).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 10_000
-                readTimeout = 15_000
-                setRequestProperty("Accept", "application/json")
-                setRequestProperty("User-Agent", "HwtThemeReceiver/${BuildConfig.VERSION_NAME}")
+        var lastError: Exception? = null
+        for (candidate in urlCandidates(MANIFEST_URL)) {
+            try {
+                var connection: HttpURLConnection? = null
+                try {
+                    connection = (URL(candidate).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        connectTimeout = 10_000
+                        readTimeout = 15_000
+                        setRequestProperty("Accept", "application/json")
+                        setRequestProperty("User-Agent", "HwtThemeReceiver/${BuildConfig.VERSION_NAME}")
+                    }
+                    val code = connection.responseCode
+                    if (code !in 200..299) throw UpdateException("检查更新失败：HTTP $code")
+                    val text = connection.inputStream.bufferedReader().use { it.readText() }
+                    return JSONObject(text)
+                } finally {
+                    connection?.disconnect()
+                }
+            } catch (exc: Exception) {
+                lastError = exc
             }
-            val code = connection.responseCode
-            if (code !in 200..299) throw UpdateException("检查更新失败：HTTP $code")
-            val text = connection.inputStream.bufferedReader().use { it.readText() }
-            return JSONObject(text)
-        } finally {
-            connection?.disconnect()
         }
+        throw lastError ?: UpdateException("检查更新失败")
     }
 
     private fun sha256(file: File): String {

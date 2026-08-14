@@ -28,6 +28,11 @@ DEFAULT_LATEST_JSON_URL = (
     "https://github.com/zimu5683/honor-hwt-theme-studio/releases/latest/download/latest.json"
 )
 DEFAULT_RELEASES_API_URL = f"https://api.github.com/repos/{DEFAULT_REPOSITORY}/releases/latest"
+# GitHub 直连在国内经常不可达，检查更新与下载都依次尝试：直连 → 国内加速镜像。
+GITHUB_MIRROR_PREFIXES = (
+    "https://ghfast.top/https://github.com/",
+    "https://gh-proxy.com/https://github.com/",
+)
 MAX_DOWNLOAD_SIZE = 512 * 1024 * 1024
 MAX_METADATA_BYTES = 2 * 1024 * 1024
 MAX_ASSET_NAME_BYTES = 200
@@ -254,14 +259,35 @@ def _read_metadata(response, *, limit: int, context: str) -> bytes:
     return body
 
 
+def _github_url_candidates(url: str) -> list[str]:
+    """返回 [直连, 镜像1, 镜像2...]，镜像只对 github.com 的 URL 生效。"""
+    if url.startswith("https://github.com/"):
+        return [url] + [f"{prefix}{url}" for prefix in GITHUB_MIRROR_PREFIXES]
+    return [url]
+
+
 def _fetch_json(url: str, *, cancelled: threading.Event | None = None) -> dict[str, Any]:
-    _check_cancelled(cancelled)
-    with urllib.request.urlopen(_request(url), timeout=20) as response:
-        payload = json.loads(_read_metadata(response, limit=MAX_METADATA_BYTES, context="更新清单").decode("utf-8"))
-    _check_cancelled(cancelled)
-    if not isinstance(payload, dict):
-        raise ValueError("更新接口返回的不是 JSON 对象")
-    return payload
+    candidates = _github_url_candidates(url)
+    last_error: Exception | None = None
+    for candidate in candidates:
+        _check_cancelled(cancelled)
+        try:
+            with urllib.request.urlopen(_request(candidate), timeout=20) as response:
+                payload = json.loads(
+                    _read_metadata(response, limit=MAX_METADATA_BYTES, context="更新清单").decode("utf-8")
+                )
+            _check_cancelled(cancelled)
+            if not isinstance(payload, dict):
+                raise ValueError("更新接口返回的不是 JSON 对象")
+            return payload
+        except Exception as exc:
+            last_error = exc
+    if last_error is None:
+        raise RuntimeError("无法读取更新清单")
+    if len(candidates) == 1:
+        # 没有镜像可回退时保持原始异常类型，与旧行为一致。
+        raise last_error
+    raise RuntimeError(f"无法读取更新清单：{last_error}") from last_error
 
 
 def fetch_latest_release(*, cancelled: threading.Event | None = None, portable: bool | None = None) -> Release:
@@ -316,18 +342,20 @@ def _extract_sha256(text: str) -> str:
 
 
 def _fetch_checksum(url: str, *, cancelled: threading.Event | None = None) -> str:
-    try:
-        _check_cancelled(cancelled)
-        with urllib.request.urlopen(_request(url, accept="text/plain"), timeout=20) as response:
-            value = _extract_sha256(
-                _read_metadata(response, limit=4096, context="校验文件").decode("utf-8", errors="replace")
-            )
-        _check_cancelled(cancelled)
-        return value
-    except RuntimeError:
-        raise
-    except (OSError, ValueError, urllib.error.URLError):
-        return ""
+    for candidate in _github_url_candidates(url):
+        try:
+            _check_cancelled(cancelled)
+            with urllib.request.urlopen(_request(candidate, accept="text/plain"), timeout=20) as response:
+                value = _extract_sha256(
+                    _read_metadata(response, limit=4096, context="校验文件").decode("utf-8", errors="replace")
+                )
+            _check_cancelled(cancelled)
+            return value
+        except RuntimeError:
+            raise
+        except (OSError, ValueError, urllib.error.URLError):
+            continue
+    return ""
 
 
 def _asset_checksum(asset: ReleaseAsset, *, cancelled: threading.Event | None = None) -> str:
@@ -392,24 +420,35 @@ def _download_and_apply_patch(
     """下载差分补丁，用缓存的旧包还原出完整新版并校验。"""
     patch_partial = target_dir / f".{patch.name}.{os.getpid()}.{threading.get_ident()}.part"
     patch_partial.unlink(missing_ok=True)
-    try:
-        if progress:
-            progress(0, 0, "正在下载差分补丁…")
+    last_error: Exception | None = None
+    for candidate in _github_url_candidates(patch.url):
         _check_cancelled(cancelled)
-        with urllib.request.urlopen(_request(patch.url, accept="application/octet-stream"), timeout=60) as response:
-            with patch_partial.open("wb") as handle:
-                while True:
-                    _check_cancelled(cancelled)
-                    block = response.read(1024 * 1024)
-                    if not block:
-                        break
-                    handle.write(block)
+        patch_partial.unlink(missing_ok=True)
+        try:
+            if progress:
+                progress(0, 0, "正在下载差分补丁…")
+            with urllib.request.urlopen(_request(candidate, accept="application/octet-stream"), timeout=60) as response:
+                with patch_partial.open("wb") as handle:
+                    while True:
+                        _check_cancelled(cancelled)
+                        block = response.read(1024 * 1024)
+                        if not block:
+                            break
+                        handle.write(block)
+            break
+        except RuntimeError:
+            raise  # 取消任务必须立刻中止，不能回退到镜像
+        except Exception as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    new_partial = target_dir / f".{target.name}.{os.getpid()}.{threading.get_ident()}.new"
+    try:
         _check_cancelled(cancelled)
         if _sha256(patch_partial, cancelled=cancelled) != patch.sha256:
             raise ValueError("补丁 SHA-256 校验失败，已拒绝差分更新")
         if progress:
             progress(0, 0, "正在应用差分补丁…")
-        new_partial = target_dir / f".{target.name}.{os.getpid()}.{threading.get_ident()}.new"
         bspatch.apply_file(base, patch_partial, new_partial)
         _check_cancelled(cancelled)
         if _sha256(new_partial, cancelled=cancelled) != expected:
@@ -477,35 +516,48 @@ def download_asset(
     partial.unlink(missing_ok=True)
     digest = hashlib.sha256()
     received = 0
-    try:
-        with urllib.request.urlopen(_request(asset.url, accept="application/octet-stream"), timeout=60) as response:
-            raw_total = response.headers.get("Content-Length", "")
-            declared_total: int | None = None
-            if raw_total:
-                if not raw_total.isdigit():
-                    raise ValueError("更新包响应长度无效")
-                declared_total = int(raw_total)
-            total = declared_total or 0
-            if declared_total is not None and declared_total > MAX_DOWNLOAD_SIZE:
-                raise ValueError("更新包超过允许的大小限制")
-            with partial.open("wb") as handle:
-                while True:
-                    _check_cancelled(cancelled)
-                    block = response.read(1024 * 1024)
-                    if not block:
-                        break
-                    received += len(block)
-                    if received > MAX_DOWNLOAD_SIZE:
-                        raise ValueError("更新包超过允许的大小限制")
-                    digest.update(block)
-                    handle.write(block)
-                    if progress:
-                        progress(received, total, "正在下载更新包…")
-            if declared_total is not None and received != declared_total:
-                raise ValueError("更新包响应长度与声明不一致")
-    except Exception:
+    total = 0
+    last_error: Exception | None = None
+    for candidate in _github_url_candidates(asset.url):
+        _check_cancelled(cancelled)
         partial.unlink(missing_ok=True)
-        raise
+        digest = hashlib.sha256()
+        received = 0
+        total = 0
+        try:
+            with urllib.request.urlopen(_request(candidate, accept="application/octet-stream"), timeout=60) as response:
+                raw_total = response.headers.get("Content-Length", "")
+                declared_total: int | None = None
+                if raw_total:
+                    if not raw_total.isdigit():
+                        raise ValueError("更新包响应长度无效")
+                    declared_total = int(raw_total)
+                total = declared_total or 0
+                if declared_total is not None and declared_total > MAX_DOWNLOAD_SIZE:
+                    raise ValueError("更新包超过允许的大小限制")
+                with partial.open("wb") as handle:
+                    while True:
+                        _check_cancelled(cancelled)
+                        block = response.read(1024 * 1024)
+                        if not block:
+                            break
+                        received += len(block)
+                        if received > MAX_DOWNLOAD_SIZE:
+                            raise ValueError("更新包超过允许的大小限制")
+                        digest.update(block)
+                        handle.write(block)
+                        if progress:
+                            progress(received, total, "正在下载更新包…")
+                if declared_total is not None and received != declared_total:
+                    raise ValueError("更新包响应长度与声明不一致")
+            break
+        except RuntimeError:
+            raise  # 取消任务必须立刻中止，不能回退到镜像
+        except Exception as exc:
+            last_error = exc
+            partial.unlink(missing_ok=True)
+    if last_error is not None:
+        raise last_error
     actual = digest.hexdigest()
     try:
         _check_cancelled(cancelled)
