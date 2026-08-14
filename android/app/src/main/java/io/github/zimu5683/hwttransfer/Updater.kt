@@ -36,9 +36,11 @@ object Updater {
         "https://github.com/zimu5683/honor-hwt-theme-studio/releases/latest/download/latest-android.json"
 
     // GitHub 直连在国内经常不可达，依次尝试：直连 → 国内加速镜像。
+    // 前缀只到镜像域名，候选 = 前缀 + 完整 GitHub URL（ghproxy 类服务要求保持原路径）。
     private val MIRROR_PREFIXES = listOf(
-        "https://ghfast.top/https://github.com/",
-        "https://gh-proxy.com/https://github.com/",
+        "https://ghproxy.net/",
+        "https://gh-proxy.com/",
+        "https://ghfast.top/",
     )
 
     /** 返回 [直连, 镜像1, 镜像2...]，镜像只对 github.com 的 URL 生效。 */
@@ -155,25 +157,28 @@ object Updater {
     private fun fetchManifest(): JSONObject {
         var lastError: Exception? = null
         for (candidate in urlCandidates(MANIFEST_URL)) {
-            try {
-                var connection: HttpURLConnection? = null
+            for (attempt in 0 until 2) {
                 try {
-                    connection = (URL(candidate).openConnection() as HttpURLConnection).apply {
-                        requestMethod = "GET"
-                        connectTimeout = 10_000
-                        readTimeout = 15_000
-                        setRequestProperty("Accept", "application/json")
-                        setRequestProperty("User-Agent", "HwtThemeReceiver/${BuildConfig.VERSION_NAME}")
+                    var connection: HttpURLConnection? = null
+                    try {
+                        connection = (URL(candidate).openConnection() as HttpURLConnection).apply {
+                            requestMethod = "GET"
+                            connectTimeout = 10_000
+                            readTimeout = 15_000
+                            setRequestProperty("Accept", "application/json")
+                            setRequestProperty("User-Agent", "HwtThemeReceiver/${BuildConfig.VERSION_NAME}")
+                        }
+                        val code = connection.responseCode
+                        if (code !in 200..299) throw UpdateException("检查更新失败：HTTP $code")
+                        val text = connection.inputStream.bufferedReader().use { it.readText() }
+                        return JSONObject(text)
+                    } finally {
+                        connection?.disconnect()
                     }
-                    val code = connection.responseCode
-                    if (code !in 200..299) throw UpdateException("检查更新失败：HTTP $code")
-                    val text = connection.inputStream.bufferedReader().use { it.readText() }
-                    return JSONObject(text)
-                } finally {
-                    connection?.disconnect()
+                } catch (exc: Exception) {
+                    lastError = exc
+                    if (attempt == 0) Thread.sleep(400)
                 }
-            } catch (exc: Exception) {
-                lastError = exc
             }
         }
         throw lastError ?: UpdateException("检查更新失败")

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -29,9 +30,11 @@ DEFAULT_LATEST_JSON_URL = (
 )
 DEFAULT_RELEASES_API_URL = f"https://api.github.com/repos/{DEFAULT_REPOSITORY}/releases/latest"
 # GitHub 直连在国内经常不可达，检查更新与下载都依次尝试：直连 → 国内加速镜像。
+# 前缀只到镜像域名，候选 = 前缀 + 完整 GitHub URL（ghproxy 类服务要求保持原路径）。
 GITHUB_MIRROR_PREFIXES = (
-    "https://ghfast.top/https://github.com/",
-    "https://gh-proxy.com/https://github.com/",
+    "https://ghproxy.net/",
+    "https://gh-proxy.com/",
+    "https://ghfast.top/",
 )
 MAX_DOWNLOAD_SIZE = 512 * 1024 * 1024
 MAX_METADATA_BYTES = 2 * 1024 * 1024
@@ -267,21 +270,27 @@ def _github_url_candidates(url: str) -> list[str]:
 
 
 def _fetch_json(url: str, *, cancelled: threading.Event | None = None) -> dict[str, Any]:
+    """按 [直连, 镜像1, 镜像2...] 依次尝试；每个源内部重试 1 次，抵御网络瞬断。"""
     candidates = _github_url_candidates(url)
     last_error: Exception | None = None
     for candidate in candidates:
-        _check_cancelled(cancelled)
-        try:
-            with urllib.request.urlopen(_request(candidate), timeout=20) as response:
-                payload = json.loads(
-                    _read_metadata(response, limit=MAX_METADATA_BYTES, context="更新清单").decode("utf-8")
-                )
+        for attempt in range(2):
             _check_cancelled(cancelled)
-            if not isinstance(payload, dict):
-                raise ValueError("更新接口返回的不是 JSON 对象")
-            return payload
-        except Exception as exc:
-            last_error = exc
+            try:
+                with urllib.request.urlopen(_request(candidate), timeout=20) as response:
+                    payload = json.loads(
+                        _read_metadata(response, limit=MAX_METADATA_BYTES, context="更新清单").decode("utf-8")
+                    )
+                _check_cancelled(cancelled)
+                if not isinstance(payload, dict):
+                    raise ValueError("更新接口返回的不是 JSON 对象")
+                return payload
+            except RuntimeError:
+                raise  # 取消任务必须立刻中止
+            except Exception as exc:
+                last_error = exc
+                if attempt == 0:
+                    time.sleep(0.4)
     if last_error is None:
         raise RuntimeError("无法读取更新清单")
     if len(candidates) == 1:
