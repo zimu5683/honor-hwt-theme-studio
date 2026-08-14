@@ -118,18 +118,22 @@ def preflight_phone(host: str = "phone-termux", *, cancelled: threading.Event | 
         errors.append(f"手机主题目录不可写：{REMOTE_DIR}")
 
     tools = _run_with_cancel(
-        ["ssh", host, "command -v sha256sum >/dev/null && printf hash_ok; command -v am >/dev/null && printf ' am_ok'"],
+        ["ssh", host, "command -v sha256sum >/dev/null && printf hash_ok; command -v am >/dev/null && printf ' am_ok'; command -v termux-media-scan >/dev/null && printf ' scan_ok'"],
         timeout=30,
         cancelled=cancelled,
     )
     has_hash = "hash_ok" in tools.stdout
     has_am = "am_ok" in tools.stdout
+    has_media_scan = "scan_ok" in tools.stdout
     checks.append({"name": "SHA-256", "ok": has_hash, "detail": "sha256sum" if has_hash else "未找到 sha256sum"})
     checks.append({"name": "打开主题应用", "ok": has_am, "detail": "am" if has_am else "未找到 am"})
+    checks.append({"name": "媒体索引", "ok": has_media_scan, "detail": "termux-media-scan" if has_media_scan else "未找到 termux-media-scan"})
     if not has_hash:
         errors.append("手机端缺少 sha256sum，无法验证上传完整性")
     if not has_am:
         warnings.append("手机端缺少 am，上传后需要手动打开荣耀主题应用")
+    if not has_media_scan:
+        warnings.append("手机端缺少 termux-media-scan，主题应用可能无法立即识别新主题")
     return {"valid": not errors, "checks": checks, "errors": errors, "warnings": warnings}
 
 
@@ -185,6 +189,16 @@ def transfer_to_phone(path: Path, host: str = "phone-termux", timeout: int = 180
         if finalize.returncode != 0:
             raise RuntimeError("手机端改名失败：" + (finalize.stderr or finalize.stdout).strip())
         finalized = True
+        # scp writes straight to the filesystem and bypasses MediaStore, which
+        # Theme Manager relies on to discover local themes. Register the file
+        # with the media library before opening the app so a fresh scan sees it.
+        media_scanned = False
+        scan = _run_with_cancel(
+            ["ssh", host, f"termux-media-scan {shlex.quote(remote_final)}"],
+            timeout=60,
+            cancelled=cancelled,
+        )
+        media_scanned = scan.returncode == 0
         # Opening the app makes the normal, unprivileged workflow explicit and
         # gives Theme Manager a chance to rescan its local-theme directory.  Do
         # not force-stop it here: Termux is intentionally not granted that power.
@@ -204,6 +218,7 @@ def transfer_to_phone(path: Path, host: str = "phone-termux", timeout: int = 180
             "remote": remote_final,
             "sha256": digest,
             "theme_app_opened": opened.returncode == 0,
+            "media_scanned": media_scanned,
             "preflight": preflight,
         }
     finally:

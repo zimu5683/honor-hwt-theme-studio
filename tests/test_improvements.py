@@ -1610,6 +1610,7 @@ class ImprovementTests(unittest.TestCase):
                     result(stdout=f"{digest}  theme.hwt\n"),
                     result(),
                     result(),
+                    result(),
                 ]
                 transfer_to_phone(path, host="phone-termux")
 
@@ -1620,6 +1621,9 @@ class ImprovementTests(unittest.TestCase):
             self.assertIn(f"{REMOTE_DIR}/theme.hwt{temp_suffix}", commands[2][2])
             self.assertIn(f"{REMOTE_DIR}/theme.hwt{temp_suffix}", commands[3][2])
             self.assertNotIn(f"{REMOTE_DIR}/theme.hwt.uploading", commands[0][2])
+            self.assertIn("termux-media-scan", commands[4][2])
+            self.assertIn(f"{REMOTE_DIR}/theme.hwt", commands[4][2])
+            self.assertIn("am start", commands[5][2])
 
 
 if __name__ == "__main__":

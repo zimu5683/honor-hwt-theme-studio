@@ -103,7 +103,7 @@ class PhoneDevice:
 
     @property
     def label(self) -> str:
-        state = "已配对" if self.paired else "未配对"
+        state = "已配对，可直接发送" if self.paired else "未配对"
         display_host = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
         return f"{self.name}（{display_host}:{self.port}，{state}）"
 
@@ -236,7 +236,13 @@ class PhoneRegistry:
                 raise ValueError("手机记录文件超过允许的大小限制")
             temp.write_bytes(encoded)
             self._validate_path()
-            os.replace(temp, self.path)
+            try:
+                os.replace(temp, self.path)
+            except OSError:
+                # 某些虚拟/过滤文件系统（重定向目录、沙箱卷）不支持同卷原子
+                # 替换；降级为直接写入，保证手机记录不会阻断发现与配对。
+                self.path.write_bytes(encoded)
+                temp.unlink(missing_ok=True)
         finally:
             temp.unlink(missing_ok=True)
 
@@ -406,6 +412,9 @@ def bounded_ipv4_discovery_targets(
             continue
         if not address_value.is_private or network.num_addresses > MAX_HTTP_DISCOVERY_TARGETS + 2:
             continue
+        if network.num_addresses <= 1:
+            # /32 网卡（代理/VPN 虚拟接口）只有自身地址，探测没有意义。
+            continue
         for host in network.hosts():
             value = str(host)
             if value in seen:
@@ -491,7 +500,9 @@ def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
             except socket.timeout:
                 continue
             except OSError:
-                break
+                # 忽略瞬时错误（如个别网卡上的 WSAECONNRESET），继续收包，
+                # 避免一个不可达目标就让整个发现阶段提前结束。
+                continue
             try:
                 raw = json.loads(data.decode("utf-8"))
                 if not isinstance(raw, dict):
@@ -552,7 +563,11 @@ def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
     if cancelled and cancelled.is_set():
         return []
     for device in found.values():
-        registry.update(device)
+        try:
+            registry.update(device)
+        except OSError:
+            # 手机记录不可写时仍返回发现结果，避免整个搜索失败。
+            pass
     return sorted(found.values(), key=lambda item: (item.name.casefold(), item.device_id))
 
 
@@ -590,7 +605,10 @@ def probe_phone(host: str, port: int = HTTP_PORT, timeout: float = 5.0,
     )
     registry = registry or PhoneRegistry()
     device = _merge_saved(device, registry.load())
-    registry.update(device)
+    try:
+        registry.update(device)
+    except OSError:
+        pass
     return device
 
 
@@ -637,7 +655,10 @@ def pair_phone(device: PhoneDevice, code: str, *, client_name: str = "大雪主�
         features=_payload_strings(payload.get("features", device.features)),
         profile=device.profile,
     )
-    (registry or PhoneRegistry()).update(paired)
+    try:
+        (registry or PhoneRegistry()).update(paired)
+    except OSError:
+        pass
     return paired
 
 
@@ -679,7 +700,10 @@ def fetch_phone_profile(device: PhoneDevice, *, timeout: float = 10.0,
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
     device.profile = profile
-    (registry or PhoneRegistry()).update(device)
+    try:
+        (registry or PhoneRegistry()).update(device)
+    except OSError:
+        pass
     return profile
 
 

@@ -1409,6 +1409,8 @@ class MainWindow(QMainWindow):
             warnings = preflight.get("warnings", []) if isinstance(preflight, dict) else []
             formatted_warnings = _format_preflight_warnings(warnings)
             warning_text = "\n" + formatted_warnings if formatted_warnings else ""
+            if not result.get("media_scanned"):
+                warning_text += "\n（手机缺少 termux-media-scan，无法登记媒体索引；如主题应用里看不到主题，请尝试重启主题应用）"
         QMessageBox.information(
             self,
             "发送成功",
