@@ -39,6 +39,8 @@ MAX_REMOTE_ERROR_CHARS = 512
 MAX_FILENAME_BYTES = 200
 CHUNK_SIZE = 1024 * 1024
 REGISTRY_LOCK_TIMEOUT = 5.0
+HASH_PROGRESS_STAGE = "正在校验文件完整性（SHA-256）"
+PREPARE_PROGRESS_STAGE = "正在准备发送到手机"
 
 
 class PhoneTransferError(RuntimeError):
@@ -699,13 +701,29 @@ def safe_hwt_filename(name: str) -> str:
     return "".join(result) + extension
 
 
-def sha256_file(path: Path, *, cancelled: threading.Event | None = None) -> str:
+def sha256_file(
+    path: Path,
+    *,
+    cancelled: threading.Event | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> str:
+    path = Path(path)
+    total = path.stat().st_size
+    completed = 0
     digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for block in iter(lambda: stream.read(CHUNK_SIZE), b""):
+    if progress:
+        progress(completed, total)
+    with path.open("rb") as stream:
+        while True:
             if cancelled and cancelled.is_set():
                 raise TransferCancelled()
+            block = stream.read(CHUNK_SIZE)
+            if not block:
+                break
             digest.update(block)
+            completed += len(block)
+            if progress:
+                progress(completed, total)
     return digest.hexdigest()
 
 
@@ -753,9 +771,12 @@ def _snapshot_upload_file(
     size = initial_signature[2]
     if size > MAX_FILE_SIZE:
         raise PhoneTransferError("HWT 文件超过 1 GiB 上限", code="too_large")
-    progress(0, size, "正在计算 SHA-256")
     try:
-        digest = sha256_file(path, cancelled=cancelled)
+        digest = sha256_file(
+            path,
+            cancelled=cancelled,
+            progress=lambda completed, total: progress(completed, total, HASH_PROGRESS_STAGE),
+        )
     except OSError as exc:
         raise PhoneTransferError("主题文件在校验时不可用，请重新选择文件", code="file_changed") from exc
     _ensure_file_signature(path, initial_signature, "校验后")
@@ -995,12 +1016,16 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
         raise PhoneTransferError("手机尚未配对", code="not_paired")
     callback = progress or (lambda _sent, _total, _stage: None)
     transfer_id = uuid.uuid4().hex
-    callback(0, size, "正在计算 SHA-256")
     try:
-        digest = sha256_file(path, cancelled=cancelled)
+        digest = sha256_file(
+            path,
+            cancelled=cancelled,
+            progress=lambda completed, total: callback(completed, total, HASH_PROGRESS_STAGE),
+        )
     except OSError as exc:
         raise PhoneTransferError("主题文件在校验时不可用，请重新选择文件", code="file_changed") from exc
     _ensure_file_signature(path, initial_signature, "校验后")
+    callback(0, 0, PREPARE_PROGRESS_STAGE)
     filename = safe_hwt_filename(path.name)
     if FEATURE_TRANSFER_PREPARE in device.features:
         if cancelled and cancelled.is_set():
@@ -1187,13 +1212,17 @@ def _upload_theme_once(path: Path, device: PhoneDevice, *, transfer_id: str,
         raise PhoneTransferError("手机尚未配对", code="not_paired")
     progress = progress or (lambda _sent, _total, _stage: None)
     if digest is None:
-        progress(0, size, "正在计算 SHA-256")
         try:
-            digest = sha256_file(path, cancelled=cancelled)
+            digest = sha256_file(
+                path,
+                cancelled=cancelled,
+                progress=lambda completed, total: progress(completed, total, HASH_PROGRESS_STAGE),
+            )
         except OSError as exc:
             raise PhoneTransferError("主题文件在校验时不可用，请重新选择文件", code="file_changed") from exc
     _ensure_file_signature(path, initial_signature, "校验后")
     _ensure_file_signature(path, initial_signature, "发送前")
+    progress(0, 0, PREPARE_PROGRESS_STAGE)
     filename = safe_hwt_filename(path.name)
     if prepare_metadata and FEATURE_TRANSFER_PREPARE in device.features:
         if cancelled and cancelled.is_set():

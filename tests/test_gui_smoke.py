@@ -272,6 +272,28 @@ class GuiSmokeTests(unittest.TestCase):
         transfer_progress.close.assert_called_once_with()
         window.close()
 
+    def test_transfer_progress_dialog_stays_open_between_hash_and_upload(self):
+        window = MainWindow()
+        with (
+            patch("hwtstudio.app.QProgressDialog") as progress_dialog,
+            patch("hwtstudio.app.QThread") as thread_type,
+            patch("hwtstudio.app.TransferWorker"),
+        ):
+            thread = thread_type.return_value
+            thread.isRunning.return_value = False
+            window._start_phone_transfer(
+                Path("theme.hwt"),
+                device=PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token"),
+            )
+
+        progress = progress_dialog.return_value
+        progress.setAutoClose.assert_called_once_with(False)
+        progress.setAutoReset.assert_called_once_with(False)
+        window.transfer_thread = None
+        window._transfer_worker = None
+        window.progress = None
+        window.close()
+
     def test_phone_discovery_stop_reports_running_thread_without_destroying_it(self):
         dialog = PhoneTransferDialog.__new__(PhoneTransferDialog)
         thread = MagicMock()

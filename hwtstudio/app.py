@@ -1345,6 +1345,8 @@ class MainWindow(QMainWindow):
         self.progress = QProgressDialog(initial, "取消", 0, 1000, self)
         self.progress.setWindowTitle("发送到手机")
         self.progress.setMinimumDuration(0)
+        self.progress.setAutoClose(False)
+        self.progress.setAutoReset(False)
         self.progress.setValue(0)
         self.progress.show()
         self.transfer_thread = QThread(self)

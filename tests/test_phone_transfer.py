@@ -37,6 +37,7 @@ from hwtstudio.phone_transfer import (
     pair_phone,
     probe_phone,
     safe_hwt_filename,
+    sha256_file,
     transfer_to_app,
     upload_theme,
 )
@@ -324,6 +325,26 @@ class InvalidHttpDiscoveryConnection(HttpDiscoveryConnection):
 
 
 class PhoneTransferTests(unittest.TestCase):
+    def test_sha256_file_reports_incremental_progress(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "progress.hwt"
+            content = b"a" * CHUNK_SIZE + b"b" * CHUNK_SIZE + b"tail"
+            path.write_bytes(content)
+            progress = []
+
+            digest = sha256_file(path, progress=lambda completed, total: progress.append((completed, total)))
+
+            self.assertEqual(digest, hashlib.sha256(content).hexdigest())
+            self.assertEqual(
+                progress,
+                [
+                    (0, len(content)),
+                    (CHUNK_SIZE, len(content)),
+                    (CHUNK_SIZE * 2, len(content)),
+                    (len(content), len(content)),
+                ],
+            )
+
     def test_saved_credentials_are_bound_to_the_identified_endpoint(self):
         profile = PhoneProfile(model="已确认手机")
         saved = {
@@ -394,9 +415,23 @@ class PhoneTransferTests(unittest.TestCase):
             )
 
             with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
-                result = upload_theme(path, device)
+                progress = []
+                result = upload_theme(
+                    path,
+                    device,
+                    progress=lambda completed, total, stage: progress.append((completed, total, stage)),
+                )
 
             self.assertEqual(result["sha256"], digest)
+            hash_progress = [
+                (completed, total)
+                for completed, total, stage in progress
+                if stage == "正在校验文件完整性（SHA-256）"
+            ]
+            self.assertEqual(hash_progress[0], (0, len(content)))
+            self.assertEqual(hash_progress[-1], (len(content), len(content)))
+            self.assertGreater(len(hash_progress), 2)
+            self.assertIn((0, 0, "正在准备发送到手机"), progress)
             self.assertEqual(len(ChunkedConnection.instances), 3)
             first_request, second_request, commit_request = ChunkedConnection.instances
             self.assertEqual(first_request.method, "PUT")
@@ -945,7 +980,7 @@ class PhoneTransferTests(unittest.TestCase):
             path.write_bytes(b"original")
             before = path.stat()
 
-            def hash_then_mutate(_path, *, cancelled=None):
+            def hash_then_mutate(_path, *, cancelled=None, progress=None):
                 path.write_bytes(b"changed")
                 os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000))
                 return "0" * 64
@@ -1503,6 +1538,14 @@ class PhoneTransferTests(unittest.TestCase):
                 self.assertEqual(ReceiverHandler.received, theme.read_bytes())
                 self.assertEqual(result["sha256"], hashlib.sha256(theme.read_bytes()).hexdigest())
                 self.assertTrue(progress)
+                hash_progress = [
+                    (completed, total)
+                    for completed, total, stage in progress
+                    if stage == "正在校验文件完整性（SHA-256）"
+                ]
+                self.assertEqual(hash_progress[0], (0, theme.stat().st_size))
+                self.assertEqual(hash_progress[-1], (theme.stat().st_size, theme.stat().st_size))
+                self.assertIn((0, 0, "正在准备发送到手机"), progress)
                 self.assertEqual(registry.load()["phone-1"].token, "test-token")
                 manual = PhoneDevice("manual:127.0.0.1", "手动", "127.0.0.1", server.server_port)
                 reused = transfer_to_app(theme, manual, registry=registry)
