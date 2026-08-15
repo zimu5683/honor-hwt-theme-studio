@@ -188,7 +188,7 @@ class ProtocolTest {
     fun chunkedTransferFeatureAndBudgetAreStable() {
         assertEquals("transfer_chunked", Protocol.FEATURE_TRANSFER_CHUNKED)
         assertEquals("transfer_prepare", Protocol.FEATURE_TRANSFER_PREPARE)
-        assertTrue(Protocol.MAX_TRANSFER_CHUNK_BYTES <= 4L * 1024L * 1024L)
+        assertTrue(Protocol.MAX_TRANSFER_CHUNK_BYTES <= 16L * 1024L * 1024L)
         assertTrue(Protocol.MAX_TRANSFER_CHUNK_BYTES > 0L)
     }
 
@@ -288,6 +288,72 @@ class ProtocolTest {
 
             val error = assertThrows(TransferException::class.java) { Protocol.validateHwt(file) }
             assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtStructureSkipsDecompressionAndContentsCatchesCorruption() {
+        val file = File.createTempFile("split-validation", ".hwt")
+        val content = byteArrayOf(0x11, 0x22, 0x33, 0x44, 0x55)
+        try {
+            val entry = ZipEntry("description.xml").apply {
+                method = ZipEntry.STORED
+                size = content.size.toLong()
+                crc = CRC32().apply { update(content) }.value
+            }
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(entry)
+                zip.write(content)
+                zip.closeEntry()
+            }
+            val encoded = file.readBytes()
+            val fileNameBytes = "description.xml".toByteArray(Charsets.UTF_8)
+            val payloadOffset = 30 + fileNameBytes.size
+            encoded[payloadOffset] = (encoded[payloadOffset].toInt() xor 0x01).toByte()
+            file.writeBytes(encoded)
+
+            // Fast path only inspects the central directory, so CRC corruption
+            // in the payload is deferred to the background contents check.
+            Protocol.validateHwtStructure(file)
+
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwtContents(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtStructureStillRequiresDescription() {
+        val file = File.createTempFile("structure-missing-description", ".hwt")
+        try {
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("wallpaper/test.jpg"))
+                zip.write(byteArrayOf(1, 2, 3))
+                zip.closeEntry()
+            }
+            val error = assertThrows(TransferException::class.java) { Protocol.validateHwtStructure(file) }
+            assertEquals("invalid_hwt", error.code)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun validateHwtContentsAcceptsValidSkeleton() {
+        val file = File.createTempFile("contents-valid", ".hwt")
+        try {
+            ZipOutputStream(file.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("description.xml"))
+                zip.write("<HwTheme/>".toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("preview/cover.jpg"))
+                zip.write(byteArrayOf(1, 2, 3))
+                zip.closeEntry()
+            }
+            Protocol.validateHwtContents(file)
         } finally {
             file.delete()
         }

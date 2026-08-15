@@ -4,10 +4,13 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
+import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import java.io.File
 import androidx.core.app.NotificationCompat
 import fi.iki.elonen.NanoHTTPD
 import kotlinx.coroutines.CoroutineScope
@@ -175,6 +178,51 @@ class ReceiverService : Service() {
             val manager = getSystemService(NotificationManager::class.java)
             manager.notify(SUCCESS_NOTIFICATION_ID, successNotification(result))
         }
+        verifyInBackground(result)
+    }
+
+    /**
+     * Decompress and validate the installed theme in the background. Receipt
+     * has already been acknowledged to the computer, so a corrupt archive is
+     * reported here instead of blocking the transfer.
+     */
+    private fun verifyInBackground(result: InstallResult) {
+        val tree = storage.treeUri()
+        scope.launch {
+            val verificationError: String? = try {
+                if (tree != null) {
+                    storage.verifySafInstall(tree, result.storedName, result.sha256)
+                } else {
+                    storage.verifyDirectInstall(
+                        File(Environment.getExternalStorageDirectory(), "Honor/Themes"),
+                        result.storedName,
+                        result.sha256,
+                    )
+                }
+                null
+            } catch (exc: Exception) {
+                (exc as? TransferException)?.message
+                    ?: exc.message
+                    ?: "主题文件校验失败"
+            }
+            if (verificationError != null) {
+                android.util.Log.e("ReceiverService", "Background theme verification failed", RuntimeException(verificationError))
+                val notification = NotificationCompat.Builder(this@ReceiverService, SUCCESS_CHANNEL)
+                    .setSmallIcon(android.R.drawable.stat_sys_warning)
+                    .setContentTitle("主题校验未通过")
+                    .setContentText("${result.storedName}：$verificationError")
+                    .setAutoCancel(true)
+                    .setContentIntent(mainPendingIntent())
+                    .build()
+                runCatching {
+                    getSystemService(NotificationManager::class.java)
+                        .notify(VERIFY_FAILURE_NOTIFICATION_ID, notification)
+                }
+                ReceiverState.update {
+                    it.copy(error = "主题校验未通过：${result.storedName}（$verificationError）")
+                }
+            }
+        }
     }
 
     private fun openThemeManager() {
@@ -238,6 +286,7 @@ class ReceiverService : Service() {
         private const val SUCCESS_CHANNEL = "hwt_success"
         private const val RECEIVER_NOTIFICATION_ID = 1001
         private const val SUCCESS_NOTIFICATION_ID = 1002
+        private const val VERIFY_FAILURE_NOTIFICATION_ID = 1003
 
         fun formatSize(size: Long): String = if (size >= 1024L * 1024L) {
             "%.2f MiB".format(size.toDouble() / 1024.0 / 1024.0)

@@ -37,7 +37,9 @@ MAX_REGISTRY_BYTES = 2 * 1024 * 1024
 MAX_REMOTE_TEXT_CHARS = 512
 MAX_REMOTE_ERROR_CHARS = 512
 MAX_FILENAME_BYTES = 200
-CHUNK_SIZE = 1024 * 1024
+# 4 MiB 分块：单块仍是 NanoHTTPD 的缓冲上限（SOCKET_READ_TIMEOUT），块数是 1 MiB 的 1/4，
+# 每块不再有 NanoHTTPD 双层临时文件与 fsync 的固定开销。
+CHUNK_SIZE = 4 * 1024 * 1024
 REGISTRY_LOCK_TIMEOUT = 5.0
 HASH_PROGRESS_STAGE = "正在校验文件完整性（SHA-256）"
 PREPARE_PROGRESS_STAGE = "正在准备发送到手机"
@@ -927,14 +929,40 @@ def _upload_result_from_payload(payload: dict, *, path: Path, device: PhoneDevic
     }
 
 
-def _send_chunk(device: PhoneDevice, transfer_id: str, block: bytes, *, total_size: int,
-                offset: int, digest: str, chunk_digest: str, filename: str,
-                timeout: float) -> dict:
-    connection = http.client.HTTPConnection(device.host, device.port, timeout=timeout)
-    target = "/api/v1/transfers/" + quote(transfer_id, safe="")
-    try:
+class _ChunkUploader:
+    """Send consecutive chunks over one HTTP connection (keep-alive).
+
+    Each chunk is an HTTP/1.1 request with a Content-Length, and the phone's
+    server reads the exact body before responding, so the same connection can
+    carry the next chunk immediately. The connection is rebuilt after any
+    failure; the caller decides whether to resume or restart the transfer.
+    """
+
+    def __init__(self, device: PhoneDevice, timeout: float):
+        self._device = device
+        self._timeout = timeout
+        self._connection: http.client.HTTPConnection | None = None
+        self._lock = threading.Lock()
+
+    def send(self, transfer_id: str, block: bytes, *, total_size: int, offset: int,
+             digest: str, chunk_digest: str, filename: str) -> dict:
+        with self._lock:
+            connection = self._connection
+            try:
+                if connection is None:
+                    connection = http.client.HTTPConnection(self._device.host, self._device.port, timeout=self._timeout)
+                    self._connection = connection
+                return self._send_once(connection, transfer_id, block, total_size=total_size,
+                                       offset=offset, digest=digest, chunk_digest=chunk_digest, filename=filename)
+            except (OSError, http.client.HTTPException) as exc:
+                self.close()
+                raise PhoneTransferError(f"分块上传连接中断：{exc}", code="connect_failed") from exc
+
+    def _send_once(self, connection: http.client.HTTPConnection, transfer_id: str, block: bytes, *,
+                   total_size: int, offset: int, digest: str, chunk_digest: str, filename: str) -> dict:
+        target = "/api/v1/transfers/" + quote(transfer_id, safe="")
         connection.putrequest("PUT", target)
-        connection.putheader("Authorization", f"Bearer {device.token}")
+        connection.putheader("Authorization", f"Bearer {self._device.token}")
         connection.putheader("Content-Type", "application/octet-stream")
         connection.putheader("Content-Length", str(len(block)))
         connection.putheader("X-Content-SHA256", digest)
@@ -947,14 +975,20 @@ def _send_chunk(device: PhoneDevice, transfer_id: str, block: bytes, *, total_si
         connection.send(block)
         response = connection.getresponse()
         payload = _decode_json(_read_response(response, "分块上传"), "分块上传")
-    except (OSError, http.client.HTTPException) as exc:
-        raise PhoneTransferError(f"分块上传连接中断：{exc}", code="connect_failed") from exc
-    finally:
-        connection.close()
-    if response.status not in (200, 202):
-        raise _error_from_response(response.status, payload)
-    _payload_transfer_id(payload, transfer_id, "分块上传")
-    return payload
+        if response.status not in (200, 202):
+            raise _error_from_response(response.status, payload)
+        _payload_transfer_id(payload, transfer_id, "分块上传")
+        return payload
+
+    def close(self) -> None:
+        with self._lock:
+            connection = self._connection
+            self._connection = None
+            if connection is not None:
+                try:
+                    connection.close()
+                except OSError:
+                    pass
 
 
 def _prepare_transfer(device: PhoneDevice, transfer_id: str, *, filename: str, size: int,
@@ -1057,32 +1091,108 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
         _prepare_transfer(
             device, transfer_id, filename=filename, size=size, digest=digest, timeout=timeout,
         )
-    offset = 0
-    recovery_attempts = 0
-    while True:
-        while offset < size:
+    uploader = _ChunkUploader(device, timeout)
+    try:
+        offset = 0
+        recovery_attempts = 0
+        while True:
+            while offset < size:
+                if cancelled and cancelled.is_set():
+                    _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
+                    raise TransferCancelled()
+                _ensure_file_signature(path, initial_signature, "发送中")
+                with path.open("rb") as stream:
+                    stream.seek(offset)
+                    block = stream.read(min(CHUNK_SIZE, size - offset))
+                if not block:
+                    raise PhoneTransferError("主题文件在分块读取时被截断，请重新选择文件", code="file_changed")
+                chunk_digest = hashlib.sha256(block).hexdigest()
+                try:
+                    payload = uploader.send(
+                        transfer_id,
+                        block,
+                        total_size=size,
+                        offset=offset,
+                        digest=digest,
+                        chunk_digest=chunk_digest,
+                        filename=filename,
+                    )
+                except PhoneTransferError as exc:
+                    if exc.code != "connect_failed":
+                        raise
+                    recovery_attempts += 1
+                    if recovery_attempts > 3:
+                        raise
+                    if cancelled and cancelled.is_set():
+                        _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
+                        raise TransferCancelled()
+                    status_payload = _remote_transfer_status(
+                        device, transfer_id, timeout=min(timeout, 5.0), require_transfer_id=True,
+                    )
+                    if status_payload and status_payload.get("state") == "completed":
+                        _ensure_file_integrity(path, initial_signature, digest, "状态确认后")
+                        return _upload_result_from_payload(
+                            status_payload,
+                            path=path,
+                            device=device,
+                            digest=digest,
+                            size=size,
+                            filename=filename,
+                        )
+                    if status_payload and status_payload.get("state") == "committing":
+                        status_payload = _wait_for_remote_commit(
+                            device,
+                            transfer_id,
+                            cancelled=cancelled,
+                            timeout=min(timeout, 5.0),
+                            require_transfer_id=True,
+                        )
+                        if status_payload and status_payload.get("state") == "completed":
+                            _ensure_file_integrity(path, initial_signature, digest, "状态确认后")
+                            return _upload_result_from_payload(
+                                status_payload,
+                                path=path,
+                                device=device,
+                                digest=digest,
+                                size=size,
+                                filename=filename,
+                            )
+                        raise PhoneTransferError("手机提交主题的状态无效", code="bad_response")
+                    if status_payload and status_payload.get("state") == "receiving":
+                        remote_total, remote_offset = _remote_receiving_offset(status_payload, "传输状态")
+                        if remote_total != size or remote_offset > size:
+                            raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response")
+                        offset = remote_offset
+                    else:
+                        offset = 0
+                    continue
+                state = _payload_text(payload, "state", "分块上传", required=True)
+                if state == "completed":
+                    _ensure_file_integrity(path, initial_signature, digest, "状态确认后")
+                    return _upload_result_from_payload(
+                        payload,
+                        path=path,
+                        device=device,
+                        digest=digest,
+                        size=size,
+                        filename=filename,
+                    )
+                if state != "receiving":
+                    raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response")
+                remote_total = _payload_int(payload, "total", "分块上传")
+                received = _payload_int(payload, "received", "分块上传")
+                next_offset = _payload_int(payload, "next_offset", "分块上传")
+                expected_offset = offset + len(block)
+                if remote_total != size or received != expected_offset or next_offset != received:
+                    raise PhoneTransferError("手机返回的分块偏移量不一致", code="bad_response")
+                offset = next_offset
+                callback(offset, size, "正在分块发送到手机")
             if cancelled and cancelled.is_set():
                 _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
                 raise TransferCancelled()
-            _ensure_file_signature(path, initial_signature, "发送中")
-            with path.open("rb") as stream:
-                stream.seek(offset)
-                block = stream.read(min(CHUNK_SIZE, size - offset))
-            if not block:
-                raise PhoneTransferError("主题文件在分块读取时被截断，请重新选择文件", code="file_changed")
-            chunk_digest = hashlib.sha256(block).hexdigest()
+            _ensure_file_signature(path, initial_signature, "提交前")
             try:
-                payload = _send_chunk(
-                    device,
-                    transfer_id,
-                    block,
-                    total_size=size,
-                    offset=offset,
-                    digest=digest,
-                    chunk_digest=chunk_digest,
-                    filename=filename,
-                    timeout=timeout,
-                )
+                payload = _commit_chunk(device, transfer_id, timeout=timeout)
             except PhoneTransferError as exc:
                 if exc.code != "connect_failed":
                     raise
@@ -1125,97 +1235,23 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                         )
                     raise PhoneTransferError("手机提交主题的状态无效", code="bad_response")
                 if status_payload and status_payload.get("state") == "receiving":
-                    remote_total, remote_offset = _remote_receiving_offset(status_payload, "传输状态")
-                    if remote_total != size or remote_offset > size:
+                    remote_total, offset = _remote_receiving_offset(status_payload, "传输状态")
+                    if remote_total != size or offset > size:
                         raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response")
-                    offset = remote_offset
-                else:
-                    offset = 0
+                    continue
+                offset = 0
                 continue
-            state = _payload_text(payload, "state", "分块上传", required=True)
-            if state == "completed":
-                _ensure_file_integrity(path, initial_signature, digest, "状态确认后")
-                return _upload_result_from_payload(
-                    payload,
-                    path=path,
-                    device=device,
-                    digest=digest,
-                    size=size,
-                    filename=filename,
-                )
-            if state != "receiving":
-                raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response")
-            remote_total = _payload_int(payload, "total", "分块上传")
-            received = _payload_int(payload, "received", "分块上传")
-            next_offset = _payload_int(payload, "next_offset", "分块上传")
-            expected_offset = offset + len(block)
-            if remote_total != size or received != expected_offset or next_offset != received:
-                raise PhoneTransferError("手机返回的分块偏移量不一致", code="bad_response")
-            offset = next_offset
-            callback(offset, size, "正在分块发送到手机")
-        if cancelled and cancelled.is_set():
-            _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
-            raise TransferCancelled()
-        _ensure_file_signature(path, initial_signature, "提交前")
-        try:
-            payload = _commit_chunk(device, transfer_id, timeout=timeout)
-        except PhoneTransferError as exc:
-            if exc.code != "connect_failed":
-                raise
-            recovery_attempts += 1
-            if recovery_attempts > 3:
-                raise
-            if cancelled and cancelled.is_set():
-                _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
-                raise TransferCancelled()
-            status_payload = _remote_transfer_status(
-                device, transfer_id, timeout=min(timeout, 5.0), require_transfer_id=True,
+            _ensure_file_integrity(path, initial_signature, digest, "提交响应后")
+            return _upload_result_from_payload(
+                payload,
+                path=path,
+                device=device,
+                digest=digest,
+                size=size,
+                filename=filename,
             )
-            if status_payload and status_payload.get("state") == "completed":
-                _ensure_file_integrity(path, initial_signature, digest, "状态确认后")
-                return _upload_result_from_payload(
-                    status_payload,
-                    path=path,
-                    device=device,
-                    digest=digest,
-                    size=size,
-                    filename=filename,
-                )
-            if status_payload and status_payload.get("state") == "committing":
-                status_payload = _wait_for_remote_commit(
-                    device,
-                    transfer_id,
-                    cancelled=cancelled,
-                    timeout=min(timeout, 5.0),
-                    require_transfer_id=True,
-                )
-                if status_payload and status_payload.get("state") == "completed":
-                    _ensure_file_integrity(path, initial_signature, digest, "状态确认后")
-                    return _upload_result_from_payload(
-                        status_payload,
-                        path=path,
-                        device=device,
-                        digest=digest,
-                        size=size,
-                        filename=filename,
-                    )
-                raise PhoneTransferError("手机提交主题的状态无效", code="bad_response")
-            if status_payload and status_payload.get("state") == "receiving":
-                remote_total, offset = _remote_receiving_offset(status_payload, "传输状态")
-                if remote_total != size or offset > size:
-                    raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response")
-                continue
-            offset = 0
-            continue
-        _ensure_file_integrity(path, initial_signature, digest, "提交响应后")
-        return _upload_result_from_payload(
-            payload,
-            path=path,
-            device=device,
-            digest=digest,
-            size=size,
-            filename=filename,
-        )
+    finally:
+        uploader.close()
 
 
 def _upload_theme_once(path: Path, device: PhoneDevice, *, transfer_id: str,

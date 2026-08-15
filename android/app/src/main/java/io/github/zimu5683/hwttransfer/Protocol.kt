@@ -37,11 +37,12 @@ object Protocol {
     const val MAX_ARCHIVE_ENTRY_BYTES = 256L * 1024L * 1024L
     const val MAX_ARCHIVE_UNCOMPRESSED_BYTES = 512L * 1024L * 1024L
     const val MAX_ARCHIVE_ENTRIES = 20_000
+    const val MAX_ARCHIVE_FAST_VALIDATION_ENTRIES = 4_000
     const val MAX_ARCHIVE_COMPRESSION_RATIO = 500.0
     const val MAX_CLIENT_NAME_CODE_POINTS = 60
     const val MAX_PAIR_BODY_BYTES = 16L * 1024L
     const val MAX_TRANSFER_PREPARE_BODY_BYTES = 16L * 1024L
-    const val MAX_TRANSFER_CHUNK_BYTES = 4L * 1024L * 1024L
+    const val MAX_TRANSFER_CHUNK_BYTES = 16L * 1024L * 1024L
     const val FREE_SPACE_RESERVE_BYTES = 16L * 1024L * 1024L
     const val IDLE_TIMEOUT_MS = 30L * 60L * 1000L
     const val PAIR_CODE_TTL_MS = 5L * 60L * 1000L
@@ -184,7 +185,43 @@ object Protocol {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
+    /** Full validation: structure, then decompressed contents. Used for imports and tests. */
     fun validateHwt(file: File) {
+        validateStructure(file, MAX_ARCHIVE_ENTRIES)
+        validateHwtContents(file)
+    }
+
+    /**
+     * Fast validation for the transfer hot path: bounds, central-directory
+     * structure, description.xml presence and path/compression sanity for the
+     * first entries. It avoids decompressing the archive so the phone can
+     * acknowledge receipt quickly; [validateHwtContents] runs afterwards in the
+     * background and reports any integrity failure separately.
+     */
+    fun validateHwtStructure(file: File) = validateStructure(file, MAX_ARCHIVE_FAST_VALIDATION_ENTRIES)
+
+    /** Decompress every entry (including nested ZIPs) and verify CRC/path budgets. */
+    fun validateHwtContents(file: File) {
+        try {
+            ZipFile(file).use { archive ->
+                val validationDirectory = Files.createTempDirectory(
+                    (file.parentFile ?: File(".")).toPath(),
+                    "hwt_validate_",
+                ).toFile()
+                try {
+                    validateArchiveContents(archive, validationDirectory)
+                } finally {
+                    validationDirectory.deleteRecursively()
+                }
+            }
+        } catch (exc: TransferException) {
+            throw exc
+        } catch (exc: Exception) {
+            throw TransferException(422, "invalid_hwt", "HWT ZIP 内容损坏")
+        }
+    }
+
+    private fun validateStructure(file: File, maxEntries: Int) {
         if (file.length() <= 0L) throw TransferException(422, "invalid_hwt", "HWT 文件为空")
         if (file.length() > MAX_FILE_SIZE) throw TransferException(413, "too_large", "HWT 文件超过 1 GiB 上限")
         try {
@@ -207,18 +244,10 @@ object Protocol {
                             validateArchiveCompression(entry.size, entry.compressedSize)
                             add(entry.size)
                         }
+                        if (entryCount >= maxEntries) break
                     }
                 }
                 validateArchiveBudget(sizes)
-                val validationDirectory = Files.createTempDirectory(
-                    (file.parentFile ?: File(".")).toPath(),
-                    "hwt_validate_",
-                ).toFile()
-                try {
-                    validateArchiveContents(archive, validationDirectory)
-                } finally {
-                    validationDirectory.deleteRecursively()
-                }
             }
         } catch (exc: TransferException) {
             throw exc

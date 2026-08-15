@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 private val STALE_CHUNK_UPLOAD_PATTERN = Regex("^hwt_chunk_[A-Za-z0-9_-]{16,64}\\.uploading$")
 private val liveChunkCommitFiles = Collections.synchronizedSet(mutableSetOf<File>())
+private const val CHUNK_COPY_BUFFER_BYTES = 1024 * 1024
 
 internal fun staleChunkUploadFiles(directory: File, protectedFile: File? = null): List<File> =
     staleChunkUploadFiles(directory, protectedFile?.let { setOf(it) } ?: emptySet())
@@ -229,6 +230,32 @@ class ReceiverServer(
         }
     }
 
+    /**
+     * Copy the raw request body directly into [target]. This bypasses
+     * NanoHTTPD's parseBody path, which would otherwise materialize the chunk
+     * in a temp file, then copy it into a second temp file, then let us copy
+     * it again into the chunk file.
+     */
+    private fun readChunkBody(session: IHTTPSession, target: File, expectedBytes: Long) {
+        session.inputStream.use { input ->
+            FileOutputStream(target).use { output ->
+                val buffer = ByteArray(CHUNK_COPY_BUFFER_BYTES)
+                var copied = 0L
+                while (copied < expectedBytes) {
+                    val count = input.read(buffer, 0, minOf(buffer.size.toLong(), expectedBytes - copied).toInt())
+                    if (count < 0) break
+                    if (count == 0) continue
+                    output.write(buffer, 0, count)
+                    copied += count
+                }
+                if (copied != expectedBytes || target.length() != expectedBytes) {
+                    throw TransferException(400, "incomplete_upload", "分块内容不完整")
+                }
+                output.fd.sync()
+            }
+        }
+    }
+
     private fun prepareTransfer(session: IHTTPSession): Response {
         requireAuthorized(session)
         val id = prepareTransferId(session.uri)
@@ -366,17 +393,10 @@ class ReceiverServer(
             ?: throw TransferException(400, "missing_filename", "请求缺少主题文件名")
         val fileName = Protocol.safeFileName(requestedName)
         val state = reserveChunk(id, fileName, totalSize, expectedHash, offset)
-        var incoming: File? = null
+        val incoming = File(appContext.cacheDir, "hwt_incoming_${System.nanoTime()}.part")
         try {
-            val files = mutableMapOf<String, String>()
-            session.parseBody(files)
-            val incomingPath = files["content"] ?: files["postData"]
-                ?: throw TransferException(400, "missing_body", "没有收到分块内容")
-            incoming = File(incomingPath)
-            if (!incoming!!.isFile || incoming!!.length() != declaredSize) {
-                throw TransferException(400, "incomplete_upload", "分块内容不完整")
-            }
-            if (!Protocol.sha256(incoming!!).equals(chunkHash, ignoreCase = true)) {
+            readChunkBody(session, incoming, declaredSize)
+            if (!Protocol.sha256(incoming).equals(chunkHash, ignoreCase = true)) {
                 throw TransferException(422, "hash_mismatch", "分块 SHA-256 校验失败")
             }
             synchronized(transferLock) {
@@ -391,10 +411,9 @@ class ReceiverServer(
                     throw TransferException(503, "storage_unavailable", "分块临时文件状态异常")
                 }
                 try {
-                    FileInputStream(incoming!!).use { input ->
+                    FileInputStream(incoming).use { input ->
                         FileOutputStream(current.file, true).use { output ->
                             input.copyTo(output)
-                            output.fd.sync()
                         }
                     }
                 } catch (exc: Exception) {
@@ -416,11 +435,7 @@ class ReceiverServer(
                 .put("total", state.totalSize)
                 .put("next_offset", state.received))
         } finally {
-            incoming?.let { file ->
-                if (!deleteParsedUploadFile(file)) {
-                    android.util.Log.w("ReceiverServer", "Unable to remove parsed chunk file: ${file.name}")
-                }
-            }
+            incoming.delete()
             synchronized(transferLock) { uploading.set(false) }
         }
     }
@@ -459,7 +474,7 @@ class ReceiverServer(
             current
         }
         try {
-            val result = storage.install(state.file, state.fileName, state.expectedHash)
+            val result = storage.installChunked(state.file, state.fileName, state.expectedHash)
             rememberCompleted(id, result)
             runCatching { onTransfer(result) }
                 .onFailure { android.util.Log.e("ReceiverServer", "Transfer callback failed", it) }
@@ -668,7 +683,6 @@ class ReceiverServer(
         HttpStatus(status), "application/json; charset=utf-8", body.toString(),
     ).apply {
         addHeader("Cache-Control", "no-store")
-        addHeader("Connection", "close")
     }
 
     private class HttpStatus(private val code: Int) : Response.IStatus {

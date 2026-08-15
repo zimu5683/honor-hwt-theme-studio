@@ -278,7 +278,7 @@ class ThemeStorage(private val context: Context) {
                 throw TransferException(503, "storage_unavailable", "Honor/Themes 授权已失效")
             }
             val name = Protocol.safeFileName(requestedName)
-            Protocol.validateHwt(source)
+            Protocol.validateHwtStructure(source)
             val digest = Protocol.sha256(source)
             if (expectedSha256 != null && !digest.equals(expectedSha256, ignoreCase = true)) {
                 throw TransferException(422, "hash_mismatch", "上传文件的 SHA-256 与电脑不一致")
@@ -291,6 +291,66 @@ class ThemeStorage(private val context: Context) {
             throw TransferException(503, "storage_unavailable", "无法写入 Honor/Themes 目录")
         } catch (_: SecurityException) {
             throw TransferException(503, "storage_unavailable", "Honor/Themes 目录授权已失效")
+        }
+    }
+
+    /**
+     * Fast install for chunked transfers: the chunk SHA-256 has already been
+     * verified per chunk, so only the whole-file digest is rechecked here.
+     * Content validation happens later via [verifyDirectInstall]/[verifySafInstall].
+     */
+    fun installChunked(source: File, requestedName: String, expectedSha256: String): InstallResult = synchronized(themeInstallLock) {
+        try {
+            val safTree = if (hasSafAccess()) treeUri() else null
+            if (safTree == null && !hasAllFilesAccess()) {
+                throw TransferException(503, "storage_unavailable", "Honor/Themes 授权已失效")
+            }
+            val name = Protocol.safeFileName(requestedName)
+            val digest = Protocol.sha256(source)
+            if (!digest.equals(expectedSha256, ignoreCase = true)) {
+                throw TransferException(422, "hash_mismatch", "上传文件的 SHA-256 与电脑不一致")
+            }
+            ensureFreeSpace(source.length(), safTree)
+            if (safTree != null) installSaf(source, name, digest, safTree) else installDirect(source, name, digest)
+        } catch (exc: TransferException) {
+            throw exc
+        } catch (_: IOException) {
+            throw TransferException(503, "storage_unavailable", "无法写入 Honor/Themes 目录")
+        } catch (_: SecurityException) {
+            throw TransferException(503, "storage_unavailable", "Honor/Themes 目录授权已失效")
+        }
+    }
+
+    /** Background integrity check for the direct (All-files) storage path. */
+    fun verifyDirectInstall(directDirectory: File, name: String, expectedSha256: String) {
+        val target = File(directDirectory, name)
+        if (!isRegularDirectThemeFile(target)) {
+            throw TransferException(503, "storage_unavailable", "主题文件未写入 Honor/Themes 目录")
+        }
+        Protocol.validateHwtContents(target)
+        if (!Protocol.sha256(target).equals(expectedSha256, ignoreCase = true)) {
+            throw TransferException(422, "hash_mismatch", "写入手机存储后的主题文件校验不一致")
+        }
+    }
+
+    /** Background integrity check for the SAF storage path. */
+    fun verifySafInstall(tree: Uri, name: String, expectedSha256: String) {
+        val directory = DocumentFile.fromTreeUri(context, tree)
+            ?: throw TransferException(503, "storage_unavailable", "目录授权已失效")
+        val finalFile = findSafChild(directory, name)
+            ?: throw TransferException(503, "storage_unavailable", "主题文件未写入 Honor/Themes 目录")
+        requireSafRegularFile(finalFile, "同名目标不是普通主题文件")
+        val temp = File.createTempFile("hwt_verify_", ".hwt", context.cacheDir)
+        try {
+            context.contentResolver.openInputStream(finalFile.uri)?.use { input ->
+                FileOutputStream(temp).use { output -> copyLimited(input, output) }
+            } ?: throw TransferException(400, "read_failed", "无法读取主题文件")
+            Protocol.validateHwtContents(temp)
+            if (!Protocol.sha256(temp).equals(expectedSha256, ignoreCase = true)) {
+                throw TransferException(422, "hash_mismatch", "写入手机存储后的主题文件校验不一致")
+            }
+        } finally {
+            temp.delete()
         }
     }
 
@@ -323,9 +383,6 @@ class ThemeStorage(private val context: Context) {
                     output.fd.sync()
                 }
             }
-            if (!Protocol.sha256(uploading).equals(digest, ignoreCase = true)) {
-                throw TransferException(422, "hash_mismatch", "写入手机存储后的 SHA-256 不一致")
-            }
             if (overwritten) {
                 val candidate = File(
                     directDirectory,
@@ -345,9 +402,6 @@ class ThemeStorage(private val context: Context) {
                 Files.move(uploading.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
             }
             published = true
-            if (!Protocol.sha256(target).equals(digest, ignoreCase = true)) {
-                throw TransferException(422, "hash_mismatch", "最终主题文件 SHA-256 不一致")
-            }
             committed = true
             backup?.delete()
             return InstallResult(name, "Honor/Themes/$name", source.length(), digest, overwritten)
@@ -394,11 +448,6 @@ class ThemeStorage(private val context: Context) {
             context.contentResolver.openOutputStream(temporary.uri, "w")?.use { output ->
                 FileInputStream(source).use { input -> copyLimited(input, output) }
             } ?: throw TransferException(503, "storage_unavailable", "无法写入主题目录")
-            val writtenDigest = context.contentResolver.openInputStream(temporary.uri)?.use(::sha256Stream)
-                ?: throw TransferException(503, "storage_unavailable", "无法复核写入文件")
-            if (!writtenDigest.equals(digest, ignoreCase = true)) {
-                throw TransferException(422, "hash_mismatch", "写入手机存储后的 SHA-256 不一致")
-            }
             val existing = findSafChild(directory, name)
             val overwritten = existing != null
             if (existing != null) {
@@ -434,13 +483,8 @@ class ThemeStorage(private val context: Context) {
                     throw TransferException(422, "hash_mismatch", "最终主题文件 SHA-256 不一致")
                 }
             }
-            val finalFile = findSafChild(directory, name)
+            findSafChild(directory, name)
                 ?: throw TransferException(503, "rename_failed", "无法确认最终主题文件")
-            val finalDigest = context.contentResolver.openInputStream(finalFile.uri)?.use(::sha256Stream)
-                ?: throw TransferException(503, "rename_failed", "无法复核最终主题文件")
-            if (!finalDigest.equals(digest, ignoreCase = true)) {
-                throw TransferException(422, "hash_mismatch", "最终主题文件 SHA-256 不一致")
-            }
             committed = true
             backup?.delete()
             return InstallResult(name, "Honor/Themes/$name", source.length(), digest, overwritten)
