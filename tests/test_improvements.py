@@ -34,7 +34,7 @@ from hwtstudio.common import (
     honor_resource_paths,
     is_safe_archive_path,
 )
-from hwtstudio.exporter import export_theme, preflight_export, safe_filename
+from hwtstudio.exporter import default_export_name, export_theme, preflight_export, safe_filename
 from hwtstudio.imageops import render_image as render_source_image
 from hwtstudio.locking import InterprocessLockTimeoutError
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
@@ -80,6 +80,52 @@ class ImprovementTests(unittest.TestCase):
         self.assertLessEqual(len(safe), 80)
         self.assertFalse(safe_filename("a" * 79 + ".suffix").endswith("."))
         self.assertFalse(safe_filename("a" * 79 + " suffix").endswith(" "))
+
+    def test_default_export_name_prefers_custom_title_then_project_name(self):
+        with patch("hwtstudio.exporter.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value.strftime.return_value = "20260814_120000"
+            self.assertEqual(
+                default_export_name(ThemeProject(name="短信工程", title="短信主题")),
+                "短信主题_20260814_120000.hwt",
+            )
+            self.assertEqual(
+                default_export_name(ThemeProject(name="短信工程")),
+                "短信工程_20260814_120000.hwt",
+            )
+            self.assertEqual(
+                default_export_name(ThemeProject()),
+                "空白主题_20260814_120000.hwt",
+            )
+
+    def test_default_metadata_title_uses_export_filename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "短信 & 通知.hwt"
+            _, report = export_theme(ThemeProject(), self.catalog, output)
+            with ZipFile(output) as archive:
+                root = parse_xml(archive.read("description.xml"))
+            self.assertEqual(root.findtext("title"), "短信 & 通知")
+            self.assertEqual(root.findtext("title-cn"), "短信 & 通知")
+            self.assertEqual(report["theme_title"], "短信 & 通知")
+
+    def test_default_metadata_title_prefers_nondefault_project_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "电话.hwt"
+            _, report = export_theme(ThemeProject(name="短信工程"), self.catalog, output)
+            with ZipFile(output) as archive:
+                root = parse_xml(archive.read("description.xml"))
+            self.assertEqual(root.findtext("title"), "短信工程")
+            self.assertEqual(report["theme_title"], "短信工程")
+
+    def test_custom_metadata_title_is_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "电话.hwt"
+            project = ThemeProject(name="短信工程", title="明确标题 <正式版>")
+            _, report = export_theme(project, self.catalog, output)
+            with ZipFile(output) as archive:
+                root = parse_xml(archive.read("description.xml"))
+            self.assertEqual(root.findtext("title"), "明确标题 <正式版>")
+            self.assertEqual(root.findtext("title-cn"), "明确标题 <正式版>")
+            self.assertEqual(report["theme_title"], "明确标题 <正式版>")
 
     def test_report_write_failure_does_not_remove_export(self):
         slot = next(item for item in self.catalog.resources if item.resource_type == "color")

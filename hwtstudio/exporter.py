@@ -20,6 +20,10 @@ from .paths import ensure_no_symlink_parents, unique_temp_path
 from .validation import validate_change_value, validate_custom_slot, validate_theme
 
 
+DEFAULT_PROJECT_NAME = "我的主题"
+DEFAULT_THEME_TITLE = "空白主题"
+
+
 def safe_filename(value: str) -> str:
     invalid = '<>:"/\\|?*'
     result = "".join("_" if c in invalid or ord(c) < 32 or ord(c) == 127 else c for c in value)
@@ -27,9 +31,27 @@ def safe_filename(value: str) -> str:
     return result or "我的主题"
 
 
+def _preferred_project_title(project: ThemeProject) -> str:
+    title = project.title.strip()
+    if title and title != DEFAULT_THEME_TITLE:
+        return title
+    name = project.name.strip()
+    if name and name != DEFAULT_PROJECT_NAME:
+        return name
+    return DEFAULT_THEME_TITLE
+
+
+def _effective_theme_title(project: ThemeProject, output: Path) -> str:
+    preferred = _preferred_project_title(project)
+    if preferred != DEFAULT_THEME_TITLE:
+        return preferred
+    output_title = output.stem.strip()
+    return output_title or DEFAULT_THEME_TITLE
+
+
 def default_export_name(project: ThemeProject) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"空白主题_{safe_filename(project.name)}_{timestamp}.hwt"
+    return f"{safe_filename(_preferred_project_title(project))}_{timestamp}.hwt"
 
 
 def _slot_map(catalog: ThemeCatalog, project: ThemeProject) -> dict[str, ResourceSlot]:
@@ -323,7 +345,8 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
         raise ValueError("导出预检失败：" + json.dumps(preflight["errors"][:8], ensure_ascii=False))
     output.parent.mkdir(parents=True, exist_ok=True)
     ensure_no_symlink_parents(output, "导出目录不能包含符号链接")
-    root_entries = blank_entries(project.title, project.author, project.designer, project.version, project.screen)
+    theme_title = _effective_theme_title(project, output)
+    root_entries = blank_entries(theme_title, project.author, project.designer, project.version, project.screen)
     module_files: dict[str, dict[str, bytes]] = defaultdict(dict)
     module_xml: dict[str, dict[str, dict[tuple[str, str], str]]] = defaultdict(lambda: defaultdict(dict))
     applied: list[dict] = []
@@ -404,6 +427,7 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
     report = {
         "schema": 1,
         "output": str(output),
+        "theme_title": theme_title,
         "sha256": digest,
         "source_catalog_sha256": catalog.source_sha256,
         "generated_at": datetime.now().isoformat(),

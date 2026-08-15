@@ -398,7 +398,7 @@ class UpdaterTests(unittest.TestCase):
             with (
                 patch("hwtstudio.updater.os.name", "nt"),
                 patch("hwtstudio.updater.sys.frozen", True, create=True),
-                patch("hwtstudio.updater.subprocess.Popen") as popen,
+                patch("hwtstudio.updater.subprocess.Popen"),
                 patch("hwtstudio.updater._launch_portable_update", return_value=True) as launch,
             ):
                 import hwtstudio.updater as updater

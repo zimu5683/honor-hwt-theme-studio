@@ -1256,7 +1256,9 @@ class MainWindow(QMainWindow):
             self.refresh_views()
             warning = f"\n\n{report['report_warning']}" if report.get("report_warning") else ""
             detail = (
-                f"主题已生成：\n{path}\n\n模块：{report['module_count']}\n"
+                f"主题已生成：\n{path}\n\n手机中显示的主题名称：{report['theme_title']}\n"
+                "（荣耀主题读取 HWT 内的主题元数据，不使用文件名作为显示名称。）\n\n"
+                f"模块：{report['module_count']}\n"
                 f"颜色/文字目标：{report['preflight']['value_targets']}\n"
                 f"图片目标：{report['preflight']['image_targets']}\n"
                 f"跳过：{len(report['skipped'])}\n文件大小：{report['file_size'] / 1024 / 1024:.2f} MB\n"
@@ -1415,7 +1417,8 @@ class MainWindow(QMainWindow):
             self,
             "发送成功",
             f"手机路径：\n{result['remote']}\n\nSHA-256 校验一致。\n{opened}"
-            f"{warning_text}\n请进入‘我的→下载→主题’查找；如页面已经打开，请返回后重新进入一次。",
+            f"{warning_text}\n请进入‘我的→下载→主题’查找；手机中显示的是 HWT 内的主题标题，不是文件名。"
+            "如页面已经打开，请返回后重新进入一次。",
         )
 
     def _transfer_failed(self, detail: str, code: str = "unexpected", generation: int | None = None):
