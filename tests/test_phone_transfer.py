@@ -160,7 +160,6 @@ class ChunkedConnection:
         self.method = None
         self.target = None
         self.body = bytearray()
-        self.plan = type(self).plans.pop(0)
         type(self).instances.append(self)
 
     def putrequest(self, method, target):
@@ -184,6 +183,13 @@ class ChunkedConnection:
             self.body.extend(body)
 
     def getresponse(self):
+        # Each HTTP request consumes the next plan entry. Chunked uploads now
+        # reuse one connection across chunks, so plans must advance per request
+        # (or per getresponse) instead of per connection construction.
+        try:
+            self.plan = type(self).plans.pop(0)
+        except IndexError:
+            raise AssertionError("计划序列已耗尽")
         if isinstance(self.plan, BaseException):
             raise self.plan
         status, payload = self.plan
@@ -432,18 +438,19 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertEqual(hash_progress[-1], (len(content), len(content)))
             self.assertGreater(len(hash_progress), 2)
             self.assertIn((0, 0, "正在准备发送到手机"), progress)
-            self.assertEqual(len(ChunkedConnection.instances), 3)
-            first_request, second_request, commit_request = ChunkedConnection.instances
-            self.assertEqual(first_request.method, "PUT")
-            self.assertEqual(first_request.body, first)
-            self.assertEqual(first_request.headers["X-HWT-Chunk-Offset"], "0")
-            self.assertEqual(first_request.headers["X-HWT-Chunk-SHA256"], hashlib.sha256(first).hexdigest())
-            self.assertEqual(first_request.headers["X-Content-SHA256"], digest)
-            self.assertEqual(second_request.body, second)
-            self.assertEqual(second_request.headers["X-HWT-Chunk-Offset"], str(CHUNK_SIZE))
-            self.assertEqual(second_request.headers["X-HWT-Chunk-SHA256"], hashlib.sha256(second).hexdigest())
-            self.assertEqual(second_request.headers["X-HWT-Total-Size"], str(len(content)))
-            self.assertEqual(second_request.headers["X-HWT-File-Name"], "%E5%88%86%E5%9D%97%E4%B8%BB%E9%A2%98.hwt")
+            # 两块分块在同一 HTTP 连接上连续发出（keep-alive 复用），
+            # 提交请求使用独立连接。
+            self.assertEqual(len(ChunkedConnection.instances), 2)
+            upload_connection, commit_request = ChunkedConnection.instances
+            self.assertEqual(upload_connection.method, "PUT")
+            self.assertEqual(bytes(upload_connection.body), content)
+            self.assertEqual(bytes(upload_connection.body)[:CHUNK_SIZE], first)
+            self.assertEqual(bytes(upload_connection.body)[CHUNK_SIZE:], second)
+            self.assertEqual(upload_connection.headers["X-HWT-Chunk-Offset"], str(CHUNK_SIZE))
+            self.assertEqual(upload_connection.headers["X-HWT-Chunk-SHA256"], hashlib.sha256(second).hexdigest())
+            self.assertEqual(upload_connection.headers["X-Content-SHA256"], digest)
+            self.assertEqual(upload_connection.headers["X-HWT-Total-Size"], str(len(content)))
+            self.assertEqual(upload_connection.headers["X-HWT-File-Name"], "%E5%88%86%E5%9D%97%E4%B8%BB%E9%A2%98.hwt")
             self.assertEqual(commit_request.method, "POST")
             self.assertTrue(commit_request.target.endswith("/complete"))
 
@@ -618,11 +625,15 @@ class PhoneTransferTests(unittest.TestCase):
                 result = upload_theme(path, device)
 
             self.assertTrue(result["overwritten"])
+            # 两个分块在同一连接上连续发送，提交失败后通过状态查询确认完成，
+            # 没有重发最后一块。
             self.assertEqual(
                 [request.method for request in ChunkedConnection.instances],
-                ["PUT", "PUT", "POST", "GET", "GET"],
+                ["PUT", "POST", "GET", "GET"],
             )
-            self.assertEqual(sum(request.method == "PUT" for request in ChunkedConnection.instances), 2)
+            upload_connection = ChunkedConnection.instances[0]
+            self.assertEqual(bytes(upload_connection.body), content)
+            self.assertEqual(sum(request.method == "PUT" for request in ChunkedConnection.instances), 1)
 
     def test_chunked_upload_refuses_file_changed_after_commit_status(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -633,11 +644,13 @@ class PhoneTransferTests(unittest.TestCase):
 
             class MutatingStatusConnection(ChunkedConnection):
                 def getresponse(self):
+                    # Peek at the next plan without consuming it.
+                    next_plan = type(self).plans[0] if type(self).plans else None
                     if (
                         self.method == "GET"
-                        and isinstance(self.plan, tuple)
-                        and isinstance(self.plan[1], dict)
-                        and self.plan[1].get("state") == "completed"
+                        and isinstance(next_plan, tuple)
+                        and isinstance(next_plan[1], dict)
+                        and next_plan[1].get("state") == "completed"
                     ):
                         path.write_bytes(b"changed after remote commit")
                     return super().getresponse()

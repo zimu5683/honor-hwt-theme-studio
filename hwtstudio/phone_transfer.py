@@ -955,7 +955,7 @@ class _ChunkUploader:
                 return self._send_once(connection, transfer_id, block, total_size=total_size,
                                        offset=offset, digest=digest, chunk_digest=chunk_digest, filename=filename)
             except (OSError, http.client.HTTPException) as exc:
-                self.close()
+                self._close_unlocked()
                 raise PhoneTransferError(f"分块上传连接中断：{exc}", code="connect_failed") from exc
 
     def _send_once(self, connection: http.client.HTTPConnection, transfer_id: str, block: bytes, *,
@@ -982,13 +982,16 @@ class _ChunkUploader:
 
     def close(self) -> None:
         with self._lock:
-            connection = self._connection
-            self._connection = None
-            if connection is not None:
-                try:
-                    connection.close()
-                except OSError:
-                    pass
+            self._close_unlocked()
+
+    def _close_unlocked(self) -> None:
+        connection = self._connection
+        self._connection = None
+        if connection is not None:
+            try:
+                connection.close()
+            except OSError:
+                pass
 
 
 def _prepare_transfer(device: PhoneDevice, transfer_id: str, *, filename: str, size: int,
