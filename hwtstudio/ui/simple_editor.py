@@ -19,8 +19,14 @@ from PySide6.QtWidgets import (
     QColorDialog,
 )
 
-from ..models import ResourceChange, ResourceSlot, ThemeProject
-from ..semantic import SIMPLE_SETTINGS, SimpleSetting, setting_visible
+from ..models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
+from ..semantic import (
+    SIMPLE_SETTINGS,
+    SURFACE_TREATMENT_LABELS,
+    SimpleSetting,
+    build_surface_targets,
+    setting_visible,
+)
 from .design_system import Colors, apply_type, set_role
 from .simple_preview import ClickablePreview, PreviewDialog, PreviewRepository
 
@@ -32,6 +38,8 @@ _TINT_BY_SECTION = {
     "桌面": "sky",
     "常用应用": "rose",
 }
+
+_DEFAULT_SURFACES = "frosted"
 
 
 def _signature(change: ResourceChange) -> tuple:
@@ -45,6 +53,7 @@ def _signature(change: ResourceChange) -> tuple:
         round(change.focus_y, 4),
         change.enhance,
         round(change.enhance_strength, 4),
+        change.surfaces,
     )
 
 
@@ -55,14 +64,17 @@ class SimpleSettingCard(QFrame):
         apply_callback: Callable[[SimpleSetting, ResourceChange], None],
         reset_callback: Callable[[SimpleSetting], None],
         preview_repository: PreviewRepository | None = None,
+        surfaces_callback: Callable[[SimpleSetting, str], None] | None = None,
         parent=None,
     ):
         super().__init__(parent)
         self.setting = setting
         self.apply_callback = apply_callback
         self.reset_callback = reset_callback
+        self.surfaces_callback = surfaces_callback
         self.slots: list[ResourceSlot] = []
         self.project: ThemeProject | None = None
+        self.catalog: ThemeCatalog | None = None
         self.preview_repository = preview_repository
         self.setObjectName("simpleCard")
         self.setProperty("tintRole", _TINT_BY_SECTION.get(setting.section, "lavender"))
@@ -89,6 +101,23 @@ class SimpleSettingCard(QFrame):
         self.state.setObjectName("simpleState")
         self.state.setWordWrap(True)
         layout.addWidget(self.state)
+
+        self.surfaces_combo: QComboBox | None = None
+        if setting.supports_surfaces:
+            surfaces_row = QHBoxLayout()
+            surfaces_label = QLabel("面板处理")
+            surfaces_label.setObjectName("simpleDescription")
+            surfaces_row.addWidget(surfaces_label)
+            self.surfaces_combo = QComboBox()
+            for value, label in SURFACE_TREATMENT_LABELS:
+                self.surfaces_combo.addItem(label, value)
+            self.surfaces_combo.setToolTip(
+                "设置背景图片时自动同步让面板(标题栏、搜索框、卡片、分隔线等)透明化，避免白色话框挡住图片。"
+            )
+            self.surfaces_combo.currentIndexChanged.connect(self._surfaces_changed)
+            surfaces_row.addWidget(self.surfaces_combo)
+            surfaces_row.addStretch(1)
+            layout.addLayout(surfaces_row)
 
         self.preview = ClickablePreview(self)
         self.preview.setFixedHeight(132)
@@ -149,15 +178,47 @@ class SimpleSettingCard(QFrame):
         buttons.addWidget(self.apply_button)
         layout.addLayout(buttons)
 
-    def bind(self, slots: list[ResourceSlot], project: ThemeProject) -> None:
+    def _image_target_count(self) -> int:
+        if not self.slots:
+            return 0
+        total = sum(len(slot.targets) for slot in self.slots if slot.targets)
+        return total or len(self.slots)
+
+    def _surface_targets(self, treatment: str) -> list[dict]:
+        if self.catalog is None or not self.slots or not self.setting.supports_surfaces:
+            return []
+        modules = {target["module"] for slot in self.slots for target in slot.targets}
+        return build_surface_targets(self.setting.id, self.catalog, modules, treatment)
+
+    def _refresh_count_label(self):
+        if self.surfaces_combo is None or not self.setting.supports_surfaces:
+            self.count_label.setText(f"影响 {len(self.slots)} 个兼容资源")
+            return
+        treatment = self.surfaces_combo.currentData() or _DEFAULT_SURFACES
+        surface_count = len(self._surface_targets(treatment))
+        total = self._image_target_count() + surface_count
+        suffix = "（含面板透明化）" if surface_count else ""
+        self.count_label.setText(f"影响 {total} 个兼容资源{suffix}")
+
+    def bind(self, slots: list[ResourceSlot], project: ThemeProject, catalog: ThemeCatalog | None = None) -> None:
         self.slots = slots
         self.project = project
-        self.count_label.setText(f"影响 {len(slots)} 个兼容资源")
+        if catalog is not None:
+            self.catalog = catalog
         self.setEnabled(bool(slots))
         changes = [project.changes.get(slot.id) for slot in slots]
         enabled = [change for change in changes if change and change.enabled]
         self.setProperty("changed", bool(enabled))
         self.reset_button.setEnabled(bool(enabled))
+        if self.surfaces_combo is not None:
+            self.surfaces_combo.blockSignals(True)
+            treatment = _DEFAULT_SURFACES
+            if enabled and len({change.surfaces for change in enabled}) == 1:
+                treatment = enabled[0].surfaces
+            index = self.surfaces_combo.findData(treatment)
+            self.surfaces_combo.setCurrentIndex(max(index, 0))
+            self.surfaces_combo.blockSignals(False)
+        self._refresh_count_label()
         if not enabled:
             self.state.setText("使用系统默认")
             self.state.setProperty("mixed", False)
@@ -277,17 +338,41 @@ class SimpleSettingCard(QFrame):
                 enhance_strength=self.strength.value() / 100,
                 focus_x=self.focus_x.value() / 100,
                 focus_y=self.focus_y.value() / 100,
+                surfaces=self.surfaces_combo.currentData() if self.surfaces_combo is not None else _DEFAULT_SURFACES,
             )
         self.apply_callback(self.setting, change)
 
+    def _surfaces_changed(self):
+        if self.surfaces_combo is None:
+            return
+        self._refresh_count_label()
+        if not self.project or not self.slots:
+            return
+        changed = [
+            self.project.changes.get(slot.id)
+            for slot in self.slots
+            if self.project.changes.get(slot.id) and self.project.changes[slot.id].enabled
+        ]
+        if changed and self.surfaces_callback is not None:
+            self.surfaces_callback(self.setting, self.surfaces_combo.currentData() or _DEFAULT_SURFACES)
+
 
 class SimpleEditor(QWidget):
-    def __init__(self, apply_callback, reset_callback, preview_repository: PreviewRepository | None = None, parent=None):
+    def __init__(
+        self,
+        apply_callback,
+        reset_callback,
+        preview_repository: PreviewRepository | None = None,
+        surfaces_callback: Callable[[SimpleSetting, str], None] | None = None,
+        catalog: ThemeCatalog | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.cards: dict[str, SimpleSettingCard] = {}
         self._section_grids: list[tuple[QGridLayout, list[SimpleSettingCard]]] = []
         self._column_count = 0
         self._available_width = 0
+        self.catalog = catalog
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(32)
@@ -304,7 +389,13 @@ class SimpleEditor(QWidget):
             items = [item for item in SIMPLE_SETTINGS if item.section == section]
             section_cards: list[SimpleSettingCard] = []
             for index, setting in enumerate(items):
-                card = SimpleSettingCard(setting, apply_callback, reset_callback, preview_repository)
+                card = SimpleSettingCard(
+                    setting,
+                    apply_callback,
+                    reset_callback,
+                    preview_repository,
+                    surfaces_callback=surfaces_callback,
+                )
                 self.cards[setting.id] = card
                 section_cards.append(card)
             root.addWidget(container)
@@ -346,10 +437,13 @@ class SimpleEditor(QWidget):
         resolved: dict[str, list[ResourceSlot]],
         project: ThemeProject,
         installed_packages: set[str] | None,
+        catalog: ThemeCatalog | None = None,
     ) -> None:
+        if catalog is not None:
+            self.catalog = catalog
         for setting in SIMPLE_SETTINGS:
             card = self.cards[setting.id]
             visible = setting_visible(setting, installed_packages) and bool(resolved.get(setting.id))
             card.setVisible(visible)
             if visible:
-                card.bind(resolved[setting.id], project)
+                card.bind(resolved[setting.id], project, self.catalog)

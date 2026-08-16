@@ -17,6 +17,7 @@ from .common import honor_module_name, honor_resource_name, honor_resource_path,
 from .imageops import render_image, render_placeholder
 from .models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
 from .paths import ensure_no_symlink_parents, unique_temp_path
+from .semantic import SURFACE_TREATMENT_VALUES, background_setting_for_slot, build_surface_targets
 from .validation import validate_change_value, validate_custom_slot, validate_theme
 
 
@@ -216,6 +217,36 @@ def _choose_targets(
             )
             selected.append(winner)
             continue
+        losers = [candidate for candidate in candidates if candidate is not winner]
+        if (
+            winner.priority > 0
+            and sum(candidate.priority == winner.priority for candidate in candidates) == 1
+            and all(candidate.priority > 0 or candidate.slot.synthetic for candidate in losers)
+        ):
+            # 显式修改(荣耀原生资源优先于转换的华为资源)在内容不同时胜出;
+            # 合成槽位(页面背景的面板透明默认值)始终让位于任何显式修改。
+            discarded = [candidate.slot.id for candidate in losers]
+            if losers and all(candidate.slot.synthetic for candidate in losers):
+                kind = "surface_transparency_overridden"
+                policy = "用户显式修改优先"
+                message = "页面背景同步的面板透明默认值让位于用户显式修改的资源"
+            else:
+                kind = "duplicate_target_resolved"
+                policy = "荣耀原生资源优先"
+                message = "目标内容不同，已按荣耀原生资源优先策略选择一个写入目标"
+            warnings.append(
+                {
+                    "kind": kind,
+                    "target": list(key),
+                    "slot_ids": [candidate.slot.id for candidate in candidates],
+                    "selected_slot_id": winner.slot.id,
+                    "discarded_slot_ids": discarded,
+                    "policy": policy,
+                    "message": message,
+                }
+            )
+            selected.append(winner)
+            continue
         errors.append(_conflict_error(key, candidates))
     return selected
 
@@ -259,7 +290,7 @@ def _prepare_export(project: ThemeProject, catalog: ThemeCatalog) -> dict:
             except ValueError as exc:
                 errors.append({"kind": "invalid_value", "slot_id": slot_id, "message": str(exc)})
                 continue
-            target_keys = _target_keys(slot, scanned_ids)
+            key_values = [(key, value) for key in _target_keys(slot, scanned_ids)]
         elif slot.resource_type in {"image", "icon", "wallpaper", "preview"}:
             if change.source_kind == "placeholder":
                 pass
@@ -268,12 +299,22 @@ def _prepare_export(project: ThemeProject, catalog: ThemeCatalog) -> dict:
             elif not change.source_file or not Path(change.source_file).is_file():
                 errors.append({"kind": "missing_image", "slot_id": slot_id, "path": change.source_file or ""})
                 continue
-            target_keys = _target_keys(slot, scanned_ids)
-            value = None
+            key_values = [(key, None) for key in _target_keys(slot, scanned_ids)]
+            surface_setting = background_setting_for_slot(slot)
+            if surface_setting is not None and change.surfaces in SURFACE_TREATMENT_VALUES:
+                modules = [target["module"] for target in slot.targets]
+                for target in build_surface_targets(surface_setting.id, catalog, modules, change.surfaces):
+                    key_values.append(
+                        (
+                            ("xml", target["module"], target["container"], "color", target["name"]),
+                            target["value"],
+                        )
+                    )
         else:
             warnings.append({"kind": "unsupported_type", "slot_id": slot_id, "type": slot.resource_type})
             skipped_count += 1
             continue
+        target_keys = [key for key, _ in key_values]
         if not slot.synthetic and slot.id in scanned_ids and len(target_keys) > 1:
             warnings.append(
                 {
@@ -285,10 +326,15 @@ def _prepare_export(project: ThemeProject, catalog: ThemeCatalog) -> dict:
                     "message": "一个华为资源将复制到多个荣耀目标；每个目标单独执行冲突审计",
                 }
             )
-        signature = _change_signature(slot, change, value, file_digests)
         priority = _slot_priority(slot, scanned_ids)
-        for key in target_keys:
-            grouped[key].append(_ExportTarget(key, slot, change, value, signature, priority))
+        for key, key_value in key_values:
+            if key[0] == "xml":
+                signature = ("value", key_value)
+                export_value = key_value
+            else:
+                signature = _change_signature(slot, change, None, file_digests)
+                export_value = None
+            grouped[key].append(_ExportTarget(key, slot, change, export_value, signature, priority))
     selected = _choose_targets(grouped, warnings, errors)
     value_count = sum(target.key[0] == "xml" for target in selected)
     image_count = sum(target.key[0] == "image" for target in selected)

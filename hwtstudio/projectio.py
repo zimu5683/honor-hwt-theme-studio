@@ -21,11 +21,12 @@ from .validation import validate_custom_slot
 __all__ = ["load_project", "missing_project_assets", "project_assets_dir", "save_project"]
 
 _PROJECT_TEXT_FIELDS = ("name", "title", "author", "designer", "version", "screen")
-_CHANGE_TEXT_FIELDS = ("source_kind", "fit", "enhance")
+_CHANGE_TEXT_FIELDS = ("source_kind", "fit", "enhance", "surfaces")
 _CHANGE_ENUMS = {
     "source_kind": {"file", "placeholder"},
     "fit": {"cover", "contain", "stretch"},
     "enhance": {"none", "light", "dark"},
+    "surfaces": {"system", "frosted", "transparent"},
 }
 _CUSTOM_RESOURCE_FIELDS = ("id", "module", "container", "resource_type", "name", "path", "category", "label")
 _CUSTOM_RESOURCE_OPTIONAL_TEXT_FIELDS = ("status", "risk", "mode", "actual_format", "extension")

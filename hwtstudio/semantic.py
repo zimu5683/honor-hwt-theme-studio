@@ -46,6 +46,7 @@ class SimpleSetting:
     required_packages: tuple[str, ...] = ()
     scope: str = "exact"
     preview: PreviewSpec | None = None
+    supports_surfaces: bool = False
 
 
 def _setting(
@@ -60,6 +61,7 @@ def _setting(
     slot_ids: Iterable[str] = (),
     required_packages: Iterable[str] = (),
     scope: str = "exact",
+    supports_surfaces: bool = False,
 ) -> SimpleSetting:
     return SimpleSetting(
         id=id,
@@ -72,6 +74,7 @@ def _setting(
         slot_ids=tuple(slot_ids),
         required_packages=tuple(required_packages),
         scope=scope,
+        supports_surfaces=supports_surfaces,
     )
 
 
@@ -143,18 +146,22 @@ SIMPLE_SETTINGS = (
              modules=("com.hihonor.android.launcher", "com.huawei.android.launcher"),
              required_packages=("com.hihonor.android.launcher", "com.huawei.android.launcher")),
 
-    _setting("settings_background", "常用应用", "设置页面背景", "为系统“设置”页面铺设自定义图片背景。", "image",
-             slot_ids=("__synthetic__::background::设置背景",), required_packages=("com.android.settings",)),
-    _setting("messages_background", "常用应用", "短信页面背景", "为信息列表和会话页面铺设自定义图片背景。", "image",
+    _setting("settings_background", "常用应用", "设置页面背景", "为系统“设置”页面铺设自定义图片背景；同步让标题栏、搜索框、卡片和分隔线等表面半透明，图片不被白色面板挡住。", "image",
+             slot_ids=("__synthetic__::background::设置背景",), required_packages=("com.android.settings",),
+             supports_surfaces=True),
+    _setting("messages_background", "常用应用", "短信页面背景", "为信息列表和会话页面铺设自定义图片背景；同步让标题栏、列表、输入栏和分隔线等表面半透明，图片不被白色面板挡住。", "image",
              slot_ids=("__synthetic__::background::信息/短信背景",),
-             required_packages=("com.hihonor.mms", "com.android.mms", "com.huawei.mms")),
-    _setting("phone_background", "常用应用", "电话页面背景", "为拨号和通话相关页面铺设自定义图片背景。", "image",
+             required_packages=("com.hihonor.mms", "com.android.mms", "com.huawei.mms"),
+             supports_surfaces=True),
+    _setting("phone_background", "常用应用", "电话页面背景", "为拨号和通话相关页面铺设自定义图片背景；同步让标题栏、工具栏和底部导航等表面半透明，图片不被白色面板挡住。", "image",
              slot_ids=("__synthetic__::background::电话背景",),
              required_packages=("com.hihonor.phone", "com.hihonor.phoneservice", "com.android.server.telecom",
-                                "com.huawei.phone", "com.huawei.phoneservice")),
-    _setting("contacts_background", "常用应用", "联系人页面背景", "为联系人列表和详情页面铺设自定义图片背景。", "image",
+                                "com.huawei.phone", "com.huawei.phoneservice"),
+             supports_surfaces=True),
+    _setting("contacts_background", "常用应用", "联系人页面背景", "为联系人列表和详情页面铺设自定义图片背景；同步让标题栏、搜索框、名片卡片和分隔线等表面半透明，图片不被白色面板挡住。", "image",
              slot_ids=("__synthetic__::background::联系人背景",),
-             required_packages=("com.hihonor.contacts", "com.android.contacts", "com.huawei.contacts")),
+             required_packages=("com.hihonor.contacts", "com.android.contacts", "com.huawei.contacts"),
+             supports_surfaces=True),
     _setting("wechat_background", "常用应用", "微信页面背景色", "微信列表、聊天页面的基础背景颜色；不替换聊天图片。", "color",
              names=("BW_100",), modules=("com.tencent.mm",), required_packages=("com.tencent.mm",)),
     _setting("wechat_primary_text", "常用应用", "微信主要文字", "微信标题、联系人名称和消息正文的颜色。", "color",
@@ -206,6 +213,126 @@ SIMPLE_SETTINGS = tuple(
 
 
 SIMPLE_BY_ID = {item.id: item for item in SIMPLE_SETTINGS}
+
+
+# ---------------------------------------------------------------------------
+# 常用应用页面背景的"面板透明化"同步:
+# 图片背景写入后,白色面板/话框(标题栏、搜索框、卡片、列表、分隔线等)仍会
+# 挡住图片。这里按大雪源主题(30039574_大雪.hwt)实测的透明资源清单,把同一
+# 模块里控制这些表面的颜色一并写出;文字颜色不在此范围内,保持深色可读。
+# 名称来自源主题各模块 theme.xml / framework-res-hnext|hwext/theme.xml。
+# ---------------------------------------------------------------------------
+
+SURFACE_TREATMENT_LABELS = (
+    ("system", "跟随系统（不改面板）"),
+    ("frosted", "半透明磨砂（默认）"),
+    ("transparent", "全透明"),
+)
+
+SURFACE_TREATMENT_VALUES = {
+    "frosted": "#4DFFFFFF",
+    "transparent": "#00000000",
+}
+
+# 每个应用模块通用的表面颜色族(按容器分组)。
+_SURFACE_FAMILY = {
+    "framework-res-hnext/theme.xml": (
+        "magic_appbar_bg", "magic_appbar_bg_blur",
+        "magic_toolbar_bg", "magic_toolbar_bg_blur",
+        "magic_navigationbar_bg", "magic_navigationbar_bg_blur",
+        "magic_subtab_bg", "magic_subtab_bg_blur",
+        "magic_color_bg", "magic_white_bg", "magic_color_tips_bg",
+    ),
+    "framework-res-hwext/theme.xml": (
+        "emui_appbar_bg", "emui_appbar_bg_blur",
+        "emui_toolbar_bg", "emui_toolbar_bg_blur",
+        "emui_navigationbar_bg", "emui_navigationbar_bg_blur",
+        "emui_subtab_bg", "emui_subtab_bg_blur",
+        "emui_color_bg", "emui_white_bg", "emui_color_tips_bg",
+    ),
+}
+
+# 各项目在应用自身 theme.xml 里的专属表面颜色(搜索框、名片卡片、分隔线等)。
+SURFACE_SYNC_NAMES: dict[str, dict[str, tuple[str, ...]]] = {
+    "contacts_background": {
+        **_SURFACE_FAMILY,
+        "theme.xml": (
+            "magic_color_bg", "emui_color_bg",
+            "people_background", "contacts_header_background",
+            "searchview_background_white", "bottom_tab_bg",
+            "hwsubtab_magic_color_bg",
+            "divider_color", "tips_and_divider_color",
+            "magic_color_subheader_divider", "magic_color_divider_horizontal",
+            "familyname_overlay_list_divider",
+        ),
+    },
+    "settings_background": {
+        **_SURFACE_FAMILY,
+        "theme.xml": (
+            "searchview_background_color", "magic_color_bg_cardview",
+            "card_background_color_selector", "magic_card_panel_bg",
+            "emui_card_panel_bg", "emui_inputbox_bg",
+        ),
+    },
+    "messages_background": {
+        **_SURFACE_FAMILY,
+        "theme.xml": (
+            "color_gray_one", "magic_gray_5", "magic_black_color_alpha_5",
+            "conversation_background", "conversation_item_divider_color",
+            "attach_panel_item_color", "message_editor_background",
+            "duoqu_border_color", "duoqu_menu_splite_bgcolor",
+        ),
+    },
+    "phone_background": {
+        **_SURFACE_FAMILY,
+        "theme.xml": (),
+    },
+}
+
+
+def surface_treatment_label(treatment: str) -> str:
+    return dict(SURFACE_TREATMENT_LABELS).get(treatment, "跟随系统")
+
+
+def build_surface_targets(
+    setting_id: str,
+    catalog: ThemeCatalog,
+    modules: Iterable[str],
+    treatment: str,
+) -> list[dict]:
+    """为一个背景项目构造表面颜色同步目标(只包含目录里实际存在的资源)。"""
+    value = SURFACE_TREATMENT_VALUES.get(treatment)
+    names_by_container = SURFACE_SYNC_NAMES.get(setting_id)
+    if value is None or names_by_container is None:
+        return []
+    available = {
+        (slot.module, slot.container, slot.name)
+        for slot in catalog.resources
+        if slot.resource_type == "color" and slot.status != "当前版本不支持"
+    }
+    targets: list[dict] = []
+    for module in sorted(set(modules)):
+        for container, names in names_by_container.items():
+            for name in names:
+                if (module, container, name) in available:
+                    targets.append(
+                        {
+                            "module": module,
+                            "container": container,
+                            "resource_type": "color",
+                            "name": name,
+                            "value": value,
+                        }
+                    )
+    return targets
+
+
+def background_setting_for_slot(slot: ResourceSlot) -> SimpleSetting | None:
+    """返回合成背景槽位对应的简洁项目(仅限支持面板透明化的项目)。"""
+    for setting in SIMPLE_SETTINGS:
+        if setting.supports_surfaces and slot.id in setting.slot_ids:
+            return setting
+    return None
 
 
 def setting_visible(setting: SimpleSetting, installed_packages: set[str] | None) -> bool:

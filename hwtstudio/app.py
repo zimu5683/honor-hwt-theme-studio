@@ -52,7 +52,7 @@ from .phone_transfer import PhoneRegistry
 from .projectio import load_project, save_project
 from .validation import validate_change_value
 from .services.catalog_service import load_preferred_catalog, save_user_catalog
-from .semantic import SIMPLE_SETTINGS, TYPE_LABELS, friendly_resource_label, resolve_all
+from .semantic import SIMPLE_SETTINGS, TYPE_LABELS, friendly_resource_label, resolve_all, surface_treatment_label
 from .ui.commands import BulkChangeCommand, ChangeCommand
 from .ui.design_system import Colors, apply_design_system, apply_type, set_role, set_state
 from .ui.dialogs import CustomResourceDialog, resolve_missing_assets
@@ -319,7 +319,12 @@ class MainWindow(QMainWindow):
         host.setMaximumWidth(1440)
         host_layout = QVBoxLayout(host)
         host_layout.setContentsMargins(0, 0, 0, 0)
-        self.simple_editor = SimpleEditor(self.apply_simple_setting, self.reset_simple_setting, self.preview_repository)
+        self.simple_editor = SimpleEditor(
+            self.apply_simple_setting,
+            self.reset_simple_setting,
+            self.preview_repository,
+            surfaces_callback=self.apply_simple_surfaces,
+        )
         host_layout.addWidget(self.simple_editor)
         scroll.setWidget(host)
         scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
@@ -1064,6 +1069,22 @@ class MainWindow(QMainWindow):
         self.undo_stack.push(BulkChangeCommand(self, changes, f"设置{setting.title}"))
         self.statusBar().showMessage(f"已设置“{setting.title}”，同步 {len(changes)} 个兼容资源", 5000)
 
+    def apply_simple_surfaces(self, setting, treatment: str):
+        slots = self.simple_resolved.get(setting.id, [])
+        updates: dict[str, ResourceChange] = {}
+        for slot in slots:
+            existing = self.project.changes.get(slot.id)
+            if existing and existing.enabled:
+                updated = copy.deepcopy(existing)
+                updated.surfaces = treatment
+                updates[slot.id] = updated
+        if not updates:
+            return
+        self.undo_stack.push(BulkChangeCommand(self, updates, f"设置{setting.title}面板处理"))
+        self.statusBar().showMessage(
+            f"已设置“{setting.title}”面板处理：{surface_treatment_label(treatment)}", 5000
+        )
+
     def reset_simple_setting(self, setting):
         slots = self.simple_resolved.get(setting.id, [])
         resets = {slot.id: None for slot in slots if slot.id in self.project.changes}
@@ -1084,7 +1105,7 @@ class MainWindow(QMainWindow):
                 self.proxy_model.modified_only,
             )
         if hasattr(self, "simple_editor"):
-            self.simple_editor.bind(self.simple_resolved, self.project, self.installed_packages)
+            self.simple_editor.bind(self.simple_resolved, self.project, self.installed_packages, self.catalog)
         if hasattr(self, "changes_text"):
             lines = []
             grouped_ids: set[str] = set()
@@ -1102,6 +1123,10 @@ class MainWindow(QMainWindow):
                 value_text = next(iter(values)) if len(values) == 1 else "自定义图片" if setting.kind == "image" else "含单独调整"
                 if len(modified) != len(slots):
                     value_text = "含单独调整"
+                if setting.supports_surfaces and len(modified) == len(slots):
+                    surface_values = {self.project.changes[slot.id].surfaces for slot in modified}
+                    if len(surface_values) == 1 and value_text != "含单独调整":
+                        value_text = f"{value_text} · 面板{surface_treatment_label(next(iter(surface_values)))}"
                 lines.append(f"● {setting.title}\n  {value_text} · 已修改 {len(modified)}/{len(slots)} 个兼容资源")
             advanced = [slot_id for slot_id in self.project.changes if slot_id not in grouped_ids]
             header = f"已修改 {changed_groups + len(advanced)} 项，涉及 {affected + len(advanced)} 个资源。"

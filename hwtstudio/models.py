@@ -81,6 +81,10 @@ class ResourceChange:
     focus_y: float = 0.5
     enhance: str = "none"
     enhance_strength: float = 0.0
+    # 常用应用页面背景的"话框/面板"处理方式:
+    # "system" 跟随系统(不写入表面颜色)、"frosted" 半透明磨砂(默认)、
+    # "transparent" 全透明。只对合成背景槽位生效,其余槽位忽略。
+    surfaces: str = "frosted"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
