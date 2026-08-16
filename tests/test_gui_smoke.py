@@ -75,7 +75,7 @@ class GuiSmokeTests(unittest.TestCase):
         window.project.dirty = False
         window.close()
 
-    def test_operation_error_keeps_raw_exception_out_of_message_box(self):
+    def test_operation_error_shows_bounded_raw_detail_and_logs_it(self):
         window = MainWindow()
         with patch("hwtstudio.app.QMessageBox.critical") as critical:
             try:
@@ -85,7 +85,9 @@ class GuiSmokeTests(unittest.TestCase):
         message = critical.call_args.args[2]
         self.assertIn("无法生成图片预览", message)
         self.assertIn("处理建议", message)
-        self.assertNotIn("broken image header", message)
+        # 弹窗携带原始错误详情(截断),便于用户反馈和排查;日志保留完整内容。
+        self.assertIn("broken image header", message)
+        self.assertIn("原始错误", message)
         self.assertIn("broken image header", "\n".join(window._log_lines))
         window.close()
 

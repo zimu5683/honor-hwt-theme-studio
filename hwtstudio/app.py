@@ -4,6 +4,7 @@ import copy
 import os
 import sys
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, QSize, QStandardPaths, Qt, QThread, QTimer, QUrl
@@ -44,10 +45,10 @@ import qtawesome as qta
 
 from . import __version__
 from .catalog import scan_theme, source_compatibility_report
-from .exporter import default_export_name, export_theme, preflight_export
+from .exporter import default_export_name, preflight_export
 from .imageops import render_image, render_placeholder
 from .models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
-from .paths import APP_NAME, default_source_theme
+from .paths import APP_NAME, data_dir, default_source_theme
 from .phone_transfer import PhoneRegistry
 from .projectio import load_project, save_project
 from .validation import validate_change_value
@@ -61,7 +62,7 @@ from .ui.phone_dialog import PhoneTransferDialog
 from .ui.resource_models import ResourceFilterModel, ResourceTableModel
 from .ui.simple_editor import SimpleEditor
 from .ui.simple_preview import PreviewRepository
-from .ui.workers import ProfileWorker, TransferWorker, UpdateWorker
+from .ui.workers import ExportWorker, ProfileWorker, TransferWorker, UpdateWorker
 from .updater import Release, UpdateCheck, VerifiedDownload, launch_update, release_page_url
 
 
@@ -70,6 +71,38 @@ def _compact_error_detail(detail: str, fallback: str, *, limit: int = 240) -> st
     if not first_line:
         return fallback
     return first_line if len(first_line) <= limit else first_line[:limit] + "..."
+
+
+_TRANSFER_ERROR_MESSAGES = {
+    "cancelled": "发送已取消。",
+    "no_device": "没有选择手机，请先连接并识别手机。",
+    "not_paired": "手机尚未配对，请先在发送窗口输入手机显示的 6 位配对码。",
+    "unauthorized": "手机已撤销配对，请重新输入手机显示的 6 位配对码。",
+    "connect_failed": "无法连接手机。请确认手机助手已打开并点击“开始接收”，且手机与电脑处于同一网络。",
+    "status_failed": "手机接收服务不可用，请确认手机助手已打开并点击“开始接收”。",
+    "protocol_mismatch": "手机助手与电脑版本不兼容，请更新两端的“大雪主题编辑器/荣耀主题传输助手”到相同版本。",
+    "pair_failed": "配对失败，请核对手机屏幕上的 6 位配对码后重试。",
+    "invalid_pair_code": "配对码必须是手机显示的 6 位数字。",
+    "busy": "手机正在接收另一个主题，请稍候重试。",
+    "too_large": "主题文件超过手机接收上限（1 GiB）。",
+    "no_space": "手机存储空间不足，请清理后重试。",
+    "storage_unavailable": "手机端 Honor/Themes 目录授权已失效，请在手机助手中重新选择目录授权。",
+    "hash_mismatch": "主题文件校验不一致，请重新导出后重试。",
+    "invalid_hwt": "主题文件未通过手机端校验，请重新导出后重试。",
+    "validation_failed": "主题文件未通过手机端校验，请重新导出后重试。",
+    "file_changed": "主题文件在发送过程中发生变化，请重新选择或重新导出后再试。",
+    "commit_pending": "手机提交主题超时，请到手机“我的→下载→主题”中确认主题是否已到达。",
+    "unexpected": "发送失败，请检查手机助手、网络连接和主题文件。",
+}
+
+
+def transfer_error_message(code: str, detail: str = "") -> str:
+    """Friendly, actionable text for a transfer failure code."""
+    message = _TRANSFER_ERROR_MESSAGES.get(code, "发送失败，请检查手机助手、网络连接和主题文件。")
+    compact = _compact_error_detail(detail, "")
+    if compact and compact not in message:
+        return f"{message}\n\n详细信息：{compact}"
+    return message
 
 
 _PREFLIGHT_WARNING_LABELS = {
@@ -124,6 +157,12 @@ class MainWindow(QMainWindow):
         self.transfer_thread: QThread | None = None
         self._transfer_worker: TransferWorker | None = None
         self._transfer_generation = 0
+        self.export_thread: QThread | None = None
+        self._export_worker: ExportWorker | None = None
+        self._export_generation = 0
+        self._exporting = False
+        self.export_progress: QProgressDialog | None = None
+        self.export_action: QAction | None = None
         self.update_thread: QThread | None = None
         self.update_worker: UpdateWorker | None = None
         self._update_generation = 0
@@ -198,6 +237,8 @@ class MainWindow(QMainWindow):
             button = toolbar.widgetForAction(action)
             if button is not None:
                 button.setProperty("uiRole", role)
+            if label == "导出 HWT":
+                self.export_action = action
 
         advanced = QMenu("更多", self)
         custom_action = QAction("添加自定义资源", self)
@@ -596,6 +637,10 @@ class MainWindow(QMainWindow):
         dialog.setWindowTitle("运行日志")
         dialog.resize(850, 560)
         layout = QVBoxLayout(dialog)
+        hint = QLabel(f"本次运行日志也同时写入文件：{data_dir() / 'editor.log'}")
+        hint.setObjectName("simpleDescription")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
         text = QPlainTextEdit()
         text.setReadOnly(True)
         text.setPlainText("\n".join(self._log_lines))
@@ -1246,6 +1291,9 @@ class MainWindow(QMainWindow):
             )
 
     def export_hwt(self):
+        if self._exporting:
+            QMessageBox.warning(self, "正在导出", "已有一个导出任务正在运行。")
+            return
         slot_map = {slot.id: slot for slot in [*self.catalog.resources, *self.project.custom_resources]}
         if not resolve_missing_assets(self, self.project, slot_map):
             return
@@ -1275,29 +1323,95 @@ class MainWindow(QMainWindow):
         if not filename:
             return
         self._remember_theme_file_directory(Path(filename).parent)
-        try:
-            path, report = export_theme(self.project, self.catalog, Path(filename))
-            self.last_export = path
-            self.refresh_views()
-            warning = f"\n\n{report['report_warning']}" if report.get("report_warning") else ""
-            detail = (
-                f"主题已生成：\n{path}\n\n手机中显示的主题名称：{report['theme_title']}\n"
-                "（荣耀主题读取 HWT 内的主题元数据，不使用文件名作为显示名称。）\n\n"
-                f"模块：{report['module_count']}\n"
-                f"颜色/文字目标：{report['preflight']['value_targets']}\n"
-                f"图片目标：{report['preflight']['image_targets']}\n"
-                f"跳过：{len(report['skipped'])}\n文件大小：{report['file_size'] / 1024 / 1024:.2f} MB\n"
-                f"验证：通过\n\nSHA-256：\n{report['sha256']}{warning}"
-            )
-            self.log(f"导出成功：{path}\nSHA-256：{report['sha256']}\n已写入 {report['applied_count']} 个覆盖目标。{warning}")
-            QMessageBox.information(self, "导出成功", detail)
-        except Exception as exc:
-            self._show_operation_error(
-                "导出失败",
-                "无法导出 HWT。",
-                "请处理导出预检问题，并确认目标位置可写后重试。",
-                exc,
-            )
+        self._start_export(Path(filename))
+
+    def _start_export(self, output: Path):
+        """Run export in a background thread so the window stays responsive."""
+        self._export_generation += 1
+        generation = self._export_generation
+        self._exporting = True
+        if self.export_action is not None:
+            self.export_action.setEnabled(False)
+        self.export_progress = QProgressDialog("正在导出 HWT…", None, 0, 0, self)
+        self.export_progress.setWindowTitle("导出 HWT")
+        self.export_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self.export_progress.setCancelButton(None)
+        self.export_progress.setMinimumDuration(0)
+        self.export_progress.setAutoClose(False)
+        self.export_progress.setAutoReset(False)
+        self.export_progress.show()
+        self.export_thread = QThread(self)
+        # 在界面线程先拍快照,避免导出线程复制工程时与用户编辑竞争。
+        worker = ExportWorker(copy.deepcopy(self.project), self.catalog, output, task_id=generation)
+        worker.moveToThread(self.export_thread)
+        self.export_thread.started.connect(worker.run)
+        worker.finished.connect(self._export_finished)
+        worker.failed.connect(self._export_failed)
+        worker.finished.connect(self.export_thread.quit)
+        worker.failed.connect(self.export_thread.quit)
+        self.export_thread.setProperty("hwt_generation", generation)
+        self.export_thread.finished.connect(self._export_thread_finished)
+        self.export_thread.finished.connect(self.export_thread.deleteLater)
+        self.export_thread.finished.connect(worker.deleteLater)
+        self.export_thread.start()
+        self._export_worker = worker
+
+    def _export_finished(self, report: dict, generation: int | None = None):
+        if generation is not None and generation != self._export_generation:
+            return
+        self._exporting = False
+        if self.export_action is not None:
+            self.export_action.setEnabled(True)
+        progress = self.export_progress
+        self.export_progress = None
+        if progress is not None:
+            progress.close()
+        self.last_export = Path(report["output"])
+        if self._closing:
+            return
+        self.refresh_views()
+        warning = f"\n\n{report['report_warning']}" if report.get("report_warning") else ""
+        detail = (
+            f"主题已生成：\n{self.last_export}\n\n手机中显示的主题名称：{report['theme_title']}\n"
+            "（荣耀主题读取 HWT 内的主题元数据，不使用文件名作为显示名称。）\n\n"
+            f"模块：{report['module_count']}\n"
+            f"颜色/文字目标：{report['preflight']['value_targets']}\n"
+            f"图片目标：{report['preflight']['image_targets']}\n"
+            f"跳过：{len(report['skipped'])}\n文件大小：{report['file_size'] / 1024 / 1024:.2f} MB\n"
+            f"验证：通过\n\nSHA-256：\n{report['sha256']}{warning}"
+        )
+        self.log(f"导出成功：{self.last_export}\nSHA-256：{report['sha256']}\n已写入 {report['applied_count']} 个覆盖目标。{warning}")
+        QMessageBox.information(self, "导出成功", detail)
+
+    def _export_failed(self, detail: str, generation: int | None = None):
+        if generation is not None and generation != self._export_generation:
+            return
+        self._exporting = False
+        if self.export_action is not None:
+            self.export_action.setEnabled(True)
+        progress = self.export_progress
+        self.export_progress = None
+        if progress is not None:
+            progress.close()
+        self.log(f"导出失败（原始错误）：{detail}")
+        if self._closing:
+            return
+        QMessageBox.critical(
+            self,
+            "导出失败",
+            f"无法导出 HWT。\n\n原始错误：{detail[:600]}\n\n"
+            "处理建议：请处理导出预检问题，并确认目标位置可写后重试。",
+        )
+
+    def _export_thread_finished(self, generation: int | None = None):
+        if generation is None:
+            sender = self.sender()
+            generation = sender.property("hwt_generation") if sender is not None else None
+        if generation is not None and generation != self._export_generation:
+            return
+        self.export_thread = None
+        self._export_worker = None
+        self._maybe_close_after_threads()
 
     def send_phone(self):
         path = self.last_export
@@ -1456,13 +1570,7 @@ class MainWindow(QMainWindow):
         if progress is not None:
             progress.close()
         self.log(detail)
-        messages = {
-            "cancelled": "发送已取消。",
-            "no_device": "没有选择手机，请先连接并识别手机。",
-            "file_changed": "主题文件在发送过程中发生变化，请重新选择或重新导出后再试。",
-            "unexpected": "发送失败，请检查手机助手、网络连接和主题文件。",
-        }
-        message = messages.get(code, "发送失败，请检查手机助手、网络连接和主题文件。")
+        message = transfer_error_message(code, detail)
         if code == "cancelled":
             QMessageBox.information(self, "已取消", message)
         else:
@@ -1522,7 +1630,7 @@ class MainWindow(QMainWindow):
     def _background_threads(self) -> list[QThread]:
         return [
             thread
-            for thread in (self.update_thread, self.profile_thread, self.transfer_thread)
+            for thread in (self.update_thread, self.profile_thread, self.transfer_thread, self.export_thread)
             if thread is not None
         ]
 
@@ -1530,13 +1638,13 @@ class MainWindow(QMainWindow):
         return any(thread.isRunning() for thread in self._background_threads())
 
     def _cancel_background_tasks(self):
-        for worker in (self.update_worker, self._profile_worker, self._transfer_worker):
+        for worker in (self.update_worker, self._profile_worker, self._transfer_worker, self._export_worker):
             if worker is not None:
                 worker.cancel()
         for thread in self._background_threads():
             thread.requestInterruption()
             thread.quit()
-        for dialog_name in ("update_progress", "progress"):
+        for dialog_name in ("update_progress", "progress", "export_progress"):
             dialog = getattr(self, dialog_name, None)
             if dialog is not None:
                 dialog.close()
@@ -1597,6 +1705,27 @@ class MainWindow(QMainWindow):
         self._log_lines.append(message.rstrip())
         if hasattr(self, "log_text"):
             self.log_text.appendPlainText(message.rstrip() + "\n")
+        self._append_log_file(message)
+
+    _LOG_MAX_BYTES = 4 * 1024 * 1024
+
+    def _append_log_file(self, message: str) -> None:
+        """Persist a bounded log so failures can be diagnosed without a live UI."""
+        try:
+            path = data_dir() / "editor.log"
+            line = f"{datetime.now().isoformat(timespec='seconds')}  {message.rstrip()}\n"
+            if path.is_file():
+                size = path.stat().st_size
+                if size > self._LOG_MAX_BYTES:
+                    keep = size // 2
+                    with path.open("rb") as stream:
+                        stream.seek(keep)
+                        tail = stream.read()
+                    path.write_bytes(tail)
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write(line)
+        except OSError:
+            pass
 
     def _show_operation_error(
         self,
@@ -1611,7 +1740,8 @@ class MainWindow(QMainWindow):
         trace = traceback.format_exc().strip()
         if trace and trace != "NoneType: None":
             self.log(trace)
-        message = f"{reason}\n\n处理建议：{suggestion}"
+        detail = _compact_error_detail(str(exc), "未提供错误详情", limit=600)
+        message = f"{reason}\n\n原始错误：{detail}\n\n处理建议：{suggestion}"
         if warning:
             QMessageBox.warning(self, title, message)
         else:

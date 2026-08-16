@@ -6,6 +6,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
+from ..exporter import export_theme
+from ..models import ThemeCatalog, ThemeProject
 from ..ssh_transfer import transfer_to_phone
 from ..updater import Release, check_for_update, download_asset
 from ..phone_transfer import (
@@ -90,9 +92,24 @@ class TransferWorker(QObject):
             else:
                 if self.device is None:
                     raise PhoneTransferError("没有选择手机", code="no_device")
+                device = self.device
+                if not device.device_id.startswith("manual:"):
+                    # 已保存的手机地址可能是上次接收时的临时端口,发送前先
+                    # 实测连通性,失败时给出可操作的提示。
+                    self._progress(0, 0, "正在连接手机……")
+                    try:
+                        probe_phone(device.host, device.port, cancelled=self.cancelled)
+                    except PhoneTransferError as exc:
+                        if exc.code != "connect_failed":
+                            raise
+                        raise PhoneTransferError(
+                            f"{str(exc).rstrip('。')}。请确认手机助手已打开并点击“开始接收”，"
+                            "手机与电脑处于同一网络；若手机地址已变化，请在发送窗口手动填写当前 IP。",
+                            code="connect_failed",
+                        ) from exc
                 result = transfer_to_app(
                     self.path,
-                    self.device,
+                    device,
                     pair_code=self.pair_code,
                     cancelled=self.cancelled,
                     progress=self._progress,
@@ -104,6 +121,41 @@ class TransferWorker(QObject):
             self.failed.emit(str(exc), exc.code, self.task_id)
         except Exception:
             self.failed.emit(traceback.format_exc(), "unexpected", self.task_id)
+
+
+class ExportWorker(QObject):
+    """Run HWT export (image rendering + ZIP compression) away from the GUI thread."""
+
+    finished = Signal(dict, int)
+    failed = Signal(str, int)
+
+    def __init__(
+        self,
+        project: ThemeProject,
+        catalog: ThemeCatalog,
+        output: Path,
+        *,
+        task_id: int = 0,
+    ):
+        super().__init__()
+        self.project = project
+        self.catalog = catalog
+        self.output = output
+        self.task_id = task_id
+        self.cancelled = threading.Event()
+
+    def cancel(self):
+        self.cancelled.set()
+
+    def run(self):
+        try:
+            # The caller already snapshotted the project on the GUI thread;
+            # export reads it read-only here.
+            _path, report = export_theme(self.project, self.catalog, self.output)
+            self.finished.emit(report, self.task_id)
+        except Exception as exc:
+            message = str(exc) or type(exc).__name__
+            self.failed.emit(message, self.task_id)
 
 
 class UpdateWorker(QObject):

@@ -14,6 +14,9 @@ PLACEHOLDER_RGBA = (242, 242, 242, 255)
 MAX_IMAGE_FILE_BYTES = 256 * 1024 * 1024
 MAX_IMAGE_DIMENSION = 16384
 MAX_IMAGE_PIXELS = 64_000_000
+# 真机预览只在截图区域里显示,最高 2048 像素足够清晰,避免在界面线程
+# 解码整张高分辨率壁纸导致卡顿。
+PREVIEW_MAX_EDGE = 2048
 
 
 def _validate_image_size(width: int, height: int) -> None:
@@ -43,6 +46,39 @@ def load_image(source: Path) -> Image.Image:
     with Image.open(source) as opened:
         _validate_image_size(opened.width, opened.height)
         return opened.convert("RGBA")
+
+
+def load_image_preview(source: Path, max_edge: int = PREVIEW_MAX_EDGE) -> Image.Image:
+    """Decode a downscaled RGBA preview without materializing the full bitmap.
+
+    JPEG uses PIL's draft mode first (fast power-of-two decode), and any
+    image larger than ``max_edge`` is resized before returning. Export quality
+    is untouched: this loader is only used for on-screen previews.
+    """
+    source = Path(source)
+    try:
+        file_size = source.stat().st_size
+    except OSError as exc:
+        raise ValueError(f"图片文件不可用：{source}") from exc
+    if file_size > MAX_IMAGE_FILE_BYTES:
+        raise ValueError(f"图片文件不能超过 {MAX_IMAGE_FILE_BYTES} 字节")
+    max_edge = max(1, int(max_edge))
+    with Image.open(source) as opened:
+        _validate_image_size(opened.width, opened.height)
+        if opened.format == "JPEG" and max(opened.size) > max_edge:
+            try:
+                opened.draft("RGB", (max_edge, max_edge))
+            except (OSError, ValueError):
+                pass
+        width, height = opened.width, opened.height
+        image = opened.convert("RGBA")
+        scale = max_edge / max(width, height)
+        if scale < 1.0:
+            image = image.resize(
+                (max(1, round(width * scale)), max(1, round(height * scale))),
+                Image.Resampling.LANCZOS,
+            )
+        return image
 
 
 def render_image(source: Path, slot: ResourceSlot, change: ResourceChange) -> bytes:

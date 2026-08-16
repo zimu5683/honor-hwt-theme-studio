@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,11 +10,14 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QVBoxLayout
 
-from ..imageops import enhance_image, fit_image, load_image
+from ..imageops import enhance_image, fit_image, load_image, load_image_preview
 from ..models import ResourceChange
 from ..paths import bundle_root
 from ..semantic import PreviewSpec
 from .design_system import set_role
+
+
+_MAX_COMPOSITE_CACHE = 24
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +36,7 @@ class PreviewRepository:
         self.note = "基于真机截图的位置与效果预览；系统或应用版本变化可能影响最终形状。"
         self.scenes: dict[str, PreviewScene] = {}
         self._images: dict[str, Image.Image] = {}
+        self._composites: OrderedDict[tuple, Image.Image] = OrderedDict()
         self._load()
 
     @property
@@ -107,10 +112,40 @@ class PreviewRepository:
             draw.rectangle(rect, outline=(255, 255, 255, 220), width=max(1, image.width // 520))
         return image
 
+    @staticmethod
+    def _change_key(change: ResourceChange | None) -> tuple:
+        """A cache key for everything that shapes the composited preview."""
+        if change is None or not change.enabled:
+            return ()
+        stat_key: tuple = ()
+        if change.source_file:
+            source = Path(change.source_file)
+            try:
+                info = source.stat()
+                stat_key = (info.st_mtime_ns, info.st_size)
+            except OSError:
+                pass
+        return (
+            change.value,
+            change.source_file,
+            change.source_kind,
+            stat_key,
+            change.fit,
+            round(change.focus_x, 4),
+            round(change.focus_y, 4),
+            change.enhance,
+            round(change.enhance_strength, 4),
+        )
+
     def current_image(self, spec: PreviewSpec, change: ResourceChange | None) -> Image.Image | None:
         scene = self.scene(spec)
         if scene is None:
             return None
+        key = (scene.name, spec.target, self._change_key(change))
+        cached = self._composites.get(key)
+        if cached is not None:
+            self._composites.move_to_end(key)
+            return cached
         image = self._image(scene)
         if image is None:
             return None
@@ -126,7 +161,7 @@ class PreviewRepository:
                 source = Path(change.source_file)
                 if source.is_file():
                     try:
-                        replacement = load_image(source)
+                        replacement = load_image_preview(source)
                         width = max(1, rect[2] - rect[0])
                         height = max(1, rect[3] - rect[1])
                         replacement = fit_image(replacement, (width, height), change.fit, change.focus_x, change.focus_y)
@@ -139,6 +174,9 @@ class PreviewRepository:
         draw = ImageDraw.Draw(image, "RGBA")
         draw.rectangle(rect, outline=(86, 69, 212, 245), width=max(3, image.width // 240))
         draw.rectangle(rect, outline=(255, 255, 255, 220), width=max(1, image.width // 520))
+        self._composites[key] = image
+        while len(self._composites) > _MAX_COMPOSITE_CACHE:
+            self._composites.popitem(last=False)
         return image
 
     @staticmethod
