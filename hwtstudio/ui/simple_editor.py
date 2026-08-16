@@ -39,7 +39,7 @@ _TINT_BY_SECTION = {
     "常用应用": "rose",
 }
 
-_DEFAULT_SURFACES = "frosted"
+_DEFAULT_SURFACES = "layered"
 
 
 def _signature(change: ResourceChange) -> tuple:
@@ -112,7 +112,7 @@ class SimpleSettingCard(QFrame):
             for value, label in SURFACE_TREATMENT_LABELS:
                 self.surfaces_combo.addItem(label, value)
             self.surfaces_combo.setToolTip(
-                "设置背景图片时自动同步让面板(标题栏、搜索框、卡片、分隔线等)透明化，避免白色话框挡住图片。"
+                "设置背景图片时自动同步处理标题栏、搜索框、卡片、列表、按键和分隔线等表面，避免白色话框挡住图片。"
             )
             self.surfaces_combo.currentIndexChanged.connect(self._surfaces_changed)
             surfaces_row.addWidget(self.surfaces_combo)
@@ -278,7 +278,11 @@ class SimpleSettingCard(QFrame):
                 )
             return
         image = (
-            repository.current_image(self.setting.preview, change)
+            repository.current_image(
+                self.setting.preview,
+                change,
+                surfaces=change.surfaces if change is not None and self.setting.supports_surfaces else None,
+            )
             if change is not None
             else repository.highlighted_image(self.setting.preview)
         )
@@ -294,6 +298,7 @@ class SimpleSettingCard(QFrame):
             return
         change = None
         mixed = False
+        surfaces = None
         if self.project:
             changes = [self.project.changes.get(slot.id) for slot in self.slots]
             enabled = [item for item in changes if item and item.enabled]
@@ -301,7 +306,16 @@ class SimpleSettingCard(QFrame):
             mixed = bool(enabled) and (len(enabled) != len(self.slots) or len(signatures) != 1)
             if enabled and not mixed:
                 change = enabled[0]
-        dialog = PreviewDialog(self.preview_repository, self.setting.preview, change, self, mixed=mixed)
+                if self.setting.supports_surfaces:
+                    surfaces = change.surfaces
+        dialog = PreviewDialog(
+            self.preview_repository,
+            self.setting.preview,
+            change,
+            self,
+            mixed=mixed,
+            surfaces=surfaces,
+        )
         dialog.exec()
 
     def _load_image_options(self, change: ResourceChange):

@@ -14,10 +14,10 @@ from lxml import etree
 
 from .blank import blank_entries
 from .common import honor_module_name, honor_resource_name, honor_resource_path, honor_resource_paths
-from .imageops import render_image, render_placeholder
+from .imageops import render_image, render_placeholder, render_translucent_surface
 from .models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
 from .paths import ensure_no_symlink_parents, unique_temp_path
-from .semantic import SURFACE_TREATMENT_VALUES, background_setting_for_slot, build_surface_targets
+from .semantic import SURFACE_TREATMENT_MODES, background_setting_for_slot, build_surface_targets
 from .validation import validate_change_value, validate_custom_slot, validate_theme
 
 
@@ -96,6 +96,8 @@ class _ExportTarget:
     value: str | None
     signature: tuple
     priority: int
+    render_slot: ResourceSlot | None = None
+    surface_color: str | None = None
 
 
 def _target_keys(slot: ResourceSlot, scanned_ids: set[str]) -> list[tuple[str, ...]]:
@@ -128,6 +130,16 @@ def _slot_priority(slot: ResourceSlot, scanned_ids: set[str]) -> int:
     return 2 if converted == original else 1
 
 
+def _render_shape(slot: ResourceSlot) -> tuple:
+    return (
+        slot.width,
+        slot.height,
+        slot.actual_format,
+        slot.extension,
+        tuple(sorted(slot.png_chunks.items())),
+    )
+
+
 def _change_signature(
     slot: ResourceSlot,
     change: ResourceChange,
@@ -136,13 +148,7 @@ def _change_signature(
 ) -> tuple:
     if slot.resource_type in {"color", "bool", "integer", "dimen", "string"}:
         return ("value", value)
-    render_shape = (
-        slot.width,
-        slot.height,
-        slot.actual_format,
-        slot.extension,
-        tuple(sorted(slot.png_chunks.items())),
-    )
+    render_shape = _render_shape(slot)
     if change.source_kind == "placeholder":
         return ("placeholder", render_shape)
     if change.source_kind != "file" or not change.source_file:
@@ -290,7 +296,7 @@ def _prepare_export(project: ThemeProject, catalog: ThemeCatalog) -> dict:
             except ValueError as exc:
                 errors.append({"kind": "invalid_value", "slot_id": slot_id, "message": str(exc)})
                 continue
-            key_values = [(key, value) for key in _target_keys(slot, scanned_ids)]
+            key_values = [(key, value, None) for key in _target_keys(slot, scanned_ids)]
         elif slot.resource_type in {"image", "icon", "wallpaper", "preview"}:
             if change.source_kind == "placeholder":
                 pass
@@ -299,22 +305,35 @@ def _prepare_export(project: ThemeProject, catalog: ThemeCatalog) -> dict:
             elif not change.source_file or not Path(change.source_file).is_file():
                 errors.append({"kind": "missing_image", "slot_id": slot_id, "path": change.source_file or ""})
                 continue
-            key_values = [(key, None) for key in _target_keys(slot, scanned_ids)]
+            key_values = [(key, None, None) for key in _target_keys(slot, scanned_ids)]
             surface_setting = background_setting_for_slot(slot)
-            if surface_setting is not None and change.surfaces in SURFACE_TREATMENT_VALUES:
+            if surface_setting is not None and change.surfaces in SURFACE_TREATMENT_MODES:
                 modules = [target["module"] for target in slot.targets]
                 for target in build_surface_targets(surface_setting.id, catalog, modules, change.surfaces):
-                    key_values.append(
-                        (
-                            ("xml", target["module"], target["container"], "color", target["name"]),
-                            target["value"],
+                    if target["resource_type"] == "color":
+                        key_values.append(
+                            (
+                                ("xml", target["module"], target["container"], "color", target["name"]),
+                                target["value"],
+                                None,
+                            )
                         )
-                    )
+                    else:
+                        key_values.append(
+                            (
+                                ("image", target["module"], target["path"]),
+                                None,
+                                {
+                                    "slot_id": target["slot_id"],
+                                    "surface_color": target["value"],
+                                },
+                            )
+                        )
         else:
             warnings.append({"kind": "unsupported_type", "slot_id": slot_id, "type": slot.resource_type})
             skipped_count += 1
             continue
-        target_keys = [key for key, _ in key_values]
+        target_keys = [key for key, _, _ in key_values]
         if not slot.synthetic and slot.id in scanned_ids and len(target_keys) > 1:
             warnings.append(
                 {
@@ -327,14 +346,36 @@ def _prepare_export(project: ThemeProject, catalog: ThemeCatalog) -> dict:
                 }
             )
         priority = _slot_priority(slot, scanned_ids)
-        for key, key_value in key_values:
+        for key, key_value, surface_meta in key_values:
+            render_slot: ResourceSlot | None = None
+            surface_color: str | None = None
             if key[0] == "xml":
                 signature = ("value", key_value)
                 export_value = key_value
             else:
-                signature = _change_signature(slot, change, None, file_digests)
+                if surface_meta is not None:
+                    render_slot = slots.get(surface_meta["slot_id"])
+                    surface_color = surface_meta["surface_color"]
+                    signature = (
+                        "surface-image",
+                        surface_color,
+                        _render_shape(render_slot) if render_slot is not None else (),
+                    )
+                else:
+                    signature = _change_signature(slot, change, None, file_digests)
                 export_value = None
-            grouped[key].append(_ExportTarget(key, slot, change, export_value, signature, priority))
+            grouped[key].append(
+                _ExportTarget(
+                    key,
+                    slot,
+                    change,
+                    export_value,
+                    signature,
+                    priority,
+                    render_slot=render_slot,
+                    surface_color=surface_color,
+                )
+            )
     selected = _choose_targets(grouped, warnings, errors)
     value_count = sum(target.key[0] == "xml" for target in selected)
     image_count = sum(target.key[0] == "image" for target in selected)
@@ -405,7 +446,7 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
         if item["kind"] in {"missing_slot", "unsupported"}
     ]
 
-    rendered_by_slot: dict[str, bytes] = {}
+    rendered_by_slot: dict[object, bytes] = {}
     for target in export_targets:
         key = target.key
         if key[0] == "xml":
@@ -421,25 +462,40 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
             )
             continue
         _, target_module, target_path = key
-        rendered = rendered_by_slot.get(target.slot.id)
-        if rendered is None:
-            if target.change.source_kind == "placeholder":
-                rendered = render_placeholder(target.slot)
-            else:
-                source = Path(target.change.source_file)
-                rendered = render_image(source, target.slot, target.change)
-                try:
-                    current_digest = _sha256_file(source)
-                except OSError as exc:
-                    raise ValueError("图片源文件在导出期间不可用，请重试") from exc
-                if current_digest != target.signature[1]:
-                    raise ValueError("图片源文件在导出期间发生变化，请重试")
-            rendered_by_slot[target.slot.id] = rendered
+        if target.surface_color is not None and target.render_slot is not None:
+            render_key = ("surface", target.render_slot.id, target.surface_color)
+            rendered = rendered_by_slot.get(render_key)
+            if rendered is None:
+                rendered = render_translucent_surface(target.render_slot, target.surface_color)
+                rendered_by_slot[render_key] = rendered
+        else:
+            render_key = ("source", target.slot.id)
+            rendered = rendered_by_slot.get(render_key)
+            if rendered is None:
+                if target.change.source_kind == "placeholder":
+                    rendered = render_placeholder(target.slot)
+                else:
+                    source = Path(target.change.source_file)
+                    rendered = render_image(source, target.slot, target.change)
+                    try:
+                        current_digest = _sha256_file(source)
+                    except OSError as exc:
+                        raise ValueError("图片源文件在导出期间不可用，请重试") from exc
+                    if current_digest != target.signature[1]:
+                        raise ValueError("图片源文件在导出期间发生变化，请重试")
+                rendered_by_slot[render_key] = rendered
         if target_module == "__root__":
             root_entries[target_path] = rendered
         else:
             module_files[target_module][target_path] = rendered
-        applied.append({"slot_id": target.slot.id, "module": target_module, "path": target_path})
+        applied.append(
+            {
+                "slot_id": target.slot.id,
+                "module": target_module,
+                "path": target_path,
+                **({"value": target.surface_color} if target.surface_color else {}),
+            }
+        )
 
     temp = unique_temp_path(output)
     if temp.is_symlink() or (temp.exists() and not temp.is_file()):

@@ -13,11 +13,19 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QV
 from ..imageops import enhance_image, fit_image, load_image, load_image_preview
 from ..models import ResourceChange
 from ..paths import bundle_root
-from ..semantic import PreviewSpec
+from ..semantic import SURFACE_LAYER_VALUES, SURFACE_TREATMENT_VALUES, PreviewSpec, surface_treatment_label
 from .design_system import set_role
 
 
 _MAX_COMPOSITE_CACHE = 24
+
+# 分层面板处理在真机截图上的示意区域：全图铺壁纸，半透明只覆盖这些区域。
+_SURFACE_PREVIEW_FROSTED = {
+    "settings_detail": ("frosted_search", "frosted_profile", "frosted_cards"),
+    "messages": ("frosted_search", "frosted_list", "frosted_bottom"),
+    "contacts_list": ("frosted_search", "frosted_cards", "frosted_bottom"),
+    "dialer": ("frosted_history", "frosted_keypad", "frosted_bottom"),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,8 +92,8 @@ class PreviewRepository:
         return cached.copy()
 
     @staticmethod
-    def _rect(scene: PreviewScene, spec: PreviewSpec) -> tuple[int, int, int, int] | None:
-        normalized = scene.targets.get(spec.target)
+    def _rect_for_target(scene: PreviewScene, target: str) -> tuple[int, int, int, int] | None:
+        normalized = scene.targets.get(target)
         if normalized is None:
             return None
         left, top, right, bottom = normalized
@@ -93,6 +101,22 @@ class PreviewRepository:
             round(scene.width * left), round(scene.height * top),
             round(scene.width * right), round(scene.height * bottom),
         )
+
+    @staticmethod
+    def _rect(scene: PreviewScene, spec: PreviewSpec) -> tuple[int, int, int, int] | None:
+        return PreviewRepository._rect_for_target(scene, spec.target)
+
+    def _rects_for_targets(
+        self,
+        scene: PreviewScene,
+        targets: tuple[str, ...],
+    ) -> list[tuple[int, int, int, int]]:
+        rects: list[tuple[int, int, int, int]] = []
+        for target in targets:
+            rect = self._rect_for_target(scene, target)
+            if rect is not None:
+                rects.append(rect)
+        return rects
 
     def base_image(self, spec: PreviewSpec) -> Image.Image | None:
         scene = self.scene(spec)
@@ -107,10 +131,14 @@ class PreviewRepository:
             return None
         rect = self._rect(scene, spec)
         if rect:
-            draw = ImageDraw.Draw(image, "RGBA")
-            draw.rectangle(rect, outline=(86, 69, 212, 245), width=max(3, image.width // 240))
-            draw.rectangle(rect, outline=(255, 255, 255, 220), width=max(1, image.width // 520))
+            self._draw_highlight(image, rect)
         return image
+
+    @staticmethod
+    def _draw_highlight(image: Image.Image, rect: tuple[int, int, int, int]) -> None:
+        draw = ImageDraw.Draw(image, "RGBA")
+        draw.rectangle(rect, outline=(86, 69, 212, 245), width=max(3, image.width // 240))
+        draw.rectangle(rect, outline=(255, 255, 255, 220), width=max(1, image.width // 520))
 
     @staticmethod
     def _change_key(change: ResourceChange | None) -> tuple:
@@ -137,11 +165,96 @@ class PreviewRepository:
             round(change.enhance_strength, 4),
         )
 
-    def current_image(self, spec: PreviewSpec, change: ResourceChange | None) -> Image.Image | None:
+    @classmethod
+    def _compose_change(
+        cls,
+        image: Image.Image,
+        change: ResourceChange,
+        rect: tuple[int, int, int, int],
+    ) -> None:
+        if change.value:
+            cls._blend_color(image, rect, change.value)
+        elif change.source_kind == "placeholder":
+            cls._blend_placeholder(image, rect)
+        elif change.source_file:
+            source = Path(change.source_file)
+            if source.is_file():
+                try:
+                    replacement = load_image_preview(source)
+                    width = max(1, rect[2] - rect[0])
+                    height = max(1, rect[3] - rect[1])
+                    replacement = fit_image(
+                        replacement,
+                        (width, height),
+                        change.fit,
+                        change.focus_x,
+                        change.focus_y,
+                    )
+                    replacement = enhance_image(replacement, change.enhance, change.enhance_strength)
+                    image.alpha_composite(replacement, rect[:2])
+                except (OSError, ValueError, Image.DecompressionBombError):
+                    cls._blend_missing(image, rect)
+            else:
+                cls._blend_missing(image, rect)
+
+    @classmethod
+    def _restore_ink(
+        cls,
+        original: Image.Image,
+        image: Image.Image,
+        rects: list[tuple[int, int, int, int]],
+    ) -> None:
+        """把截图里的深色文字/图标盖回合成图，避免被壁纸和半透明层完全抹掉。"""
+        for rect in rects:
+            region = original.crop(rect).convert("RGBA")
+            gray = region.convert("L")
+            mask = gray.point(lambda value: max(0, min(255, (182 - value) * 5)))
+            if not mask.getbbox():
+                continue
+            layer = Image.new("RGBA", region.size, (0, 0, 0, 0))
+            layer.paste(region, (0, 0))
+            layer.putalpha(mask)
+            image.alpha_composite(layer, rect[:2])
+
+    def _treatment_image(
+        self,
+        scene: PreviewScene,
+        spec: PreviewSpec,
+        change: ResourceChange,
+        treatment: str,
+    ) -> Image.Image | None:
+        original = self._image(scene)
+        if original is None:
+            return None
+        canvas_rect = self._rect_for_target(scene, "canvas") or self._rect(scene, spec)
+        if canvas_rect is None:
+            return original
+        image = original.copy()
+        self._compose_change(image, change, canvas_rect)
+        if treatment == "transparent":
+            frosted_rects: list[tuple[int, int, int, int]] = []
+        elif treatment == "frosted":
+            frosted_rects = [canvas_rect]
+        else:
+            frosted_rects = self._rects_for_targets(scene, _SURFACE_PREVIEW_FROSTED.get(scene.name, ()))
+        if frosted_rects:
+            overlay = SURFACE_LAYER_VALUES.get("frosted") if treatment == "layered" else SURFACE_TREATMENT_VALUES.get("frosted")
+            for rect in frosted_rects:
+                if overlay:
+                    self._blend_color(image, rect, overlay)
+        self._restore_ink(original, image, [canvas_rect])
+        return image
+
+    def current_image(
+        self,
+        spec: PreviewSpec,
+        change: ResourceChange | None,
+        surfaces: str | None = None,
+    ) -> Image.Image | None:
         scene = self.scene(spec)
         if scene is None:
             return None
-        key = (scene.name, spec.target, self._change_key(change))
+        key = (scene.name, spec.target, self._change_key(change), surfaces)
         cached = self._composites.get(key)
         if cached is not None:
             self._composites.move_to_end(key)
@@ -153,27 +266,13 @@ class PreviewRepository:
         if rect is None:
             return image
         if change is not None and change.enabled:
-            if change.value:
-                self._blend_color(image, rect, change.value)
-            elif change.source_kind == "placeholder":
-                self._blend_placeholder(image, rect)
-            elif change.source_file:
-                source = Path(change.source_file)
-                if source.is_file():
-                    try:
-                        replacement = load_image_preview(source)
-                        width = max(1, rect[2] - rect[0])
-                        height = max(1, rect[3] - rect[1])
-                        replacement = fit_image(replacement, (width, height), change.fit, change.focus_x, change.focus_y)
-                        replacement = enhance_image(replacement, change.enhance, change.enhance_strength)
-                        image.alpha_composite(replacement, rect[:2])
-                    except (OSError, ValueError, Image.DecompressionBombError):
-                        self._blend_missing(image, rect)
-                else:
-                    self._blend_missing(image, rect)
-        draw = ImageDraw.Draw(image, "RGBA")
-        draw.rectangle(rect, outline=(86, 69, 212, 245), width=max(3, image.width // 240))
-        draw.rectangle(rect, outline=(255, 255, 255, 220), width=max(1, image.width // 520))
+            if surfaces in {"layered", "frosted", "transparent"}:
+                image = self._treatment_image(scene, spec, change, surfaces)
+            else:
+                self._compose_change(image, change, rect)
+        if image is None:
+            return None
+        self._draw_highlight(image, rect)
         self._composites[key] = image
         while len(self._composites) > _MAX_COMPOSITE_CACHE:
             self._composites.popitem(last=False)
@@ -234,19 +333,24 @@ class PreviewDialog(QDialog):
         parent=None,
         *,
         mixed: bool = False,
+        surfaces: str | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(f"真机预览：{spec.caption}")
         self.resize(1120, 720)
         root = QVBoxLayout(self)
+        surface_note = f" · 面板处理：{surface_treatment_label(surfaces)}" if surfaces else ""
         info = QLabel(
-            f"{spec.caption} · 参考设备：{repository.device.get('model', '未知')} · "
+            f"{spec.caption}{surface_note} · 参考设备：{repository.device.get('model', '未知')} · "
             f"{repository.device.get('magic_os', 'MagicOS 未知')} / Android {repository.device.get('android_release', '未知')}"
         )
         info.setWordWrap(True)
         root.addWidget(info)
         columns = QHBoxLayout()
-        for title, image in (("原始参考", repository.highlighted_image(spec)), ("当前设置预览", repository.current_image(spec, change))):
+        for title, image in (
+            ("原始参考", repository.highlighted_image(spec)),
+            ("当前设置预览", repository.current_image(spec, change, surfaces)),
+        ):
             column = QVBoxLayout()
             label = QLabel(title)
             label.setAlignment(Qt.AlignCenter)

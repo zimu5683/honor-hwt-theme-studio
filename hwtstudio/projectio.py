@@ -26,7 +26,7 @@ _CHANGE_ENUMS = {
     "source_kind": {"file", "placeholder"},
     "fit": {"cover", "contain", "stretch"},
     "enhance": {"none", "light", "dark"},
-    "surfaces": {"system", "frosted", "transparent"},
+    "surfaces": {"system", "layered", "frosted", "transparent"},
 }
 _CUSTOM_RESOURCE_FIELDS = ("id", "module", "container", "resource_type", "name", "path", "category", "label")
 _CUSTOM_RESOURCE_OPTIONAL_TEXT_FIELDS = ("status", "risk", "mode", "actual_format", "extension")

@@ -82,8 +82,10 @@ class ResourceChange:
     enhance: str = "none"
     enhance_strength: float = 0.0
     # 常用应用页面背景的"话框/面板"处理方式:
-    # "system" 跟随系统(不写入表面颜色)、"frosted" 半透明磨砂(默认)、
+    # "system" 跟随系统(不写入表面颜色)、"layered" 标题与页面全透明 +
+    # 列表/卡片/按键半透明(编辑器新选择的默认值)、"frosted" 全部半透明磨砂、
     # "transparent" 全透明。只对合成背景槽位生效,其余槽位忽略。
+    # 字段默认值保留 frosted，是为了兼容不含 surfaces 的旧工程。
     surfaces: str = "frosted"
 
     def to_dict(self) -> dict[str, Any]:

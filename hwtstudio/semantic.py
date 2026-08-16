@@ -146,19 +146,19 @@ SIMPLE_SETTINGS = (
              modules=("com.hihonor.android.launcher", "com.huawei.android.launcher"),
              required_packages=("com.hihonor.android.launcher", "com.huawei.android.launcher")),
 
-    _setting("settings_background", "常用应用", "设置页面背景", "为系统“设置”页面铺设自定义图片背景；同步让标题栏、搜索框、卡片和分隔线等表面半透明，图片不被白色面板挡住。", "image",
+    _setting("settings_background", "常用应用", "设置页面背景", "为系统“设置”页面铺设自定义图片背景；默认标题与页面全透明，搜索框、卡片和分隔线半透明，图片不被白色面板挡住。", "image",
              slot_ids=("__synthetic__::background::设置背景",), required_packages=("com.android.settings",),
              supports_surfaces=True),
-    _setting("messages_background", "常用应用", "短信页面背景", "为信息列表和会话页面铺设自定义图片背景；同步让标题栏、列表、输入栏和分隔线等表面半透明，图片不被白色面板挡住。", "image",
+    _setting("messages_background", "常用应用", "短信页面背景", "为信息列表和会话页面铺设自定义图片背景；默认标题与页面全透明，列表、输入栏和分隔线半透明，图片不被白色面板挡住。", "image",
              slot_ids=("__synthetic__::background::信息/短信背景",),
              required_packages=("com.hihonor.mms", "com.android.mms", "com.huawei.mms"),
              supports_surfaces=True),
-    _setting("phone_background", "常用应用", "电话页面背景", "为拨号和通话相关页面铺设自定义图片背景；同步让标题栏、工具栏和底部导航等表面半透明，图片不被白色面板挡住。", "image",
+    _setting("phone_background", "常用应用", "电话页面背景", "为拨号和通话相关页面铺设自定义图片背景；默认标题与页面全透明，工具栏、数字按键和通话记录半透明，图片不被白色面板挡住。", "image",
              slot_ids=("__synthetic__::background::电话背景",),
              required_packages=("com.hihonor.phone", "com.hihonor.phoneservice", "com.android.server.telecom",
                                 "com.huawei.phone", "com.huawei.phoneservice"),
              supports_surfaces=True),
-    _setting("contacts_background", "常用应用", "联系人页面背景", "为联系人列表和详情页面铺设自定义图片背景；同步让标题栏、搜索框、名片卡片和分隔线等表面半透明，图片不被白色面板挡住。", "image",
+    _setting("contacts_background", "常用应用", "联系人页面背景", "为联系人列表和详情页面铺设自定义图片背景；默认标题与页面全透明，搜索框、联系人卡片和分隔线半透明，不改动拨号键盘。", "image",
              slot_ids=("__synthetic__::background::联系人背景",),
              required_packages=("com.hihonor.contacts", "com.android.contacts", "com.huawei.contacts"),
              supports_surfaces=True),
@@ -225,34 +225,59 @@ SIMPLE_BY_ID = {item.id: item for item in SIMPLE_SETTINGS}
 
 SURFACE_TREATMENT_LABELS = (
     ("system", "跟随系统（不改面板）"),
-    ("frosted", "半透明磨砂（默认）"),
-    ("transparent", "全透明"),
+    ("layered", "标题与页面全透明 · 列表半透明（默认）"),
+    ("frosted", "全部半透明磨砂"),
+    ("transparent", "全部全透明"),
 )
 
+SURFACE_TREATMENT_MODES = frozenset(value for value, _ in SURFACE_TREATMENT_LABELS)
+# 统一处理模式：所有同步表面使用同一个值。
 SURFACE_TREATMENT_VALUES = {
     "frosted": "#4DFFFFFF",
     "transparent": "#00000000",
 }
+# 分层处理模式：页面/标题使用 transparent，卡片/列表/按键使用 frosted。
+SURFACE_LAYER_VALUES = {
+    "transparent": "#00000000",
+    "frosted": "#66FFFFFF",
+}
+
+
+def _merge_surface_maps(*maps: dict[str, tuple[str, ...]]) -> dict[str, tuple[str, ...]]:
+    merged: dict[str, tuple[str, ...]] = {}
+    for mapping in maps:
+        for container, names in mapping.items():
+            merged[container] = tuple(dict.fromkeys((*merged.get(container, ()), *names)))
+    return merged
+
 
 # 每个应用模块通用的表面颜色族(按容器分组)。
-_SURFACE_FAMILY = {
+_SURFACE_COMMON_TRANSPARENT = {
     "framework-res-hnext/theme.xml": (
-        "magic_appbar_bg", "magic_appbar_bg_blur",
+        "magic_appbar_bg", "magic_appbar_bg_blur", "magic_color_bg",
+    ),
+    "framework-res-hwext/theme.xml": (
+        "emui_appbar_bg", "emui_appbar_bg_blur", "emui_color_bg",
+    ),
+}
+_SURFACE_COMMON_FROSTED = {
+    "framework-res-hnext/theme.xml": (
         "magic_toolbar_bg", "magic_toolbar_bg_blur",
         "magic_navigationbar_bg", "magic_navigationbar_bg_blur",
         "magic_subtab_bg", "magic_subtab_bg_blur",
-        "magic_color_bg", "magic_white_bg", "magic_color_tips_bg",
+        "magic_white_bg", "magic_color_tips_bg",
     ),
     "framework-res-hwext/theme.xml": (
-        "emui_appbar_bg", "emui_appbar_bg_blur",
         "emui_toolbar_bg", "emui_toolbar_bg_blur",
         "emui_navigationbar_bg", "emui_navigationbar_bg_blur",
         "emui_subtab_bg", "emui_subtab_bg_blur",
-        "emui_color_bg", "emui_white_bg", "emui_color_tips_bg",
+        "emui_white_bg", "emui_color_tips_bg",
     ),
 }
+_SURFACE_FAMILY = _merge_surface_maps(_SURFACE_COMMON_TRANSPARENT, _SURFACE_COMMON_FROSTED)
 
 # 各项目在应用自身 theme.xml 里的专属表面颜色(搜索框、名片卡片、分隔线等)。
+# 统一处理模式(frosted/transparent)沿用这份清单，保持旧工程行为一致。
 SURFACE_SYNC_NAMES: dict[str, dict[str, tuple[str, ...]]] = {
     "contacts_background": {
         **_SURFACE_FAMILY,
@@ -289,9 +314,144 @@ SURFACE_SYNC_NAMES: dict[str, dict[str, tuple[str, ...]]] = {
     },
 }
 
+# 分层处理模式(layered)按角色拆分。title/page 全透明，卡片/搜索/列表/按键/
+# 底部导航等保持半透明，形成用户想要的两个层次。
+SURFACE_LAYER_SYNC_NAMES: dict[str, dict[str, dict[str, tuple[str, ...]]]] = {
+    "contacts_background": {
+        "transparent": _merge_surface_maps(
+            _SURFACE_COMMON_TRANSPARENT,
+            {
+                "theme.xml": (
+                    "magic_color_bg", "emui_color_bg",
+                    "people_background", "contacts_header_background",
+                ),
+            },
+        ),
+        "frosted": _merge_surface_maps(
+            _SURFACE_COMMON_FROSTED,
+            {
+                "theme.xml": (
+                    "searchview_background_white", "bottom_tab_bg",
+                    "hwsubtab_magic_color_bg",
+                    "divider_color", "tips_and_divider_color",
+                    "magic_color_subheader_divider", "magic_color_divider_horizontal",
+                    "familyname_overlay_list_divider",
+                ),
+            },
+        ),
+    },
+    "settings_background": {
+        "transparent": _SURFACE_COMMON_TRANSPARENT,
+        "frosted": _merge_surface_maps(
+            _SURFACE_COMMON_FROSTED,
+            {
+                "theme.xml": (
+                    "searchview_background_color", "magic_color_bg_cardview",
+                    "card_background_color_selector", "magic_card_panel_bg",
+                    "emui_card_panel_bg", "emui_inputbox_bg",
+                    "magic_listcard_bg", "preference_divider_grey",
+                ),
+            },
+        ),
+    },
+    "messages_background": {
+        "transparent": _merge_surface_maps(
+            _SURFACE_COMMON_TRANSPARENT,
+            {"theme.xml": ("conversation_background",)},
+        ),
+        "frosted": _merge_surface_maps(
+            _SURFACE_COMMON_FROSTED,
+            {
+                "theme.xml": (
+                    "color_gray_one", "magic_gray_5", "magic_black_color_alpha_5",
+                    "conversation_item_divider_color",
+                    "attach_panel_item_color", "message_editor_background",
+                    "message_editor_background_trans", "duoqu_border_color",
+                    "duoqu_menu_background_color", "duoqu_menu_splite_bgcolor",
+                ),
+            },
+        ),
+    },
+    "phone_background": {
+        "transparent": _merge_surface_maps(
+            _SURFACE_COMMON_TRANSPARENT,
+            {
+                "framework-res-hnext/theme.xml": ("hwtoolbar_background",),
+                "framework-res-hwext/theme.xml": ("hwtoolbar_background",),
+            },
+        ),
+        "frosted": _SURFACE_COMMON_FROSTED,
+    },
+}
+
+# 通话/拨号界面实际位于联系人应用。用户要求“电话背景”额外同步这些拨号盘
+# 表面，而“联系人背景”不得改动拨号键盘。
+_DIALER_SURFACE_MODULES = ("com.hihonor.contacts", "com.android.contacts", "com.huawei.contacts")
+_DIALER_SURFACE_NAMES = {
+    "theme.xml": (
+        "dialpad_background_color",
+        "recent_task_jhh_background_color",
+    ),
+}
+
+# 仅改颜色仍会留下不透明的图片底：设置卡片、信息搜索框、联系人标题和拨号盘
+# 底图需要在导出时生成半透明/透明 PNG 替换。图片目标带有角色：frosted 走
+# 半透明，transparent 走全透明。
+_SURFACE_IMAGE_TARGETS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
+    "settings_background": {
+        "com.android.settings": (("res/drawable/card_background.9.png", "frosted"),),
+    },
+    "messages_background": {
+        "com.hihonor.mms": (
+            ("res/drawable-xxhdpi/message_search_view_edit_bg.png", "frosted"),
+            ("res/drawable-xxhdpi/message_search_view_edit_bg_onappbar.png", "frosted"),
+        ),
+        "com.android.mms": (
+            ("res/drawable-xxhdpi/message_search_view_edit_bg.png", "frosted"),
+            ("res/drawable-xxhdpi/message_search_view_edit_bg_onappbar.png", "frosted"),
+        ),
+        "com.huawei.mms": (
+            ("res/drawable-xxhdpi/message_search_view_edit_bg.png", "frosted"),
+            ("res/drawable-xxhdpi/message_search_view_edit_bg_onappbar.png", "frosted"),
+        ),
+    },
+    "phone_background": {
+        "com.hihonor.contacts": (("res/drawable-xxhdpi/dialpad_background_drawable.9.png", "frosted"),),
+        "com.android.contacts": (("res/drawable-xxhdpi/dialpad_background_drawable.9.png", "frosted"),),
+        "com.huawei.contacts": (("res/drawable-xxhdpi/dialpad_background_drawable.9.png", "frosted"),),
+    },
+    "contacts_background": {
+        "com.hihonor.contacts": (("res/drawable-xxhdpi/header_background4.9.png", "transparent"),),
+        "com.android.contacts": (("res/drawable-xxhdpi/header_background4.9.png", "transparent"),),
+        "com.huawei.contacts": (("res/drawable-xxhdpi/header_background4.9.png", "transparent"),),
+    },
+}
+
 
 def surface_treatment_label(treatment: str) -> str:
     return dict(SURFACE_TREATMENT_LABELS).get(treatment, "跟随系统")
+
+
+def surface_value_for_treatment(treatment: str, role: str = "frosted") -> str | None:
+    """返回指定处理模式/角色应写入的颜色值。"""
+    if treatment == "layered":
+        return SURFACE_LAYER_VALUES.get(role)
+    return SURFACE_TREATMENT_VALUES.get(treatment)
+
+
+def _uniform_surface_names(setting_id: str, module: str) -> dict[str, tuple[str, ...]]:
+    if setting_id == "phone_background" and module in _DIALER_SURFACE_MODULES:
+        return _DIALER_SURFACE_NAMES
+    return SURFACE_SYNC_NAMES.get(setting_id, {})
+
+
+def _layered_surface_names(
+    setting_id: str,
+    module: str,
+) -> dict[str, dict[str, tuple[str, ...]]]:
+    if setting_id == "phone_background" and module in _DIALER_SURFACE_MODULES:
+        return {"frosted": _DIALER_SURFACE_NAMES}
+    return SURFACE_LAYER_SYNC_NAMES.get(setting_id, {})
 
 
 def build_surface_targets(
@@ -301,20 +461,50 @@ def build_surface_targets(
     treatment: str,
 ) -> list[dict]:
     """为一个背景项目构造表面颜色同步目标(只包含目录里实际存在的资源)。"""
-    value = SURFACE_TREATMENT_VALUES.get(treatment)
-    names_by_container = SURFACE_SYNC_NAMES.get(setting_id)
-    if value is None or names_by_container is None:
+    if treatment not in SURFACE_TREATMENT_MODES or treatment == "system":
         return []
+    module_set = set(modules)
+    if setting_id == "phone_background":
+        module_set.update(_DIALER_SURFACE_MODULES)
     available = {
         (slot.module, slot.container, slot.name)
         for slot in catalog.resources
         if slot.resource_type == "color" and slot.status != "当前版本不支持"
     }
     targets: list[dict] = []
-    for module in sorted(set(modules)):
-        for container, names in names_by_container.items():
-            for name in names:
-                if (module, container, name) in available:
+    seen: set[tuple[str, str, str, str]] = set()
+    for module in sorted(module_set):
+        if treatment == "layered":
+            role_maps = _layered_surface_names(setting_id, module)
+            for role, names_by_container in role_maps.items():
+                value = SURFACE_LAYER_VALUES.get(role)
+                if value is None:
+                    continue
+                for container, names in names_by_container.items():
+                    for name in names:
+                        key = (module, container, "color", name)
+                        if (module, container, name) not in available or key in seen:
+                            continue
+                        seen.add(key)
+                        targets.append(
+                            {
+                                "module": module,
+                                "container": container,
+                                "resource_type": "color",
+                                "name": name,
+                                "value": value,
+                            }
+                        )
+        else:
+            value = SURFACE_TREATMENT_VALUES.get(treatment)
+            if value is None:
+                continue
+            for container, names in _uniform_surface_names(setting_id, module).items():
+                for name in names:
+                    key = (module, container, "color", name)
+                    if (module, container, name) not in available or key in seen:
+                        continue
+                    seen.add(key)
                     targets.append(
                         {
                             "module": module,
@@ -324,6 +514,29 @@ def build_surface_targets(
                             "value": value,
                         }
                     )
+
+    image_slots = {
+        (slot.module, slot.path): slot
+        for slot in catalog.resources
+        if slot.resource_type == "image" and slot.status != "当前版本不支持"
+    }
+    for module, paths in _SURFACE_IMAGE_TARGETS.get(setting_id, {}).items():
+        if module not in module_set:
+            continue
+        for path, role in paths:
+            slot = image_slots.get((module, path))
+            if slot is None:
+                continue
+            targets.append(
+                {
+                    "module": module,
+                    "resource_type": "image",
+                    "path": path,
+                    "slot_id": slot.id,
+                    "role": role,
+                    "value": surface_value_for_treatment(treatment, role),
+                }
+            )
     return targets
 
 

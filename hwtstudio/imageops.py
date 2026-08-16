@@ -3,7 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 from .models import ResourceChange, ResourceSlot
 from .pngmeta import inject_android_chunks
@@ -121,6 +121,55 @@ def render_placeholder(slot: ResourceSlot) -> bytes:
     output = BytesIO()
     if target_format == "JPEG":
         image.convert("RGB").save(output, "JPEG", quality=90, optimize=True)
+    elif target_format == "WEBP":
+        image.save(output, "WEBP", quality=95, method=6)
+    else:
+        image.save(output, "PNG", optimize=True, compress_level=9)
+    data = output.getvalue()
+    if target_format == "PNG" and slot.png_chunks:
+        data = inject_android_chunks(data, slot.png_chunks)
+    return data
+
+
+def _rgba_from_hex(value: str) -> tuple[int, int, int, int] | None:
+    normalized = value.strip().lstrip("#")
+    if len(normalized) == 6:
+        normalized = "FF" + normalized
+    if len(normalized) != 8:
+        return None
+    try:
+        alpha, red, green, blue = bytes.fromhex(normalized)
+    except ValueError:
+        return None
+    return red, green, blue, alpha
+
+
+def render_translucent_surface(slot: ResourceSlot, value: str) -> bytes:
+    """Render a flat translucent PNG for a generated surface target.
+
+    ``value`` is an ``#AARRGGBB`` color. Card-style slots get rounded corners;
+    the dial-pad background remains a plain rectangle, matching the original
+    nine-patch-style artwork.
+    """
+    rgba = _rgba_from_hex(value)
+    if rgba is None:
+        raise ValueError(f"半透明表面颜色无效：{value}")
+    width = slot.width or 512
+    height = slot.height or 512
+    _validate_image_size(width, height)
+    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    lower_name = slot.name.lower()
+    if "card_background" in lower_name or "message_search_view" in lower_name:
+        radius = max(4, min(width, height) // 5)
+        ImageDraw.Draw(image).rounded_rectangle(
+            (0, 0, width - 1, height - 1), radius=radius, fill=rgba
+        )
+    else:
+        ImageDraw.Draw(image).rectangle((0, 0, width, height), fill=rgba)
+    target_format = _target_format(slot)
+    output = BytesIO()
+    if target_format == "JPEG":
+        image.convert("RGB").save(output, "JPEG", quality=95, optimize=True)
     elif target_format == "WEBP":
         image.save(output, "WEBP", quality=95, method=6)
     else:

@@ -11,6 +11,8 @@ from hwtstudio.models import ResourceChange, ThemeProject
 from hwtstudio.semantic import (
     SIMPLE_BY_ID,
     SIMPLE_SETTINGS,
+    SURFACE_LAYER_VALUES,
+    SURFACE_TREATMENT_MODES,
     SURFACE_TREATMENT_VALUES,
     background_setting_for_slot,
     build_surface_targets,
@@ -41,6 +43,16 @@ class SurfaceSyncTests(unittest.TestCase):
         )
 
     def test_surface_targets_build_for_each_treatment(self):
+        color_available = {
+            (x.module, x.container, x.name)
+            for x in self.catalog.resources
+            if x.resource_type == "color"
+        }
+        image_available = {
+            (x.module, x.path)
+            for x in self.catalog.resources
+            if x.resource_type == "image"
+        }
         for setting_id in sorted(_BACKGROUND_SETTING_IDS):
             slot = _background_slot(self.catalog, setting_id)
             modules = [target["module"] for target in slot.targets]
@@ -49,21 +61,72 @@ class SurfaceSyncTests(unittest.TestCase):
                 self.assertTrue(targets, f"{setting_id}/{treatment} 没有表面目标")
                 self.assertTrue(all(target["value"] == expected_value for target in targets))
                 self.assertTrue(
-                    all(target["resource_type"] == "color" for target in targets)
+                    all(target["resource_type"] in {"color", "image"} for target in targets)
                 )
-                # 只包含资源目录中实际存在的颜色。
-                available = {
-                    (x.module, x.container, x.name)
-                    for x in self.catalog.resources
-                    if x.resource_type == "color"
-                }
                 self.assertTrue(
-                    all((t["module"], t["container"], t["name"]) in available for t in targets)
+                    all(
+                        (t["module"], t["container"], t["name"]) in color_available
+                        for t in targets
+                        if t["resource_type"] == "color"
+                    )
+                )
+                self.assertTrue(
+                    all(
+                        (t["module"], t["path"]) in image_available
+                        for t in targets
+                        if t["resource_type"] == "image"
+                    )
                 )
             self.assertEqual(
                 build_surface_targets(setting_id, self.catalog, modules, "system"),
                 [],
             )
+
+    def test_layered_treatment_splits_transparent_and_frosted_surfaces(self):
+        self.assertIn("layered", SURFACE_TREATMENT_MODES)
+        for setting_id in sorted(_BACKGROUND_SETTING_IDS):
+            slot = _background_slot(self.catalog, setting_id)
+            modules = [target["module"] for target in slot.targets]
+            targets = build_surface_targets(setting_id, self.catalog, modules, "layered")
+            values = {target["value"] for target in targets}
+            self.assertEqual(values, set(SURFACE_LAYER_VALUES.values()), setting_id)
+            self.assertIn(SURFACE_LAYER_VALUES["transparent"], values)
+            self.assertIn(SURFACE_LAYER_VALUES["frosted"], values)
+            self.assertNotIn("#4DFFFFFF", values)
+            self.assertTrue(any(target["resource_type"] == "color" for target in targets))
+
+    def test_phone_treatment_syncs_contacts_dialer_only(self):
+        phone_slot = _background_slot(self.catalog, "phone_background")
+        phone_modules = [target["module"] for target in phone_slot.targets]
+        phone_targets = build_surface_targets(
+            "phone_background", self.catalog, phone_modules, "layered"
+        )
+        dialer_names = {target.get("name") for target in phone_targets if target["resource_type"] == "color"}
+        self.assertIn("dialpad_background_color", dialer_names)
+        self.assertIn("recent_task_jhh_background_color", dialer_names)
+        self.assertTrue(
+            any(
+                target["resource_type"] == "image"
+                and target["path"].endswith("dialpad_background_drawable.9.png")
+                for target in phone_targets
+            )
+        )
+
+        contacts_slot = _background_slot(self.catalog, "contacts_background")
+        contacts_modules = [target["module"] for target in contacts_slot.targets]
+        contacts_targets = build_surface_targets(
+            "contacts_background", self.catalog, contacts_modules, "layered"
+        )
+        contacts_names = {target.get("name") for target in contacts_targets if target["resource_type"] == "color"}
+        self.assertNotIn("dialpad_background_color", contacts_names)
+        self.assertNotIn("recent_task_jhh_background_color", contacts_names)
+        self.assertFalse(
+            any(
+                target["resource_type"] == "image"
+                and target["path"].endswith("dialpad_background_drawable.9.png")
+                for target in contacts_targets
+            )
+        )
 
     def test_background_setting_for_slot_matches_all_four(self):
         for setting_id in sorted(_BACKGROUND_SETTING_IDS):
@@ -161,6 +224,48 @@ class SurfaceSyncTests(unittest.TestCase):
                 with ZipFile(io.BytesIO(outer.read("com.hihonor.contacts"))) as module:
                     root_xml = module.read("theme.xml").decode("utf-8")
                     self.assertIn("#FF112233", root_xml)
+
+    def test_export_layered_writes_transparent_header_and_frosted_cards(self):
+        settings_slot = _background_slot(self.catalog, "settings_background")
+        project = ThemeProject(name="分层测试")
+        project.set_change(
+            ResourceChange(slot_id=settings_slot.id, source_kind="placeholder", surfaces="layered")
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "layered.hwt"
+            _, report = export_theme(project, self.catalog, output)
+            self.assertTrue(report["validation"]["valid"])
+            self.assertEqual(report["preflight"]["errors"], [])
+            with ZipFile(output) as outer:
+                with ZipFile(io.BytesIO(outer.read("com.android.settings"))) as module:
+                    fw_xml = module.read("framework-res-hnext/theme.xml").decode("utf-8")
+                    root_xml = module.read("theme.xml").decode("utf-8")
+                    self.assertIn("#00000000", fw_xml)
+                    self.assertIn("#66FFFFFF", fw_xml)
+                    self.assertIn("#66FFFFFF", root_xml)
+                    card_png = module.read("res/drawable/card_background.9.png")
+                    self.assertEqual(card_png[1:4], b"PNG")
+
+    def test_export_layered_phone_writes_dialer_surfaces_in_contacts(self):
+        phone_slot = _background_slot(self.catalog, "phone_background")
+        project = ThemeProject(name="拨号分层测试")
+        project.set_change(
+            ResourceChange(slot_id=phone_slot.id, source_kind="placeholder", surfaces="layered")
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "dialer_layered.hwt"
+            _, report = export_theme(project, self.catalog, output)
+            self.assertTrue(report["validation"]["valid"])
+            with ZipFile(output) as outer:
+                with ZipFile(io.BytesIO(outer.read("com.hihonor.contacts"))) as module:
+                    root_xml = module.read("theme.xml").decode("utf-8")
+                    self.assertIn("dialpad_background_color", root_xml)
+                    self.assertIn("recent_task_jhh_background_color", root_xml)
+                    self.assertIn("#66FFFFFF", root_xml)
+                    self.assertIn(
+                        "res/drawable-xxhdpi/dialpad_background_drawable.9.png",
+                        module.namelist(),
+                    )
 
     def test_legacy_project_without_surfaces_defaults_to_frosted(self):
         change = ResourceChange.from_dict({"slot_id": "x", "value": "#FF000000"})

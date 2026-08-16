@@ -82,6 +82,25 @@ class PreviewTests(unittest.TestCase):
         self.assertNotEqual(base.getpixel((base.width // 2, base.height // 2)), current.getpixel((current.width // 2, current.height // 2)))
         self.assertEqual(base.getpixel((1, 1)), current.getpixel((1, 1)))
 
+    def test_layered_treatment_preview_simulates_two_levels(self):
+        spec = SIMPLE_BY_ID["settings_background"].preview
+        assert spec is not None
+        with tempfile.TemporaryDirectory() as directory:
+            image_path = Path(directory) / "source.png"
+            Image.new("RGBA", (612, 1350), (220, 120, 160, 255)).save(image_path)
+            change = ResourceChange(slot_id="x", source_file=str(image_path), surfaces="layered")
+            plain = self.repository.current_image(spec, change)
+            layered = self.repository.current_image(spec, change, "layered")
+            transparent = self.repository.current_image(spec, change, "transparent")
+            assert plain is not None and layered is not None and transparent is not None
+            self.assertNotEqual(
+                layered.getpixel((layered.width // 2, layered.height // 2)),
+                transparent.getpixel((transparent.width // 2, transparent.height // 2)),
+            )
+            scene = self.repository.scene(spec)
+            assert scene is not None
+            self.assertIn("canvas", scene.targets)
+
     def test_image_fit_and_missing_states_are_rendered(self):
         spec = next(item.preview for item in SIMPLE_SETTINGS if item.id == "messages_background")
         assert spec is not None
