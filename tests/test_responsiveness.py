@@ -16,10 +16,11 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from hwtstudio.app import MainWindow, transfer_error_message
 from hwtstudio.imageops import PREVIEW_MAX_EDGE, load_image_preview
 from hwtstudio.models import ResourceChange, ThemeProject
+from hwtstudio.phone_transfer import PhoneDevice
 from hwtstudio.semantic import PreviewSpec
 from hwtstudio.services.catalog_service import load_preferred_catalog
 from hwtstudio.ui.simple_preview import PreviewRepository
-from hwtstudio.ui.workers import ExportWorker
+from hwtstudio.ui.workers import ExportWorker, TransferWorker
 
 
 class PreviewImageTests(unittest.TestCase):
@@ -92,10 +93,42 @@ class TransferMessageTests(unittest.TestCase):
         self.assertIn("10.0.0.2", message)
         self.assertEqual(transfer_error_message("no_device", ""), "没有选择手机，请先连接并识别手机。")
 
+    def test_upload_interrupted_message_is_actionable_and_keeps_detail(self):
+        message = transfer_error_message(
+            "upload_interrupted", "上传连接中断：[WinError 10054] 远程主机强迫关闭了一个现有的连接。"
+        )
+        self.assertIn("接收中", message)
+        self.assertIn("10054", message)
+        self.assertNotIn("无法连接手机。", message)
+
     def test_unknown_code_falls_back_to_generic_with_detail(self):
         message = transfer_error_message("mystery_code", "手机返回错误 HTTP 500")
         self.assertIn("发送失败", message)
         self.assertIn("手机返回错误 HTTP 500", message)
+
+
+class TransferWorkerLiveProbeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QCoreApplication.instance() or QCoreApplication([])
+
+    def test_saved_device_uses_live_probe_features_for_upload(self):
+        worker = TransferWorker(
+            Path("theme.hwt"),
+            device=PhoneDevice("phone-1", "旧记录", "10.0.0.8", token="token", features=[]),
+        )
+        live = PhoneDevice(
+            "phone-1", "实时手机", "10.0.0.8", token="token", features=["transfer_chunked", "transfer_prepare"],
+        )
+        with (
+            patch("hwtstudio.ui.workers.probe_phone", return_value=live) as probe,
+            patch("hwtstudio.ui.workers.transfer_to_app", return_value={"remote": "Honor/Themes/theme.hwt"}) as transfer,
+        ):
+            worker.run()
+
+        probe.assert_called_once()
+        uploaded_device = transfer.call_args.args[1]
+        self.assertEqual(uploaded_device.features, ["transfer_chunked", "transfer_prepare"])
 
 
 class ExportWorkerTests(unittest.TestCase):

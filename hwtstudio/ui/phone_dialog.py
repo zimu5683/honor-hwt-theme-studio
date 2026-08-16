@@ -35,6 +35,10 @@ from ..qr_pairing import QrPairingServer, make_qr_image, qr_connect_url
 
 LOGGER = logging.getLogger(__name__)
 
+# 总预算覆盖 UDP 广播 + 整个 /24 网段的 HTTP 兜底探测：16 个并发 ×
+# 0.4 秒/请求足够在预算内扫完 254 个地址，手机 IP 偏大时也不会漏掉。
+DISCOVERY_TIMEOUT = 8.0
+
 
 class DiscoveryWorker(QObject):
     found = Signal(object, int)
@@ -79,6 +83,7 @@ class DiscoveryWorker(QObject):
                     targets=targets,
                     http_targets=bounded_ipv4_discovery_targets(interfaces),
                     cancelled=self.cancelled,
+                    timeout=DISCOVERY_TIMEOUT,
                 ),
                 self.task_id,
             )
@@ -314,7 +319,13 @@ class PhoneTransferDialog(QDialog):
             self.status.setText(f"发现 {len(devices)} 台正在接收的手机。")
             set_state(self.status, "success")
         else:
-            self.status.setText("没有发现手机。请确认 APK 已开始接收，或填写手动地址。")
+            if self.devices.count():
+                self.status.setText(
+                    "本次搜索没有发现正在接收的手机；如果列表中显示了已保存的手机，"
+                    "可直接选中后点击“发送”，或先在手机上重新点“开始接收”。"
+                )
+            else:
+                self.status.setText("没有发现手机。请确认 APK 已开始接收，或填写手动地址。")
             set_state(self.status, "warning")
 
     def _discovery_failed(self, _message: str, generation: int):
@@ -397,6 +408,11 @@ class PhoneTransferDialog(QDialog):
                 device = self.devices.currentData()
                 if not isinstance(device, PhoneDevice):
                     raise ValueError("请选择发现的手机，或填写手动地址")
+                # 组合框里的对象可能是搜索开始前加载的旧记录，而
+                # 发现/扫码回调已经把新对象（实时 feature、最新地址）
+                # 写进 _devices；这里取最新的一份，避免用过期的
+                # feature 或端口去发送。
+                device = self._devices.get(device.device_id, device)
             code = self.code.text().strip()
             if not device.paired and not (len(code) == 6 and code.isdigit()):
                 raise ValueError("首次连接请输入手机显示的 6 位配对码")

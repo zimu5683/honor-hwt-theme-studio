@@ -30,7 +30,11 @@ HTTP_PORT = 48621
 DISCOVERY_REQUEST = b"HWTSTUDIO_DISCOVER_V1"
 MAX_HTTP_DISCOVERY_TARGETS = 256
 HTTP_DISCOVERY_WORKERS = 16
-HTTP_DISCOVERY_REQUEST_TIMEOUT = 0.25
+HTTP_DISCOVERY_REQUEST_TIMEOUT = 0.4
+# UDP 广播是最快的发现路径，但当路由器/系统丢弃广播包时还要靠 HTTP 兜底。
+# 预留固定时间给广播收包，其余预算尽量留给整个 /24 网段的状态探测，避免
+# 手机 IP 排到 .100 以后时兜底扫描因总超时被提前截断而“找不到手机”。
+HTTP_DISCOVERY_UDP_BUDGET = 1.0
 MAX_FILE_SIZE = 1024 * 1024 * 1024
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_REGISTRY_BYTES = 2 * 1024 * 1024
@@ -455,6 +459,42 @@ def _parse_discovered_device(
     )
 
 
+def _http_discovery_candidates(
+    saved: dict[str, PhoneDevice], http_targets: list[str] | None,
+) -> list[str]:
+    """有序去重的 HTTP 兜底探测目标，优先探测上次连接过的手机。
+
+    广播不可达时，把已保存的手机地址排在最前面，只需一次状态请求就能
+    确认老朋友是否在线；随后按网卡推导的私有网段顺序扫描，保证新 IP
+    （例如重新连 WiFi 后换到 .150）也能在预算内被发现。
+    """
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        if value not in seen:
+            seen.add(value)
+            ordered.append(value)
+
+    for device in saved.values():
+        try:
+            add(str(IPv4Address(device.host)))
+        except (ValueError, TypeError):
+            continue
+        if len(ordered) >= MAX_HTTP_DISCOVERY_TARGETS:
+            return ordered
+    for target in dict.fromkeys(http_targets or []):
+        try:
+            address = IPv4Address(target)
+        except (ValueError, TypeError):
+            continue
+        if address.is_private:
+            add(str(address))
+        if len(ordered) >= MAX_HTTP_DISCOVERY_TARGETS:
+            break
+    return ordered
+
+
 def _http_discovery_probe(host: str, timeout: float) -> PhoneDevice | None:
     connection = http.client.HTTPConnection(host, HTTP_PORT, timeout=timeout)
     try:
@@ -480,7 +520,13 @@ def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
     timeout = max(0.0, timeout)
     discovery_started = time.monotonic()
     deadline = discovery_started + timeout
-    udp_deadline = discovery_started + (timeout / 2 if http_targets else timeout)
+    http_candidates = _http_discovery_candidates(saved, http_targets)
+    if http_candidates:
+        udp_budget = min(timeout / 2, HTTP_DISCOVERY_UDP_BUDGET)
+    else:
+        # 没有可探测的兜底目标时也没必要把全部预算都耗在广播等待上。
+        udp_budget = min(timeout, 3.0)
+    udp_deadline = discovery_started + udp_budget
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -521,22 +567,14 @@ def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
     if cancelled and cancelled.is_set():
         return []
 
-    # UDP is the fast path. Only probe caller-supplied, validated LAN targets
-    # when it produced no result, following LocalSend's legacy fallback model.
-    if not found and http_targets:
-        candidates: list[str] = []
-        for target in dict.fromkeys(http_targets):
-            try:
-                address = IPv4Address(target)
-            except (ValueError, TypeError):
-                continue
-            if address.is_private:
-                candidates.append(str(address))
-            if len(candidates) >= MAX_HTTP_DISCOVERY_TARGETS:
-                break
+    # UDP is the fast path. When it produces no result, fall back to bounded
+    # HTTP status probes (LocalSend's legacy model): saved phone addresses are
+    # probed first so a previously paired phone is found with one request,
+    # then the private subnets derived from active adapters are scanned.
+    if not found and http_candidates:
         remaining = max(0.0, deadline - time.monotonic())
-        if candidates and remaining > 0:
-            worker_count = min(HTTP_DISCOVERY_WORKERS, len(candidates))
+        if remaining > 0:
+            worker_count = min(HTTP_DISCOVERY_WORKERS, len(http_candidates))
             executor = ThreadPoolExecutor(max_workers=worker_count)
             try:
                 futures = {
@@ -545,7 +583,7 @@ def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
                         target,
                         min(HTTP_DISCOVERY_REQUEST_TIMEOUT, remaining),
                     ): target
-                    for target in candidates
+                    for target in http_candidates
                 }
                 try:
                     for future in as_completed(futures, timeout=remaining):
@@ -818,6 +856,14 @@ def _error_from_response(status: int, payload: dict) -> PhoneTransferError:
     return PhoneTransferError(message, code=str(payload.get("code") or codes.get(status, "transfer_failed")))
 
 
+_UPLOAD_CONNECTION_CODES = {"connect_failed", "upload_interrupted"}
+
+
+def _is_upload_connection_error(code: str) -> bool:
+    """连接被远端重置或网络中断都允许幂等重试/续传。"""
+    return code in _UPLOAD_CONNECTION_CODES
+
+
 def _cancel_remote_transfer(device: PhoneDevice, transfer_id: str, *, timeout: float) -> None:
     """Best-effort cancellation for peers that implement the optional v1 extension."""
     connection = None
@@ -956,7 +1002,7 @@ class _ChunkUploader:
                                        offset=offset, digest=digest, chunk_digest=chunk_digest, filename=filename)
             except (OSError, http.client.HTTPException) as exc:
                 self._close_unlocked()
-                raise PhoneTransferError(f"分块上传连接中断：{exc}", code="connect_failed") from exc
+                raise PhoneTransferError(f"分块上传连接中断：{exc}", code="upload_interrupted") from exc
 
     def _send_once(self, connection: http.client.HTTPConnection, transfer_id: str, block: bytes, *,
                    total_size: int, offset: int, digest: str, chunk_digest: str, filename: str) -> dict:
@@ -1054,7 +1100,7 @@ def _commit_chunk(device: PhoneDevice, transfer_id: str, *, timeout: float) -> d
         response = connection.getresponse()
         payload = _decode_json(_read_response(response, "分块提交"), "分块提交")
     except (OSError, http.client.HTTPException) as exc:
-        raise PhoneTransferError(f"分块提交连接中断：{exc}", code="connect_failed") from exc
+        raise PhoneTransferError(f"分块提交连接中断：{exc}", code="upload_interrupted") from exc
     finally:
         connection.close()
     if response.status not in (200, 201):
@@ -1121,7 +1167,7 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                         filename=filename,
                     )
                 except PhoneTransferError as exc:
-                    if exc.code != "connect_failed":
+                    if not _is_upload_connection_error(exc.code):
                         raise
                     recovery_attempts += 1
                     if recovery_attempts > 3:
@@ -1197,7 +1243,7 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
             try:
                 payload = _commit_chunk(device, transfer_id, timeout=timeout)
             except PhoneTransferError as exc:
-                if exc.code != "connect_failed":
+                if not _is_upload_connection_error(exc.code):
                     raise
                 recovery_attempts += 1
                 if recovery_attempts > 3:
@@ -1325,7 +1371,7 @@ def _upload_theme_once(path: Path, device: PhoneDevice, *, transfer_id: str,
         _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
         raise
     except (OSError, http.client.HTTPException) as exc:
-        raise PhoneTransferError(f"上传连接中断：{exc}", code="connect_failed") from exc
+        raise PhoneTransferError(f"上传连接中断：{exc}", code="upload_interrupted") from exc
     finally:
         connection.close()
     if response.status not in (200, 201):
@@ -1378,7 +1424,7 @@ def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event 
             timeout=timeout,
         )
     except PhoneTransferError as exc:
-        if exc.code != "connect_failed":
+        if not _is_upload_connection_error(exc.code):
             raise
         if cancelled and cancelled.is_set():
             _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))

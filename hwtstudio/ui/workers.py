@@ -95,10 +95,12 @@ class TransferWorker(QObject):
                 device = self.device
                 if not device.device_id.startswith("manual:"):
                     # 已保存的手机地址可能是上次接收时的临时端口,发送前先
-                    # 实测连通性,失败时给出可操作的提示。
+                    # 实测连通性,失败时给出可操作的提示。探测成功时直接使用
+                    # 返回的实时设备信息(最新 feature/应用版本),避免旧配对
+                    # 记录里缺少分块能力而退回容易断连的整包 PUT。
                     self._progress(0, 0, "正在连接手机……")
                     try:
-                        probe_phone(device.host, device.port, cancelled=self.cancelled)
+                        device = probe_phone(device.host, device.port, cancelled=self.cancelled)
                     except PhoneTransferError as exc:
                         if exc.code != "connect_failed":
                             raise

@@ -31,6 +31,7 @@ from hwtstudio.phone_transfer import (
     bounded_ipv4_discovery_targets,
     _merge_saved,
     _error_from_response,
+    _http_discovery_candidates,
     _interprocess_lock,
     discover_phones,
     fetch_phone_profile,
@@ -594,6 +595,29 @@ class PhoneTransferTests(unittest.TestCase):
 
             self.assertEqual(raised.exception.code, "bad_response")
             self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "POST"])
+
+    def test_chunked_upload_reports_remote_reset_as_upload_interrupted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "重置连接主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [OSError("[WinError 10054] 远程主机强迫关闭了一个现有的连接。")] * 4
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with (
+                patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection),
+                patch("hwtstudio.phone_transfer._remote_transfer_status", return_value=None) as status,
+            ):
+                with self.assertRaisesRegex(PhoneTransferError, "分块上传连接中断") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "upload_interrupted")
+            self.assertGreaterEqual(status.call_count, 3)
+            self.assertEqual(len(ChunkedConnection.instances), 4)
 
     def test_chunked_upload_does_not_resend_last_chunk_when_commit_response_is_lost(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1482,6 +1506,25 @@ class PhoneTransferTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_http_discovery_candidates_prioritize_saved_devices(self):
+        saved = {
+            "phone-1": PhoneDevice("phone-1", "上次连接", "192.168.0.154", port=48621),
+        }
+        targets = ["192.168.0.1", "192.168.0.154", "192.168.0.2", "8.8.8.8"]
+
+        candidates = _http_discovery_candidates(saved, targets)
+
+        self.assertEqual(candidates[0], "192.168.0.154")
+        self.assertEqual(set(candidates), {"192.168.0.154", "192.168.0.1", "192.168.0.2"})
+        self.assertEqual(len(candidates), 3)
+        # 没有网卡子网可扫时，也至少直接探测上次连接过的地址。
+        self.assertEqual(_http_discovery_candidates(saved, None), ["192.168.0.154"])
+
+    def test_http_discovery_candidates_drop_invalid_and_non_private_targets(self):
+        saved = {}
+        candidates = _http_discovery_candidates(saved, ["not-an-ip", "8.8.8.8", "10.0.0.8"])
+        self.assertEqual(candidates, ["10.0.0.8"])
 
     def test_discovery_discards_invalid_remote_port(self):
         with tempfile.TemporaryDirectory() as directory:
