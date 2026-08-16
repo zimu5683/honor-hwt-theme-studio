@@ -252,26 +252,32 @@ def _merge_surface_maps(*maps: dict[str, tuple[str, ...]]) -> dict[str, tuple[st
 
 
 # 每个应用模块通用的表面颜色族(按容器分组)。
+# 分层模式里 appbar/toolbar/white_bg 都视为“页面/标题/底”的全透明层，
+# 卡片、搜索框、底栏和按键等再单独用半透明资源覆盖。
 _SURFACE_COMMON_TRANSPARENT = {
     "framework-res-hnext/theme.xml": (
-        "magic_appbar_bg", "magic_appbar_bg_blur", "magic_color_bg",
+        "magic_appbar_bg", "magic_appbar_bg_blur",
+        "magic_toolbar_bg", "magic_toolbar_bg_blur",
+        "magic_color_bg", "magic_white_bg",
     ),
     "framework-res-hwext/theme.xml": (
-        "emui_appbar_bg", "emui_appbar_bg_blur", "emui_color_bg",
+        "emui_appbar_bg", "emui_appbar_bg_blur",
+        "emui_toolbar_bg", "emui_toolbar_bg_blur",
+        "emui_color_bg", "emui_white_bg",
     ),
 }
 _SURFACE_COMMON_FROSTED = {
     "framework-res-hnext/theme.xml": (
-        "magic_toolbar_bg", "magic_toolbar_bg_blur",
         "magic_navigationbar_bg", "magic_navigationbar_bg_blur",
+        "navigationbar_magic_light",
         "magic_subtab_bg", "magic_subtab_bg_blur",
-        "magic_white_bg", "magic_color_tips_bg",
+        "magic_color_tips_bg",
     ),
     "framework-res-hwext/theme.xml": (
-        "emui_toolbar_bg", "emui_toolbar_bg_blur",
         "emui_navigationbar_bg", "emui_navigationbar_bg_blur",
+        "navigationbar_emui_light",
         "emui_subtab_bg", "emui_subtab_bg_blur",
-        "emui_white_bg", "emui_color_tips_bg",
+        "emui_color_tips_bg",
     ),
 }
 _SURFACE_FAMILY = _merge_surface_maps(_SURFACE_COMMON_TRANSPARENT, _SURFACE_COMMON_FROSTED)
@@ -332,7 +338,7 @@ SURFACE_LAYER_SYNC_NAMES: dict[str, dict[str, dict[str, tuple[str, ...]]]] = {
             {
                 "theme.xml": (
                     "searchview_background_white", "bottom_tab_bg",
-                    "hwsubtab_magic_color_bg",
+                    "hwsubtab_magic_color_bg", "default_nav_bar_color",
                     "divider_color", "tips_and_divider_color",
                     "magic_color_subheader_divider", "magic_color_divider_horizontal",
                     "familyname_overlay_list_divider",
@@ -399,20 +405,20 @@ _DIALER_SURFACE_NAMES = {
 # 半透明，transparent 走全透明。
 _SURFACE_IMAGE_TARGETS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
     "settings_background": {
-        "com.android.settings": (("res/drawable/card_background.9.png", "frosted"),),
+        "com.android.settings": (("res/drawable/card_background.9.png", "transparent"),),
     },
     "messages_background": {
         "com.hihonor.mms": (
-            ("res/drawable-xxhdpi/message_search_view_edit_bg.png", "frosted"),
-            ("res/drawable-xxhdpi/message_search_view_edit_bg_onappbar.png", "frosted"),
+            ("res/drawable-xxhdpi/message_search_view_edit_bg.png", "transparent"),
+            ("res/drawable-xxhdpi/message_search_view_edit_bg_onappbar.png", "transparent"),
         ),
         "com.android.mms": (
-            ("res/drawable-xxhdpi/message_search_view_edit_bg.png", "frosted"),
-            ("res/drawable-xxhdpi/message_search_view_edit_bg_onappbar.png", "frosted"),
+            ("res/drawable-xxhdpi/message_search_view_edit_bg.png", "transparent"),
+            ("res/drawable-xxhdpi/message_search_view_edit_bg_onappbar.png", "transparent"),
         ),
         "com.huawei.mms": (
-            ("res/drawable-xxhdpi/message_search_view_edit_bg.png", "frosted"),
-            ("res/drawable-xxhdpi/message_search_view_edit_bg_onappbar.png", "frosted"),
+            ("res/drawable-xxhdpi/message_search_view_edit_bg.png", "transparent"),
+            ("res/drawable-xxhdpi/message_search_view_edit_bg_onappbar.png", "transparent"),
         ),
     },
     "phone_background": {

@@ -95,6 +95,41 @@ class SurfaceSyncTests(unittest.TestCase):
             self.assertNotIn("#4DFFFFFF", values)
             self.assertTrue(any(target["resource_type"] == "color" for target in targets))
 
+    def test_layered_images_and_bottom_nav_fixes(self):
+        def targets(setting_id):
+            slot = _background_slot(self.catalog, setting_id)
+            return build_surface_targets(
+                setting_id,
+                self.catalog,
+                [target["module"] for target in slot.targets],
+                "layered",
+            )
+
+        settings_targets = targets("settings_background")
+        settings_card = next(
+            t for t in settings_targets
+            if t["resource_type"] == "image" and t["path"].endswith("card_background.9.png")
+        )
+        self.assertEqual(settings_card["value"], "#00000000")
+
+        messages_targets = targets("messages_background")
+        self.assertTrue(
+            all(
+                t["value"] == "#00000000"
+                for t in messages_targets
+                if t["resource_type"] == "image" and "message_search_view" in t["path"]
+            )
+        )
+
+        contacts_targets = targets("contacts_background")
+        contacts_names = {
+            (t.get("name"), t.get("value"))
+            for t in contacts_targets
+            if t["resource_type"] == "color"
+        }
+        self.assertIn(("default_nav_bar_color", "#66FFFFFF"), contacts_names)
+        self.assertIn(("navigationbar_magic_light", "#66FFFFFF"), contacts_names)
+
     def test_phone_treatment_syncs_contacts_dialer_only(self):
         phone_slot = _background_slot(self.catalog, "phone_background")
         phone_modules = [target["module"] for target in phone_slot.targets]
