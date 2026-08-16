@@ -596,13 +596,13 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, "bad_response")
             self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "POST"])
 
-    def test_chunked_upload_reports_remote_reset_as_upload_interrupted(self):
+    def test_chunked_upload_reports_remote_reset_when_legacy_fallback_also_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "重置连接主题.hwt"
             content = b"payload"
             path.write_bytes(content)
             ChunkedConnection.instances = []
-            ChunkedConnection.plans = [OSError("[WinError 10054] 远程主机强迫关闭了一个现有的连接。")] * 4
+            ChunkedConnection.plans = [OSError("[WinError 10054] 远程主机强迫关闭了一个现有的连接。")] * 5
             device = PhoneDevice(
                 "phone-1", "测试手机", "127.0.0.1", token="token",
                 features=[FEATURE_TRANSFER_CHUNKED],
@@ -611,13 +611,55 @@ class PhoneTransferTests(unittest.TestCase):
             with (
                 patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection),
                 patch("hwtstudio.phone_transfer._remote_transfer_status", return_value=None) as status,
+                patch("hwtstudio.phone_transfer._cancel_remote_transfer") as cancel,
             ):
-                with self.assertRaisesRegex(PhoneTransferError, "分块上传连接中断") as raised:
+                with self.assertRaisesRegex(PhoneTransferError, "上传连接中断") as raised:
                     upload_theme(path, device)
 
             self.assertEqual(raised.exception.code, "upload_interrupted")
             self.assertGreaterEqual(status.call_count, 3)
-            self.assertEqual(len(ChunkedConnection.instances), 4)
+            cancel.assert_called_once()
+            # 4 次分块重试耗尽后回退到一次整包 PUT，同样断开才报错。
+            self.assertEqual(len(ChunkedConnection.instances), 5)
+
+    def test_chunked_upload_falls_back_to_legacy_put_when_chunk_connection_closes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "回退主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            completed = {
+                "stored_name": "回退主题.hwt", "destination": "Honor/Themes/回退主题.hwt",
+                "size": len(content), "sha256": digest, "overwritten": False,
+                "theme_app_opened": False,
+            }
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                OSError("Remote end closed connection without response"),
+                OSError("Remote end closed connection without response"),
+                OSError("Remote end closed connection without response"),
+                OSError("Remote end closed connection without response"),
+                (201, completed),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_CHUNKED],
+            )
+
+            with (
+                patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection),
+                patch("hwtstudio.phone_transfer._remote_transfer_status", return_value=None),
+                patch("hwtstudio.phone_transfer._cancel_remote_transfer") as cancel,
+            ):
+                result = upload_theme(path, device)
+
+            self.assertEqual(result["sha256"], digest)
+            cancel.assert_called_once()
+            self.assertEqual(len(ChunkedConnection.instances), 5)
+            legacy_request = ChunkedConnection.instances[-1]
+            self.assertEqual(legacy_request.method, "PUT")
+            self.assertIn("/api/v1/themes/", legacy_request.target)
+            self.assertNotIn("X-HWT-Chunk-Offset", legacy_request.headers)
 
     def test_chunked_upload_does_not_resend_last_chunk_when_commit_response_is_lost(self):
         with tempfile.TemporaryDirectory() as directory:

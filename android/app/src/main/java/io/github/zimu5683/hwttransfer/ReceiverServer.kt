@@ -237,22 +237,24 @@ class ReceiverServer(
      * it again into the chunk file.
      */
     private fun readChunkBody(session: IHTTPSession, target: File, expectedBytes: Long) {
-        session.inputStream.use { input ->
-            FileOutputStream(target).use { output ->
-                val buffer = ByteArray(CHUNK_COPY_BUFFER_BYTES)
-                var copied = 0L
-                while (copied < expectedBytes) {
-                    val count = input.read(buffer, 0, minOf(buffer.size.toLong(), expectedBytes - copied).toInt())
-                    if (count < 0) break
-                    if (count == 0) continue
-                    output.write(buffer, 0, count)
-                    copied += count
-                }
-                if (copied != expectedBytes || target.length() != expectedBytes) {
-                    throw TransferException(400, "incomplete_upload", "分块内容不完整")
-                }
-                output.fd.sync()
+        // 注意：绝不能关闭 NanoHTTPD 传入的 inputStream。它直接包着这次请求的
+        // socket，一旦关闭，分块响应（202）和后续 keep-alive 请求都写不出去，
+        // 电脑端会看到 “Remote end closed connection without response”。
+        val input = session.inputStream
+        FileOutputStream(target).use { output ->
+            val buffer = ByteArray(CHUNK_COPY_BUFFER_BYTES)
+            var copied = 0L
+            while (copied < expectedBytes) {
+                val count = input.read(buffer, 0, minOf(buffer.size.toLong(), expectedBytes - copied).toInt())
+                if (count < 0) break
+                if (count == 0) continue
+                output.write(buffer, 0, count)
+                copied += count
             }
+            if (copied != expectedBytes || target.length() != expectedBytes) {
+                throw TransferException(400, "incomplete_upload", "分块内容不完整")
+            }
+            output.fd.sync()
         }
     }
 

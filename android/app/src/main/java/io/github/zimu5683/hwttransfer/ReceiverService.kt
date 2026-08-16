@@ -81,7 +81,10 @@ class ReceiverService : Service() {
         lastActivity.set(System.currentTimeMillis())
         try {
             httpServer = ReceiverServer(this, pairing, storage, ::touch, ::onTransfer).also {
-                it.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
+                // 默认的 5 秒 socket 读超时会把慢速 Wi-Fi 上的大分块/整包上传
+                // 提前掐断（电脑端表现为 10054/RemoteDisconnected）。放宽到
+                // 120 秒，空闲清理仍由 30 分钟计时任务负责。
+                it.start(HTTP_READ_TIMEOUT_MS, false)
             }
             discoveryServer = DiscoveryServer(pairing).also { it.start() }
         } catch (exc: Exception) {
@@ -282,6 +285,7 @@ class ReceiverService : Service() {
         const val ACTION_STOP = "io.github.zimu5683.hwttransfer.STOP"
         const val ACTION_REGENERATE_CODE = "io.github.zimu5683.hwttransfer.REGENERATE"
         private const val THEME_PACKAGE = "com.hihonor.android.thememanager"
+        private const val HTTP_READ_TIMEOUT_MS = 120_000
         private const val RECEIVER_CHANNEL = "hwt_receiver"
         private const val SUCCESS_CHANNEL = "hwt_success"
         private const val RECEIVER_NOTIFICATION_ID = 1001
