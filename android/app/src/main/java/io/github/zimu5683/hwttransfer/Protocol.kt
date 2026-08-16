@@ -26,11 +26,13 @@ object Protocol {
     const val FEATURE_TRANSFER_CANCEL = "transfer_cancel"
     const val FEATURE_TRANSFER_CHUNKED = "transfer_chunked"
     const val FEATURE_TRANSFER_PREPARE = "transfer_prepare"
+    const val FEATURE_TRANSFER_PARALLEL = "transfer_parallel"
     val ADVERTISED_FEATURES = listOf(
         FEATURE_DEVICE_PROFILE,
         FEATURE_TRANSFER_CANCEL,
         FEATURE_TRANSFER_CHUNKED,
         FEATURE_TRANSFER_PREPARE,
+        FEATURE_TRANSFER_PARALLEL,
     )
     const val MAX_FILE_SIZE = 1024L * 1024L * 1024L
     const val MAX_FILE_NAME_BYTES = 200

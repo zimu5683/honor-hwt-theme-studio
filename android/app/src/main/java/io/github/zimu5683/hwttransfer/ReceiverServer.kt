@@ -6,10 +6,11 @@ import fi.iki.elonen.NanoHTTPD
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.nio.file.LinkOption
+import java.security.MessageDigest
 import java.util.Collections
 import java.util.LinkedHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -39,6 +40,56 @@ internal fun deleteParsedUploadFile(file: File): Boolean {
     val path = file.toPath()
     return !Files.exists(path, LinkOption.NOFOLLOW_LINKS) ||
         (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && file.delete())
+}
+
+internal fun mergedRanges(ranges: List<LongRange>): List<LongRange> {
+    if (ranges.isEmpty()) return emptyList()
+    val merged = mutableListOf<LongRange>()
+    for (range in ranges.sortedBy { it.first }) {
+        val last = merged.lastOrNull()
+        if (last != null && range.first <= last.last + 1) {
+            merged[merged.size - 1] = last.first..maxOf(last.last, range.last)
+        } else {
+            merged.add(range)
+        }
+    }
+    return merged
+}
+
+internal fun contiguousReceived(ranges: List<LongRange>): Long {
+    var contiguous = 0L
+    for (range in mergedRanges(ranges)) {
+        if (range.first > contiguous) break
+        if (range.last + 1 > contiguous) contiguous = range.last + 1
+    }
+    return contiguous
+}
+
+/**
+ * 把分块请求体直接写到主分块文件的 [offset] 处，边写边计算 SHA-256。
+ * 不创建临时文件、不做逐块 fsync，也不关闭 NanoHTTPD 的 socket 输入流：
+ * 响应和后续 keep-alive 请求都要复用这条连接。校验失败时该区间不会被计入
+ * 进度，重发同一偏移即可覆盖，不会污染已完成的数据。
+ */
+internal fun writeChunkAt(input: InputStream, target: File, offset: Long, expectedBytes: Long): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    RandomAccessFile(target, "rw").use { output ->
+        output.seek(offset)
+        val buffer = ByteArray(CHUNK_COPY_BUFFER_BYTES)
+        var copied = 0L
+        while (copied < expectedBytes) {
+            val count = input.read(buffer, 0, minOf(buffer.size.toLong(), expectedBytes - copied).toInt())
+            if (count < 0) break
+            if (count == 0) continue
+            output.write(buffer, 0, count)
+            digest.update(buffer, 0, count)
+            copied += count
+        }
+        if (copied != expectedBytes) {
+            throw TransferException(400, "incomplete_upload", "分块内容不完整")
+        }
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
 }
 
 internal fun validateEmptyRequestLength(declaredSize: Long) {
@@ -74,8 +125,18 @@ class ReceiverServer(
         val fileName: String,
         val totalSize: Long,
         val expectedHash: String,
-        var received: Long = 0L,
-    )
+        val completedRanges: MutableList<LongRange> = mutableListOf(),
+        val inFlightRanges: MutableSet<LongRange> = mutableSetOf(),
+    ) {
+        fun received(): Long = contiguousReceived(completedRanges)
+
+        fun addCompleted(offset: Long, size: Long) {
+            completedRanges.add(offset until (offset + size))
+            val merged = mergedRanges(completedRanges)
+            completedRanges.clear()
+            completedRanges.addAll(merged)
+        }
+    }
 
     private val appContext = context.applicationContext
     private val uploading = AtomicBoolean(false)
@@ -230,34 +291,6 @@ class ReceiverServer(
         }
     }
 
-    /**
-     * Copy the raw request body directly into [target]. This bypasses
-     * NanoHTTPD's parseBody path, which would otherwise materialize the chunk
-     * in a temp file, then copy it into a second temp file, then let us copy
-     * it again into the chunk file.
-     */
-    private fun readChunkBody(session: IHTTPSession, target: File, expectedBytes: Long) {
-        // 注意：绝不能关闭 NanoHTTPD 传入的 inputStream。它直接包着这次请求的
-        // socket，一旦关闭，分块响应（202）和后续 keep-alive 请求都写不出去，
-        // 电脑端会看到 “Remote end closed connection without response”。
-        val input = session.inputStream
-        FileOutputStream(target).use { output ->
-            val buffer = ByteArray(CHUNK_COPY_BUFFER_BYTES)
-            var copied = 0L
-            while (copied < expectedBytes) {
-                val count = input.read(buffer, 0, minOf(buffer.size.toLong(), expectedBytes - copied).toInt())
-                if (count < 0) break
-                if (count == 0) continue
-                output.write(buffer, 0, count)
-                copied += count
-            }
-            if (copied != expectedBytes || target.length() != expectedBytes) {
-                throw TransferException(400, "incomplete_upload", "分块内容不完整")
-            }
-            output.fd.sync()
-        }
-    }
-
     private fun prepareTransfer(session: IHTTPSession): Response {
         requireAuthorized(session)
         val id = prepareTransferId(session.uri)
@@ -329,10 +362,10 @@ class ReceiverServer(
         totalSize: Long,
         expectedHash: String,
         offset: Long,
+        size: Long,
     ): ChunkTransfer {
         return synchronized(transferLock) {
             if (stopping.get()) throw TransferException(503, "receiver_stopped", "接收服务正在停止")
-            if (uploading.get()) throw TransferException(409, "busy", "手机正在接收另一个数据块")
             val current = chunkTransfer
             if (current == null) {
                 if (activeTransferId != null || offset != 0L) {
@@ -348,7 +381,6 @@ class ReceiverServer(
                     chunkTransfer = it
                     activeTransferId = id
                     cancelRequested = false
-                    uploading.set(true)
                 }
             } else {
                 if (current.id != id) throw TransferException(409, "busy", "手机正在接收另一个主题")
@@ -357,12 +389,17 @@ class ReceiverServer(
                 ) {
                     throw TransferException(409, "transfer_mismatch", "分块会话参数不一致")
                 }
-                if (offset != current.received) {
-                    throw TransferException(409, "unexpected_offset", "分块偏移量与手机记录不一致")
-                }
-                uploading.set(true)
-                current
             }
+            val currentSession = chunkTransfer
+                ?: throw TransferException(409, "unexpected_offset", "上传必须从偏移量 0 开始")
+            val range = offset until (offset + size)
+            // 并行连接各自写不重叠的区间；已完成区间允许幂等重写（断线重发）。
+            if (currentSession.inFlightRanges.any { it.first < range.last && range.first < it.last }) {
+                throw TransferException(409, "busy", "手机正在接收同一块数据")
+            }
+            currentSession.inFlightRanges.add(range)
+            uploading.set(true)
+            currentSession
         }
     }
 
@@ -394,51 +431,37 @@ class ReceiverServer(
             ?.let { Uri.decode(it) }
             ?: throw TransferException(400, "missing_filename", "请求缺少主题文件名")
         val fileName = Protocol.safeFileName(requestedName)
-        val state = reserveChunk(id, fileName, totalSize, expectedHash, offset)
-        val incoming = File(appContext.cacheDir, "hwt_incoming_${System.nanoTime()}.part")
+        val state = reserveChunk(id, fileName, totalSize, expectedHash, offset, declaredSize)
+        val range = offset until (offset + declaredSize)
         try {
-            readChunkBody(session, incoming, declaredSize)
-            if (!Protocol.sha256(incoming).equals(chunkHash, ignoreCase = true)) {
+            val actualHash = writeChunkAt(session.inputStream, state.file, offset, declaredSize)
+            if (!actualHash.equals(chunkHash, ignoreCase = true)) {
                 throw TransferException(422, "hash_mismatch", "分块 SHA-256 校验失败")
             }
-            synchronized(transferLock) {
+            val contiguous = synchronized(transferLock) {
                 val current = chunkTransfer?.takeIf { it.id == id }
                     ?: throw TransferException(499, "cancelled", "上传已取消")
                 if (cancelRequested) throw TransferException(499, "cancelled", "上传已取消")
-                if (current.received != offset) {
-                    throw TransferException(409, "unexpected_offset", "分块偏移量与手机记录不一致")
-                }
-                if (current.file.length() != current.received) {
-                    discardChunkLocked(id)?.delete()
-                    throw TransferException(503, "storage_unavailable", "分块临时文件状态异常")
-                }
-                try {
-                    FileInputStream(incoming).use { input ->
-                        FileOutputStream(current.file, true).use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                } catch (exc: Exception) {
-                    discardChunkLocked(id)?.delete()
-                    throw TransferException(503, "storage_unavailable", "无法保存上传分块").also {
-                        it.addSuppressed(exc)
-                    }
-                }
-                current.received += declaredSize
-                if (current.file.length() != current.received) {
-                    discardChunkLocked(id)?.delete()
-                    throw TransferException(503, "storage_unavailable", "无法保存上传分块")
-                }
+                current.inFlightRanges.remove(range)
+                if (current.inFlightRanges.isEmpty()) uploading.set(false)
+                current.addCompleted(offset, declaredSize)
+                current.received()
             }
             return json(202, JSONObject()
                 .put("state", "receiving")
                 .put("transfer_id", id)
-                .put("received", state.received)
+                .put("received", contiguous)
                 .put("total", state.totalSize)
-                .put("next_offset", state.received))
+                .put("next_offset", contiguous)
+                .put("chunk_offset", offset))
         } finally {
-            incoming.delete()
-            synchronized(transferLock) { uploading.set(false) }
+            synchronized(transferLock) {
+                val current = chunkTransfer?.takeIf { it.id == id }
+                if (current != null) {
+                    current.inFlightRanges.remove(range)
+                    if (current.inFlightRanges.isEmpty()) uploading.set(false)
+                }
+            }
         }
     }
 
@@ -456,14 +479,16 @@ class ReceiverServer(
                     .put("state", "committing")
                     .put("transfer_id", id))
             }
-            if (uploading.get()) throw TransferException(409, "busy", "手机正在接收另一个数据块")
             val current = chunkTransfer?.takeIf { it.id == id }
                 ?: throw TransferException(404, "transfer_not_found", "上传会话不存在")
+            if (current.inFlightRanges.isNotEmpty()) {
+                throw TransferException(409, "busy", "手机正在接收另一个数据块")
+            }
             if (cancelRequested) {
                 discardChunkLocked(id)?.delete()
                 throw TransferException(499, "cancelled", "上传已取消")
             }
-            if (current.received != current.totalSize) {
+            if (current.received() != current.totalSize) {
                 throw TransferException(409, "incomplete_upload", "上传分块尚未全部收到")
             }
             committingTransferId = id
@@ -513,12 +538,13 @@ class ReceiverServer(
         }
         val chunk = synchronized(transferLock) { chunkTransfer?.takeIf { it.id == id } }
         if (chunk != null) {
+            val contiguous = chunk.received()
             return json(202, JSONObject()
                 .put("state", "receiving")
                 .put("transfer_id", id)
-                .put("received", chunk.received)
+                .put("received", contiguous)
                 .put("total", chunk.totalSize)
-                .put("next_offset", chunk.received))
+                .put("next_offset", contiguous))
         }
         val receiving = synchronized(transferLock) { activeTransferId == id }
         return if (receiving) {

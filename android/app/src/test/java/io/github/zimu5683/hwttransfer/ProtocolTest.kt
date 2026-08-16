@@ -179,6 +179,7 @@ class ProtocolTest {
                 Protocol.FEATURE_TRANSFER_CANCEL,
                 Protocol.FEATURE_TRANSFER_CHUNKED,
                 Protocol.FEATURE_TRANSFER_PREPARE,
+                Protocol.FEATURE_TRANSFER_PARALLEL,
             ),
             Protocol.ADVERTISED_FEATURES,
         )

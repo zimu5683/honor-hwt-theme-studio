@@ -16,7 +16,7 @@
   "name": "ELP-AN00",
   "http_port": 48621,
   "app_version": "0.1.5",
-  "features": ["device_profile", "transfer_cancel", "transfer_prepare", "transfer_chunked"]
+  "features": ["device_profile", "transfer_cancel", "transfer_prepare", "transfer_chunked", "transfer_parallel"]
 }
 ```
 
@@ -176,7 +176,7 @@ APK 只接受包含根目录 `description.xml` 文件的有效 ZIP，并在读�
 - `X-HWT-Chunk-SHA256: <chunk_sha256>`
 - `X-HWT-File-Name: <urlencoded UTF-8 filename>`
 
-手机严格要求分块从当前 `next_offset` 开始，单块不超过 4 MiB，并在写入临时文件前校验该块摘要。
+手机直接按偏移把分块写入会话文件并在写入时计算该块摘要，单块不超过 4 MiB；校验失败的区间不会被计入进度，重发同一偏移会覆盖旧数据。
 成功接收返回 `202`：
 
 ```json
@@ -192,6 +192,16 @@ APK 只接受包含根目录 `description.xml` 文件的有效 ZIP，并在读�
 服务停止、用户取消或进程重启时会清理未完成的分块状态和受控命名的 `.uploading` 缓存文件；不符合普通文件条件的缓存对象不会被删除。
 
 手机读取分块请求体时必须保持请求连接不关闭：分块 `202` 响应和后续 keep-alive 分块复用同一条 socket，关闭请求流会让电脑端收到“Remote end closed connection without response”。手机端 HTTP socket 读超时为 120 秒（NanoHTTPD 默认 5 秒），慢速 Wi-Fi 下的大分块/整包上传也能完成，空闲清理仍由 30 分钟计时任务负责。
+
+### 并行分块（`transfer_parallel`）
+
+当手机在 `features` 中声明 `transfer_parallel` 时，桌面端可同时使用 3 条连接各传一块，
+让网络传输与手机落盘/校验重叠进行。规则如下：
+
+- 同一会话内的分块偏移互不重叠；已完成区间允许幂等重写（断线重发同一偏移）。
+- 分块响应额外携带 `chunk_offset`（本次写入的起始偏移），`received`/`next_offset` 仍表示从 0 开始的连续已收字节数，可能落后于并行在途的分块。
+- 任一连接中断时，桌面端等其余在途分块结束后取消会话并整段重试；重试耗尽后按「并行分块 → 顺序分块 → 整包 PUT」逐级降级。
+- 未声明该能力的旧版手机助手不受影响，桌面端继续使用单连接顺序分块。
 
 #### `POST /api/v1/transfers/{id}/complete`
 

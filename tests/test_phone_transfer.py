@@ -8,7 +8,7 @@ import tempfile
 import threading
 import unittest
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -17,6 +17,7 @@ from hwtstudio.phone_transfer import (
     CHUNK_SIZE,
     DISCOVERY_REQUEST,
     FEATURE_TRANSFER_CHUNKED,
+    FEATURE_TRANSFER_PARALLEL,
     FEATURE_TRANSFER_PREPARE,
     MAX_FILENAME_BYTES,
     MAX_REMOTE_ERROR_CHARS,
@@ -331,6 +332,30 @@ class InvalidHttpDiscoveryConnection(HttpDiscoveryConnection):
         return FakeHttpResponse({"protocol": 1, "name": "缺少设备标识"})
 
 
+class SerialExecutor:
+    """串行执行已提交任务，使并行上传测试的计划序列保持确定。"""
+
+    def __init__(self, max_workers: int = 1):
+        self.max_workers = max_workers
+
+    def submit(self, function, *args, **kwargs):
+        future = Future()
+        try:
+            future.set_result(function(*args, **kwargs))
+        except BaseException as exc:
+            future.set_exception(exc)
+        return future
+
+    def shutdown(self, wait=True, *, cancel_futures=False):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 class PhoneTransferTests(unittest.TestCase):
     def test_sha256_file_reports_incremental_progress(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -602,7 +627,8 @@ class PhoneTransferTests(unittest.TestCase):
             content = b"payload"
             path.write_bytes(content)
             ChunkedConnection.instances = []
-            ChunkedConnection.plans = [OSError("[WinError 10054] 远程主机强迫关闭了一个现有的连接。")] * 5
+            # 4 次分块重试 + 整包 PUT 及它的一次幂等重试，全部断开。
+            ChunkedConnection.plans = [OSError("[WinError 10054] 远程主机强迫关闭了一个现有的连接。")] * 6
             device = PhoneDevice(
                 "phone-1", "测试手机", "127.0.0.1", token="token",
                 features=[FEATURE_TRANSFER_CHUNKED],
@@ -619,8 +645,8 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, "upload_interrupted")
             self.assertGreaterEqual(status.call_count, 3)
             cancel.assert_called_once()
-            # 4 次分块重试耗尽后回退到一次整包 PUT，同样断开才报错。
-            self.assertEqual(len(ChunkedConnection.instances), 5)
+            # 4 次分块重试耗尽后回退到整包 PUT，整包自身重试一次仍断开。
+            self.assertEqual(len(ChunkedConnection.instances), 6)
 
     def test_chunked_upload_falls_back_to_legacy_put_when_chunk_connection_closes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -660,6 +686,117 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertEqual(legacy_request.method, "PUT")
             self.assertIn("/api/v1/themes/", legacy_request.target)
             self.assertNotIn("X-HWT-Chunk-Offset", legacy_request.headers)
+
+    def test_parallel_chunk_upload_sends_offsets_and_commits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "并行主题.hwt"
+            content = b"a" * CHUNK_SIZE + b"b" * CHUNK_SIZE
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            completed = {
+                "stored_name": "并行主题.hwt", "destination": "Honor/Themes/并行主题.hwt",
+                "size": len(content), "sha256": digest, "overwritten": False,
+                "theme_app_opened": False,
+            }
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (202, {
+                    "state": "receiving", "transfer_id": "session", "received": CHUNK_SIZE,
+                    "total": len(content), "next_offset": CHUNK_SIZE, "chunk_offset": 0,
+                }),
+                (202, {
+                    "state": "receiving", "transfer_id": "session", "received": len(content),
+                    "total": len(content), "next_offset": len(content), "chunk_offset": CHUNK_SIZE,
+                }),
+                (201, completed),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_PARALLEL],
+            )
+            stages = []
+            with (
+                patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection),
+                patch("hwtstudio.phone_transfer.ThreadPoolExecutor", SerialExecutor),
+            ):
+                result = upload_theme(path, device, progress=lambda s, t, st: stages.append(st))
+
+            self.assertEqual(result["sha256"], digest)
+            self.assertEqual(len(ChunkedConnection.instances), 3)
+            chunk_requests = [request for request in ChunkedConnection.instances if request.method == "PUT"]
+            self.assertEqual(
+                [request.headers["X-HWT-Chunk-Offset"] for request in chunk_requests],
+                ["0", str(CHUNK_SIZE)],
+            )
+            self.assertEqual(bytes(chunk_requests[0].body), content[:CHUNK_SIZE])
+            self.assertEqual(bytes(chunk_requests[1].body), content[CHUNK_SIZE:])
+            self.assertTrue(ChunkedConnection.instances[-1].target.endswith("/complete"))
+            parallel_stages = [stage for stage in stages if stage == "正在并行分块发送到手机"]
+            self.assertEqual(len(parallel_stages), 2)
+
+    def test_parallel_upload_falls_back_to_sequential_chunks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "回退并行主题.hwt"
+            content = b"payload"
+            path.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            completed = {
+                "stored_name": path.name, "destination": f"Honor/Themes/{path.name}",
+                "size": len(content), "sha256": digest, "overwritten": False,
+                "theme_app_opened": False,
+            }
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                OSError("并行块响应前断开"),
+                OSError("并行块响应前断开"),
+                OSError("并行块响应前断开"),
+                OSError("并行块响应前断开"),
+                (202, {
+                    "state": "receiving", "transfer_id": "session", "received": len(content),
+                    "total": len(content), "next_offset": len(content),
+                }),
+                (201, completed),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_PARALLEL, FEATURE_TRANSFER_CHUNKED],
+            )
+            stages = []
+            with (
+                patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection),
+                patch("hwtstudio.phone_transfer.ThreadPoolExecutor", SerialExecutor),
+                patch("hwtstudio.phone_transfer._cancel_remote_transfer") as cancel,
+            ):
+                result = upload_theme(path, device, progress=lambda s, t, st: stages.append(st))
+
+            self.assertEqual(result["sha256"], digest)
+            self.assertIn("并行发送失败，正在切换为顺序分块发送", stages)
+            # 并行尝试 4 次各断开一次，之后顺序分块一块 + 提交一次。
+            self.assertEqual(len(ChunkedConnection.instances), 6)
+            self.assertEqual(cancel.call_count, 4)
+
+    def test_parallel_upload_propagates_non_connection_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "并行校验失败主题.hwt"
+            path.write_bytes(b"payload")
+            ChunkedConnection.instances = []
+            ChunkedConnection.plans = [
+                (422, {"code": "hash_mismatch", "message": "分块 SHA-256 校验失败", "transfer_id": "session"}),
+            ]
+            device = PhoneDevice(
+                "phone-1", "测试手机", "127.0.0.1", token="token",
+                features=[FEATURE_TRANSFER_PARALLEL],
+            )
+
+            with (
+                patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection),
+                patch("hwtstudio.phone_transfer.ThreadPoolExecutor", SerialExecutor),
+            ):
+                with self.assertRaisesRegex(PhoneTransferError, "校验失败") as raised:
+                    upload_theme(path, device)
+
+            self.assertEqual(raised.exception.code, "hash_mismatch")
+            self.assertEqual(len(ChunkedConnection.instances), 1)
 
     def test_chunked_upload_does_not_resend_last_chunk_when_commit_response_is_lost(self):
         with tempfile.TemporaryDirectory() as directory:

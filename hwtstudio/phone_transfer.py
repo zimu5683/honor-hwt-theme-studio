@@ -25,6 +25,7 @@ from .locking import interprocess_lock
 PROTOCOL_VERSION = 1
 FEATURE_TRANSFER_CHUNKED = "transfer_chunked"
 FEATURE_TRANSFER_PREPARE = "transfer_prepare"
+FEATURE_TRANSFER_PARALLEL = "transfer_parallel"
 DISCOVERY_PORT = 48620
 HTTP_PORT = 48621
 DISCOVERY_REQUEST = b"HWTSTUDIO_DISCOVER_V1"
@@ -1388,27 +1389,183 @@ def _upload_theme_once(path: Path, device: PhoneDevice, *, transfer_id: str,
     )
 
 
+PARALLEL_CHUNK_WINDOW = 3
+
+
+def _upload_theme_parallel(path: Path, device: PhoneDevice, *, transfer_id: str,
+                           cancelled: threading.Event | None,
+                           progress: Callable[[int, int, str], None] | None,
+                           timeout: float) -> dict:
+    """多连接并行分块上传：多个连接各传一块，让网络传输与手机落盘重叠。
+
+    手机端要求同一会话内的分块偏移互不重叠（已完成区间允许幂等重写）。
+    任一连接中断时，等待在途分块结束、取消会话后整段重试；重试耗尽后抛
+    upload_interrupted，由 upload_theme 逐级回退到顺序分块/整包 PUT。
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    initial_signature = _file_signature(path)
+    size = initial_signature[2]
+    if size > MAX_FILE_SIZE:
+        raise PhoneTransferError("HWT 文件超过 1 GiB 上限", code="too_large")
+    if not device.token:
+        raise PhoneTransferError("手机尚未配对", code="not_paired")
+    callback = progress or (lambda _sent, _total, _stage: None)
+    try:
+        digest = sha256_file(
+            path,
+            cancelled=cancelled,
+            progress=lambda completed, total: callback(completed, total, HASH_PROGRESS_STAGE),
+        )
+    except OSError as exc:
+        raise PhoneTransferError("主题文件在校验时不可用，请重新选择文件", code="file_changed") from exc
+    _ensure_file_signature(path, initial_signature, "校验后")
+    filename = safe_hwt_filename(path.name)
+    offsets = list(range(0, size, CHUNK_SIZE))
+    for attempt in range(4):
+        if attempt:
+            _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
+            callback(0, 0, "并行发送中断，正在重试")
+        else:
+            callback(0, 0, PREPARE_PROGRESS_STAGE)
+        if FEATURE_TRANSFER_PREPARE in device.features:
+            if cancelled and cancelled.is_set():
+                raise TransferCancelled()
+            _prepare_transfer(
+                device, transfer_id, filename=filename, size=size, digest=digest, timeout=timeout,
+            )
+
+        sent_bytes = [0]
+        sent_lock = threading.Lock()
+
+        def send_one(offset: int) -> None:
+            if cancelled and cancelled.is_set():
+                raise TransferCancelled()
+            _ensure_file_signature(path, initial_signature, "发送中")
+            with path.open("rb") as stream:
+                stream.seek(offset)
+                block = stream.read(min(CHUNK_SIZE, size - offset))
+            if not block:
+                raise PhoneTransferError("主题文件在分块读取时被截断，请重新选择文件", code="file_changed")
+            chunk_digest = hashlib.sha256(block).hexdigest()
+            uploader = _ChunkUploader(device, timeout)
+            try:
+                payload = uploader.send(
+                    transfer_id,
+                    block,
+                    total_size=size,
+                    offset=offset,
+                    digest=digest,
+                    chunk_digest=chunk_digest,
+                    filename=filename,
+                )
+            finally:
+                uploader.close()
+            state = _payload_text(payload, "state", "分块上传", required=True)
+            if state == "completed":
+                return
+            if state != "receiving":
+                raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response")
+            _payload_transfer_id(payload, transfer_id, "分块上传")
+            if "chunk_offset" in payload:
+                if _payload_int(payload, "chunk_offset", "分块上传") != offset:
+                    raise PhoneTransferError("手机返回的分块偏移量不一致", code="bad_response")
+            with sent_lock:
+                sent_bytes[0] += len(block)
+                callback(sent_bytes[0], size, "正在并行分块发送到手机")
+            if cancelled and cancelled.is_set():
+                raise TransferCancelled()
+
+        executor: ThreadPoolExecutor | None = None
+        try:
+            executor = ThreadPoolExecutor(max_workers=min(PARALLEL_CHUNK_WINDOW, max(1, len(offsets))))
+            futures = [executor.submit(send_one, offset) for offset in offsets]
+            first_error: BaseException | None = None
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except TransferCancelled:
+                    raise
+                except Exception as exc:
+                    if first_error is None:
+                        first_error = exc
+            if first_error is not None:
+                raise first_error
+        except PhoneTransferError as exc:
+            if exc.code != "upload_interrupted":
+                raise
+            if cancelled and cancelled.is_set():
+                _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
+                raise TransferCancelled()
+            if attempt >= 3:
+                raise
+            continue
+        finally:
+            if executor is not None:
+                executor.shutdown(wait=False, cancel_futures=True)
+
+        if cancelled and cancelled.is_set():
+            _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
+            raise TransferCancelled()
+        _ensure_file_signature(path, initial_signature, "提交前")
+        try:
+            payload = _commit_chunk(device, transfer_id, timeout=timeout)
+        except PhoneTransferError as exc:
+            if not _is_upload_connection_error(exc.code):
+                raise
+            status_payload = _remote_transfer_status(
+                device, transfer_id, timeout=min(timeout, 5.0), require_transfer_id=True,
+            )
+            if status_payload and status_payload.get("state") == "completed":
+                _ensure_file_integrity(path, initial_signature, digest, "状态确认后")
+                return _upload_result_from_payload(
+                    status_payload,
+                    path=path,
+                    device=device,
+                    digest=digest,
+                    size=size,
+                    filename=filename,
+                )
+            if attempt >= 3:
+                raise
+            continue
+        _ensure_file_integrity(path, initial_signature, digest, "提交响应后")
+        return _upload_result_from_payload(
+            payload,
+            path=path,
+            device=device,
+            digest=digest,
+            size=size,
+            filename=filename,
+        )
+    raise PhoneTransferError("并行分块上传连接中断", code="upload_interrupted")
+
+
 def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event | None = None,
                  progress: Callable[[int, int, str], None] | None = None,
                  timeout: float = 1800.0) -> dict:
-    """Upload once, retrying one connection failure with the same idempotency key.
+    """上传主题：按两端能力依次尝试 并行分块 → 顺序分块 → 整包 PUT。
 
-    分块上传把连接重试耗尽后，先取消手机上残留的分块会话，再回退到一次整包
-    PUT：0.2.4 及更早的手机助手会在分块请求后直接断开连接（电脑端表现为
-    “Remote end closed connection without response”），但它们的整包 PUT
-    路径仍然可用。
+    每一级在连接重试耗尽后都先取消手机上残留的会话，再降级到下一级，
+    保证没有并行/分块能力的旧版手机助手（如 0.2.4 APK）也能收到主题。
     """
     path = Path(path)
     transfer_id = uuid.uuid4().hex
-    if FEATURE_TRANSFER_CHUNKED in device.features:
+    callback = progress or (lambda _sent, _total, _stage: None)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    if not device.token:
+        raise PhoneTransferError("手机尚未配对", code="not_paired")
+    if FEATURE_TRANSFER_PARALLEL in device.features:
         try:
-            return _upload_theme_chunked(
+            return _upload_theme_parallel(
                 path,
                 device,
-                cancelled=cancelled,
-                progress=progress,
-                timeout=timeout,
                 transfer_id=transfer_id,
+                cancelled=cancelled,
+                progress=callback,
+                timeout=timeout,
             )
         except PhoneTransferError as exc:
             if exc.code != "upload_interrupted":
@@ -1416,29 +1573,24 @@ def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event 
             if cancelled and cancelled.is_set():
                 raise TransferCancelled() from exc
             _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
-            callback = progress or (lambda _sent, _total, _stage: None)
-            callback(0, 0, "分块发送失败，正在切换为整包发送")
-            fallback_signature, fallback_digest = _snapshot_upload_file(
-                path,
-                cancelled=cancelled,
-                progress=callback,
-            )
-            return _upload_theme_once(
+            callback(0, 0, "并行发送失败，正在切换为顺序分块发送")
+    if FEATURE_TRANSFER_CHUNKED in device.features:
+        try:
+            return _upload_theme_chunked(
                 path,
                 device,
                 transfer_id=transfer_id,
                 cancelled=cancelled,
                 progress=callback,
-                initial_signature=fallback_signature,
-                digest=fallback_digest,
-                prepare_metadata=False,
                 timeout=timeout,
             )
-    callback = progress or (lambda _sent, _total, _stage: None)
-    if not path.is_file():
-        raise FileNotFoundError(path)
-    if not device.token:
-        raise PhoneTransferError("手机尚未配对", code="not_paired")
+        except PhoneTransferError as exc:
+            if exc.code != "upload_interrupted":
+                raise
+            if cancelled and cancelled.is_set():
+                raise TransferCancelled() from exc
+            _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
+            callback(0, 0, "分块发送失败，正在切换为整包发送")
     initial_signature, digest = _snapshot_upload_file(
         path,
         cancelled=cancelled,
