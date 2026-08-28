@@ -9,8 +9,9 @@ from ..models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
 from ..semantic import TYPE_LABELS, friendly_resource_label
 from .design_system import Colors
 
-
 HEADERS = ["状态", "应用/区域", "模块", "类型", "中文作用", "资源名", "路径", "当前设置"]
+# Qt 官方模式：空 QModelIndex 作为默认参数，避免在函数默认值里每次构造。
+_INVALID_INDEX = QModelIndex()
 
 
 class ResourceTableModel(QAbstractTableModel):
@@ -29,16 +30,18 @@ class ResourceTableModel(QAbstractTableModel):
         self.resources = list(resources)
         self._friendly_labels = [friendly_resource_label(slot) for slot in self.resources]
         self._search_texts = [
-            " ".join((slot.id, slot.module, slot.container, slot.name, slot.path, slot.category,
-                       slot.label, label)).lower()
-            for slot, label in zip(self.resources, self._friendly_labels)
+            (
+                f"{slot.id} {slot.module} {slot.container} {slot.name} {slot.path} "
+                f"{slot.category} {slot.label} {label}"
+            ).lower()
+            for slot, label in zip(self.resources, self._friendly_labels, strict=True)
         ]
         self.endResetModel()
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent=_INVALID_INDEX):
         return 0 if parent.isValid() else len(self.resources)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent=_INVALID_INDEX):
         return len(HEADERS)
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):

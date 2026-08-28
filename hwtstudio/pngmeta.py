@@ -5,7 +5,6 @@ import binascii
 import struct
 from pathlib import Path
 
-
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 ANDROID_CHUNKS = {b"npTc", b"npLb", b"npOl"}
 

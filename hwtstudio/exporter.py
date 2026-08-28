@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
@@ -20,9 +21,17 @@ from .paths import ensure_no_symlink_parents, unique_temp_path
 from .semantic import SURFACE_TREATMENT_MODES, background_setting_for_slot, build_surface_targets
 from .validation import validate_change_value, validate_custom_slot, validate_theme
 
-
 DEFAULT_PROJECT_NAME = "我的主题"
 DEFAULT_THEME_TITLE = "空白主题"
+
+
+class ExportCancelled(Exception):
+    """用户取消了导出；在检查点处抛出以尽快终止后台导出。"""
+
+
+def _check_export_cancelled(cancelled: threading.Event | None) -> None:
+    if cancelled is not None and cancelled.is_set():
+        raise ExportCancelled("已取消导出")
 
 
 def safe_filename(value: str) -> str:
@@ -51,7 +60,7 @@ def _effective_theme_title(project: ThemeProject, output: Path) -> str:
 
 
 def default_export_name(project: ThemeProject) -> str:
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
     return f"{safe_filename(_preferred_project_title(project))}_{timestamp}.hwt"
 
 
@@ -109,10 +118,9 @@ def _target_keys(slot: ResourceSlot, scanned_ids: set[str]) -> list[tuple[str, .
     if slot.synthetic:
         return [("image", target["module"], target["path"]) for target in slot.targets]
     target_module, _, _, target_path = _slot_target(slot, scanned_ids)
-    if slot.id in scanned_ids:
-        target_paths = honor_resource_paths(slot.module, slot.path)
-    else:
-        target_paths = (target_path,)
+    target_paths = (
+        honor_resource_paths(slot.module, slot.path) if slot.id in scanned_ids else (target_path,)
+    )
     return [("image", target_module, path) for path in target_paths]
 
 
@@ -122,11 +130,13 @@ def _slot_priority(slot: ResourceSlot, scanned_ids: set[str]) -> int:
         return -1
     original = (slot.module, slot.container, slot.name, slot.path)
     converted = _slot_target(slot, scanned_ids)
-    if slot.resource_type in {"image", "icon", "wallpaper", "preview"}:
-        # A fan-out is a compatibility source even when its original path is
-        # otherwise unchanged; native Honor slots must win those targets.
-        if len(honor_resource_paths(slot.module, slot.path)) > 1:
-            return 1
+    # A fan-out is a compatibility source even when its original path is
+    # otherwise unchanged; native Honor slots must win those targets.
+    if (
+        slot.resource_type in {"image", "icon", "wallpaper", "preview"}
+        and len(honor_resource_paths(slot.module, slot.path)) > 1
+    ):
+        return 1
     return 2 if converted == original else 1
 
 
@@ -257,7 +267,12 @@ def _choose_targets(
     return selected
 
 
-def _prepare_export(project: ThemeProject, catalog: ThemeCatalog) -> dict:
+def _prepare_export(
+    project: ThemeProject,
+    catalog: ThemeCatalog,
+    *,
+    cancelled: threading.Event | None = None,
+) -> dict:
     slots = _slot_map(catalog, project)
     scanned_ids = {slot.id for slot in catalog.resources}
     errors: list[dict] = []
@@ -274,8 +289,9 @@ def _prepare_export(project: ThemeProject, catalog: ThemeCatalog) -> dict:
         if slot.id in known_ids or custom_ids.count(slot.id) > 1:
             errors.append({"kind": "duplicate_slot_id", "slot_id": slot.id})
 
-    value_count = image_count = skipped_count = 0
+    skipped_count = 0
     for slot_id, change in project.changes.items():
+        _check_export_cancelled(cancelled)
         if not change.enabled:
             continue
         slot = slots.get(slot_id)
@@ -416,7 +432,13 @@ def _module_bytes(files: dict[str, bytes], xml_items: dict[str, dict[tuple[str, 
     return output.getvalue()
 
 
-def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> tuple[Path, dict]:
+def export_theme(
+    project: ThemeProject,
+    catalog: ThemeCatalog,
+    output: Path,
+    *,
+    cancelled: threading.Event | None = None,
+) -> tuple[Path, dict]:
     output = Path(output)
     if output.name.lower().endswith(".report.json"):
         raise ValueError("导出文件名不能以 .report.json 结尾，请选择 .hwt 文件名")
@@ -425,7 +447,7 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
     ensure_no_symlink_parents(output, "导出目录不能包含符号链接")
     if catalog.source_path and _same_path(output, Path(catalog.source_path)):
         raise ValueError("不能覆盖资源目录对应的原始主题，请选择新的导出文件名")
-    prepared = _prepare_export(project, catalog)
+    prepared = _prepare_export(project, catalog, cancelled=cancelled)
     export_targets = prepared.pop("_targets")
     preflight = prepared
     if not preflight["valid"]:
@@ -448,6 +470,8 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
 
     rendered_by_slot: dict[object, bytes] = {}
     for target in export_targets:
+        # 渲染是导出最耗时的阶段，逐目标检查取消标记。
+        _check_export_cancelled(cancelled)
         key = target.key
         if key[0] == "xml":
             _, target_module, target_container, resource_type, target_name = key
@@ -505,6 +529,7 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
         modules = sorted(set(module_files) | set(module_xml))
         built_modules: dict[str, bytes] = {}
         for module in modules:
+            _check_export_cancelled(cancelled)
             data = _module_bytes(module_files[module], module_xml[module])
             if module == "icons":
                 root_entries["icons"] = data
@@ -532,7 +557,7 @@ def export_theme(project: ThemeProject, catalog: ThemeCatalog, output: Path) -> 
         "theme_title": theme_title,
         "sha256": digest,
         "source_catalog_sha256": catalog.source_sha256,
-        "generated_at": datetime.now().isoformat(),
+        "generated_at": datetime.now().astimezone().isoformat(),
         "applied_count": len(applied),
         "applied": applied,
         "skipped": skipped,

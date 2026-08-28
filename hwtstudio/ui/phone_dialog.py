@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import logging
 import ipaddress
+import logging
 import threading
 
-from PySide6.QtCore import Qt, QObject, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PySide6.QtWidgets import (
@@ -29,9 +29,8 @@ from ..phone_transfer import (
     bounded_ipv4_discovery_targets,
     discover_phones,
 )
-from .design_system import set_role, set_state
 from ..qr_pairing import QrPairingServer, make_qr_image, qr_connect_url
-
+from .design_system import set_role, set_state
 
 LOGGER = logging.getLogger(__name__)
 
@@ -218,7 +217,7 @@ class PhoneTransferDialog(QDialog):
                 if address.protocol() != QAbstractSocket.IPv4Protocol:
                     continue
                 host = address.toString()
-                if host in ("127.0.0.1",) or host.startswith("169.254."):
+                if host == "127.0.0.1" or host.startswith("169.254."):
                     continue
                 hosts.append(host)
         # 优先普通局域网（192.168.x / 10.x / 172.16-31.x），再排代理/VPN 虚拟网卡。
@@ -239,8 +238,9 @@ class PhoneTransferDialog(QDialog):
             self._qr_server = QrPairingServer()
             self._qr_server.device_registered.connect(self._on_qr_registered)
             self._qr_server.start()
-        token, _ = self._qr_server.new_session()
-        host = self._qr_hosts()[0] if self._qr_hosts() else "127.0.0.1"
+        token = self._qr_server.new_session()
+        hosts = self._qr_hosts()
+        host = hosts[0] if hosts else "127.0.0.1"
         url = qr_connect_url(host, port=self._qr_server.port, session=token)
         image = make_qr_image(url, size=280)
         from PySide6.QtGui import QImage as _QImage
@@ -253,11 +253,8 @@ class PhoneTransferDialog(QDialog):
     def _on_qr_registered(self, device: PhoneDevice):
         self._devices[device.device_id] = device
         self._render_devices()
-        code_match = None
-        if "配对码 " in device.name:
-            code_match = device.name.rsplit("配对码 ", 1)[-1].rstrip("）")
-            if len(code_match) == 6 and code_match.isdigit():
-                self.code.setText(code_match)
+        if len(device.pair_code) == 6 and device.pair_code.isdigit():
+            self.code.setText(device.pair_code)
         self.tabs.setCurrentIndex(0)
         self.qr_status.setText(f"已收到手机 {device.name} 的注册，已自动填入配对码。")
         set_state(self.qr_status, "success")

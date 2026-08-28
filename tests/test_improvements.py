@@ -8,8 +8,8 @@ import shutil
 import stat
 import struct
 import tempfile
-import time
 import threading
+import time
 import unittest
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -20,12 +20,13 @@ from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
 
 from PIL import Image
 
+from hwtstudio.archive_safety import archive_data_overlaps
 from hwtstudio.blank import create_blank_theme
 from hwtstudio.catalog import load_catalog, save_catalog, save_source_compatibility_report, scan_theme
 from hwtstudio.common import (
+    MAX_ARCHIVE_COMPRESSION_RATIO,
     MAX_ARCHIVE_ENTRIES,
     MAX_ARCHIVE_ENTRY_BYTES,
-    MAX_ARCHIVE_COMPRESSION_RATIO,
     MAX_CATALOG_BYTES,
     MAX_PROJECT_BYTES,
     honor_module_name,
@@ -37,18 +38,16 @@ from hwtstudio.common import (
 from hwtstudio.exporter import default_export_name, export_theme, preflight_export, safe_filename
 from hwtstudio.imageops import render_image as render_source_image
 from hwtstudio.locking import InterprocessLockTimeoutError
-from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
-from hwtstudio.models import ThemeCatalog
+from hwtstudio.models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
 from hwtstudio.paths import bundled_catalog, unique_temp_path
+from hwtstudio.phone_transfer import TransferCancelled
 from hwtstudio.pngmeta import extract_android_chunks, inject_android_chunks
 from hwtstudio.projectio import load_project, project_assets_dir, save_project
-from hwtstudio.phone_transfer import TransferCancelled
-from hwtstudio.ssh_transfer import REMOTE_DIR, preflight_phone, transfer_to_phone
-from hwtstudio.services.catalog_service import load_preferred_catalog, save_user_catalog
 from hwtstudio.services import catalog_service
+from hwtstudio.services.catalog_service import load_preferred_catalog, save_user_catalog
 from hwtstudio.services.project_assets import asset_name, collect_project_assets
+from hwtstudio.ssh_transfer import REMOTE_DIR, preflight_phone, transfer_to_phone
 from hwtstudio.ui.dialogs import find_named_files
-from hwtstudio.archive_safety import archive_data_overlaps
 from hwtstudio.validation import validate_custom_slot, validate_theme
 from hwtstudio.xmlutil import parse_xml
 
@@ -83,7 +82,8 @@ class ImprovementTests(unittest.TestCase):
 
     def test_default_export_name_prefers_custom_title_then_project_name(self):
         with patch("hwtstudio.exporter.datetime") as mocked_datetime:
-            mocked_datetime.now.return_value.strftime.return_value = "20260814_120000"
+            now = mocked_datetime.now.return_value
+            now.astimezone.return_value.strftime.return_value = "20260814_120000"
             self.assertEqual(
                 default_export_name(ThemeProject(name="短信工程", title="短信主题")),
                 "短信主题_20260814_120000.hwt",
@@ -349,9 +349,8 @@ class ImprovementTests(unittest.TestCase):
                     raise OSError("工程文件不可写")
                 return original_write_bytes(path, data)
 
-            with patch.object(Path, "write_bytes", fail_project_write):
-                with self.assertRaisesRegex(OSError, "不可写"):
-                    save_project(project, target)
+            with patch.object(Path, "write_bytes", fail_project_write), self.assertRaisesRegex(OSError, "不可写"):
+                save_project(project, target)
             self.assertFalse(target.exists())
             self.assertFalse(project_assets_dir(target).exists())
             self.assertEqual(list(root.glob(".*.tmp")), [])
@@ -374,9 +373,8 @@ class ImprovementTests(unittest.TestCase):
                 Path(source_path).write_bytes(b"changed")
                 return result
 
-            with patch("hwtstudio.services.project_assets.shutil.copy2", side_effect=copy_then_mutate):
-                with self.assertRaisesRegex(OSError, "复制时发生变化"):
-                    save_project(project, target)
+            with patch("hwtstudio.services.project_assets.shutil.copy2", side_effect=copy_then_mutate), self.assertRaisesRegex(OSError, "复制时发生变化"):
+                save_project(project, target)
 
             self.assertFalse(target.exists())
             self.assertFalse(project_assets_dir(target).exists())
@@ -577,9 +575,8 @@ class ImprovementTests(unittest.TestCase):
                     raise OSError("工程提交失败")
                 return original_replace(source, destination)
 
-            with patch("hwtstudio.projectio.os.replace", side_effect=fail_new_project):
-                with self.assertRaisesRegex(OSError, "提交失败"):
-                    save_project(project, target)
+            with patch("hwtstudio.projectio.os.replace", side_effect=fail_new_project), self.assertRaisesRegex(OSError, "提交失败"):
+                save_project(project, target)
             self.assertEqual(target.read_bytes(), old_json)
             self.assertEqual(next(project_assets_dir(target).iterdir()).read_bytes(), old_asset)
             self.assertTrue(project.dirty)
@@ -614,9 +611,8 @@ class ImprovementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "placeholder.hwt"
             export_theme(project, self.catalog, output)
-            with ZipFile(output) as archive:
-                with Image.open(BytesIO(archive.read(slot.path))) as image:
-                    self.assertEqual(image.size, (slot.width, slot.height))
+            with ZipFile(output) as archive, Image.open(BytesIO(archive.read(slot.path))) as image:
+                self.assertEqual(image.size, (slot.width, slot.height))
 
     def test_export_rejects_source_mutation_after_preflight(self):
         slot = next(item for item in self.catalog.resources if item.resource_type == "wallpaper")
@@ -631,9 +627,8 @@ class ImprovementTests(unittest.TestCase):
                 Image.new("RGBA", (slot.width, slot.height), (60, 40, 20, 255)).save(path)
                 return render_source_image(path, target_slot, change)
 
-            with patch("hwtstudio.exporter.render_image", side_effect=mutate_then_render):
-                with self.assertRaisesRegex(ValueError, "源文件在导出期间发生变化"):
-                    export_theme(project, self.catalog, output)
+            with patch("hwtstudio.exporter.render_image", side_effect=mutate_then_render), self.assertRaisesRegex(ValueError, "源文件在导出期间发生变化"):
+                export_theme(project, self.catalog, output)
             self.assertFalse(output.exists())
 
     def test_icon_export_replaces_compatibility_module_without_duplicate(self):
@@ -762,12 +757,11 @@ class ImprovementTests(unittest.TestCase):
                     {"module": "icons", "path": "com.hihonor.appmarket.png"},
                 ],
             )
-            with ZipFile(output) as outer:
-                with ZipFile(BytesIO(outer.read("icons"))) as icons:
-                    self.assertEqual(
-                        set(icons.namelist()),
-                        {"com.hihonor.hstore.global.png", "com.hihonor.appmarket.png"},
-                    )
+            with ZipFile(output) as outer, ZipFile(BytesIO(outer.read("icons"))) as icons:
+                self.assertEqual(
+                    set(icons.namelist()),
+                    {"com.hihonor.hstore.global.png", "com.hihonor.appmarket.png"},
+                )
             self.assertEqual(
                 {item["path"] for item in report["applied"]},
                 {"com.hihonor.hstore.global.png", "com.hihonor.appmarket.png"},
@@ -816,12 +810,14 @@ class ImprovementTests(unittest.TestCase):
 
             output = Path(directory) / "native-priority.hwt"
             export_theme(project, catalog, output)
+            # ZipFile 的表达式必须在外层归档打开后再求值，这里必须保持嵌套写法。
             with ZipFile(output) as outer:
-                with ZipFile(BytesIO(outer.read("icons"))) as icons:
-                    with Image.open(BytesIO(icons.read("com.hihonor.hstore.global.png"))) as image:
-                        self.assertEqual(image.getpixel((0, 0))[:3], (220, 20, 20))
-                    with Image.open(BytesIO(icons.read("com.hihonor.appmarket.png"))) as image:
-                        self.assertEqual(image.getpixel((0, 0))[:3], (20, 20, 220))
+                icons_bytes = outer.read("icons")
+            with ZipFile(BytesIO(icons_bytes)) as icons:
+                with Image.open(BytesIO(icons.read("com.hihonor.hstore.global.png"))) as image:
+                    self.assertEqual(image.getpixel((0, 0))[:3], (220, 20, 20))
+                with Image.open(BytesIO(icons.read("com.hihonor.appmarket.png"))) as image:
+                    self.assertEqual(image.getpixel((0, 0))[:3], (20, 20, 220))
 
     def test_mapped_targets_with_same_content_are_merged(self):
         native = ResourceSlot(
@@ -894,9 +890,8 @@ class ImprovementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "native-wins.hwt"
             _, report = export_theme(project, catalog, output)
-            with ZipFile(output) as outer:
-                with ZipFile(BytesIO(outer.read("framework-res-hnext"))) as module:
-                    xml = module.read("theme.xml").decode("utf-8")
+            with ZipFile(output) as outer, ZipFile(BytesIO(outer.read("framework-res-hnext"))) as module:
+                xml = module.read("theme.xml").decode("utf-8")
             self.assertIn("#FF112233", xml)
             self.assertNotIn("#FF000000", xml)
             self.assertEqual(report["preflight"]["warnings"], result["warnings"])
@@ -1260,9 +1255,8 @@ class ImprovementTests(unittest.TestCase):
             except (OSError, NotImplementedError) as exc:
                 self.skipTest(f"当前环境无法创建符号链接：{exc}")
 
-            with patch("hwtstudio.services.catalog_service.data_dir", return_value=root):
-                with self.assertRaisesRegex(OSError, "符号链接"):
-                    save_user_catalog(catalog)
+            with patch("hwtstudio.services.catalog_service.data_dir", return_value=root), self.assertRaisesRegex(OSError, "符号链接"):
+                save_user_catalog(catalog)
 
             self.assertTrue(target.is_symlink())
             self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
@@ -1383,10 +1377,9 @@ class ImprovementTests(unittest.TestCase):
                 patch(
                     "hwtstudio.services.catalog_service.interprocess_lock",
                     side_effect=InterprocessLockTimeoutError("busy"),
-                ),
+                ),self.assertRaisesRegex(OSError, "busy")
             ):
-                with self.assertRaisesRegex(OSError, "busy"):
-                    save_user_catalog(catalog)
+                save_user_catalog(catalog)
 
             self.assertFalse((root / catalog_service._CATALOG_FILE_NAME).exists())
             self.assertFalse((root / catalog_service._REPORT_FILE_NAME).exists())
@@ -1449,10 +1442,8 @@ class ImprovementTests(unittest.TestCase):
                     raise OSError("模拟报告提交失败")
                 return real_replace(source, target)
 
-            with patch("hwtstudio.services.catalog_service.os.replace", side_effect=fail_report_replace):
-                with patch("hwtstudio.services.catalog_service.data_dir", return_value=root):
-                    with self.assertRaisesRegex(OSError, "提交校验失败"):
-                        save_user_catalog(new)
+            with patch("hwtstudio.services.catalog_service.os.replace", side_effect=fail_report_replace), patch("hwtstudio.services.catalog_service.data_dir", return_value=root), self.assertRaisesRegex(OSError, "提交校验失败"):
+                save_user_catalog(new)
 
             self.assertEqual((root / "catalog_daxue.json").read_bytes(), old_catalog)
             self.assertEqual((root / "source_compatibility.report.json").read_bytes(), old_report)
@@ -1474,7 +1465,7 @@ class ImprovementTests(unittest.TestCase):
             save_catalog(new, stages[0])
             save_source_compatibility_report(new, stages[1])
             entries = []
-            for target, stage, backup in zip(targets, stages, backups):
+            for target, stage, backup in zip(targets, stages, backups, strict=True):
                 shutil.copyfile(target, backup)
                 entries.append({
                     "target": target.name,
@@ -1580,9 +1571,8 @@ class ImprovementTests(unittest.TestCase):
                 os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000))
                 return "0" * 64
 
-            with patch("hwtstudio.ssh_transfer.local_sha256", side_effect=hash_then_mutate):
-                with self.assertRaisesRegex(RuntimeError, "校验后"):
-                    transfer_to_phone(path)
+            with patch("hwtstudio.ssh_transfer.local_sha256", side_effect=hash_then_mutate), self.assertRaisesRegex(RuntimeError, "校验后"):
+                transfer_to_phone(path)
 
     def test_ssh_transfer_cleans_remote_temp_after_upload_failure(self):
         def result(returncode=0, stdout="", stderr=""):
@@ -1625,12 +1615,15 @@ class ImprovementTests(unittest.TestCase):
                 return result()
 
             cancellation_event = cancelled
-            with patch(
-                "hwtstudio.ssh_transfer.preflight_phone",
-                return_value={"valid": True, "checks": [], "errors": [], "warnings": []},
-            ), patch("hwtstudio.ssh_transfer._run_with_cancel", side_effect=run_command):
-                with self.assertRaises(TransferCancelled):
-                    transfer_to_phone(path, cancelled=cancelled)
+            with (
+                patch(
+                    "hwtstudio.ssh_transfer.preflight_phone",
+                    return_value={"valid": True, "checks": [], "errors": [], "warnings": []},
+                ),
+                patch("hwtstudio.ssh_transfer._run_with_cancel", side_effect=run_command),
+                self.assertRaises(TransferCancelled),
+            ):
+                transfer_to_phone(path, cancelled=cancelled)
 
             self.assertEqual(len(calls), 3)
             self.assertIn("rm -f", calls[-1][2])

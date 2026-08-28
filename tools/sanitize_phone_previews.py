@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
-
 
 SCENES = {
     "launcher_home": {
@@ -197,7 +196,7 @@ def main() -> int:
         }
     manifest = {
         "schema": 1,
-        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "captured_at": datetime.now(UTC).isoformat(),
         "device": device,
         "app_versions": app_versions,
         "note": "基于真机截图的位置与效果预览；系统或应用版本变化可能影响最终形状。",

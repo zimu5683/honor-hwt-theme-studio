@@ -25,17 +25,21 @@ class PathTests(unittest.TestCase):
     def test_data_dir_rejects_relative_localappdata(self):
         if os.name != "nt":
             self.skipTest("LOCALAPPDATA 仅用于 Windows")
-        with patch.dict(os.environ, {"LOCALAPPDATA": "relative-app-data"}, clear=False):
-            with self.assertRaisesRegex(OSError, "必须是绝对路径"):
-                data_dir()
+        with (
+            patch.dict(os.environ, {"LOCALAPPDATA": "relative-app-data"}, clear=False),
+            self.assertRaisesRegex(OSError, "必须是绝对路径"),
+        ):
+            data_dir()
 
     def test_data_dir_rejects_application_path_that_is_a_file(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "HwtThemeStudio").write_text("not a directory", encoding="utf-8")
-            with patch.dict(os.environ, {"LOCALAPPDATA": str(root)}, clear=False):
-                with self.assertRaisesRegex(OSError, "应用数据目录不是目录"):
-                    data_dir()
+            with (
+                patch.dict(os.environ, {"LOCALAPPDATA": str(root)}, clear=False),
+                self.assertRaisesRegex(OSError, "应用数据目录不是目录"),
+            ):
+                data_dir()
 
     def test_data_dir_rejects_symlinked_application_directory(self):
         if not hasattr(os, "symlink"):
@@ -49,9 +53,11 @@ class PathTests(unittest.TestCase):
                 os.symlink(outside, app_dir, target_is_directory=True)
             except (OSError, NotImplementedError) as exc:
                 self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
-            with patch.dict(os.environ, {"LOCALAPPDATA": str(root)}, clear=False):
-                with self.assertRaisesRegex(OSError, "应用数据目录.*符号链接"):
-                    data_dir()
+            with (
+                patch.dict(os.environ, {"LOCALAPPDATA": str(root)}, clear=False),
+                self.assertRaisesRegex(OSError, "应用数据目录.*符号链接"),
+            ):
+                data_dir()
             self.assertEqual(list(outside.iterdir()), [])
 
     def test_data_dir_rejects_symlinked_parent_component(self):
@@ -71,9 +77,8 @@ class PathTests(unittest.TestCase):
                 patcher = patch.dict(os.environ, {"LOCALAPPDATA": str(configured_root)}, clear=False)
             else:
                 patcher = patch("hwtstudio.paths.Path.home", return_value=linked_home)
-            with patcher:
-                with self.assertRaisesRegex(OSError, "父路径.*符号链接"):
-                    data_dir()
+            with patcher, self.assertRaisesRegex(OSError, "父路径.*符号链接"):
+                data_dir()
             self.assertFalse((physical_home / "AppData").exists())
             self.assertFalse((physical_home / ".local").exists())
 

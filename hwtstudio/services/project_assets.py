@@ -9,7 +9,6 @@ from pathlib import Path
 from ..models import ThemeProject
 from ..paths import ensure_no_symlink_parents, unique_temp_path
 
-
 PROJECT_SUFFIX = ".hwtproj.json"
 
 

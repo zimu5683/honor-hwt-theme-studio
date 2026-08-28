@@ -10,13 +10,18 @@ from pathlib import Path
 from unittest.mock import patch
 
 from hwtstudio.updater import (
-    _sha256,
-    _fetch_json,
-    _extract_portable_archive,
     APP_NAME,
+    MAX_PATCH_SIZE,
     PORTABLE_EXECUTABLE_NAME,
+    PatchAsset,
+    Release,
     ReleaseAsset,
     VerifiedDownload,
+    _download_and_apply_patch,
+    _extract_portable_archive,
+    _fetch_checksum,
+    _fetch_json,
+    _sha256,
     download_asset,
     is_newer_version,
     is_windows_setup_asset,
@@ -84,9 +89,8 @@ class UpdaterTests(unittest.TestCase):
                 ],
             }
         )
-        with patch("hwtstudio.updater.urllib.request.urlopen") as urlopen:
-            with self.assertRaisesRegex(RuntimeError, "取消"):
-                download_asset(release, download_dir=Path(tempfile.gettempdir()), cancelled=cancelled)
+        with patch("hwtstudio.updater.urllib.request.urlopen") as urlopen, self.assertRaisesRegex(RuntimeError, "取消"):
+            download_asset(release, download_dir=Path(tempfile.gettempdir()), cancelled=cancelled)
         urlopen.assert_not_called()
 
     def test_numeric_version_comparison(self):
@@ -182,9 +186,8 @@ class UpdaterTests(unittest.TestCase):
         payload = b"{}" + b"x" * (2 * 1024 * 1024)
         with patch(
             "hwtstudio.updater.urllib.request.urlopen", return_value=_FakeResponse(payload)
-        ):
-            with self.assertRaisesRegex(ValueError, "响应过大"):
-                _fetch_json("https://example.test/latest.json")
+        ), self.assertRaisesRegex(ValueError, "响应过大"):
+            _fetch_json("https://example.test/latest.json")
 
     def test_safe_asset_name_rejects_path_traversal(self):
         with self.assertRaises(ValueError):
@@ -276,9 +279,8 @@ class UpdaterTests(unittest.TestCase):
                 os.symlink(outside, target)
             except (OSError, NotImplementedError) as exc:
                 self.skipTest(f"当前环境无法创建符号链接：{exc}")
-            with patch("hwtstudio.updater.urllib.request.urlopen") as urlopen:
-                with self.assertRaisesRegex(ValueError, "符号链接"):
-                    download_asset(release, download_dir=root)
+            with patch("hwtstudio.updater.urllib.request.urlopen") as urlopen, self.assertRaisesRegex(ValueError, "符号链接"):
+                download_asset(release, download_dir=root)
             urlopen.assert_not_called()
 
     def test_download_rejects_symlinked_cache_directory(self):
@@ -305,9 +307,8 @@ class UpdaterTests(unittest.TestCase):
                 os.symlink(outside, cache, target_is_directory=True)
             except (OSError, NotImplementedError) as exc:
                 self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
-            with patch("hwtstudio.updater.urllib.request.urlopen") as urlopen:
-                with self.assertRaisesRegex(ValueError, "缓存目录.*符号链接"):
-                    download_asset(release, download_dir=cache)
+            with patch("hwtstudio.updater.urllib.request.urlopen") as urlopen, self.assertRaisesRegex(ValueError, "缓存目录.*符号链接"):
+                download_asset(release, download_dir=cache)
             urlopen.assert_not_called()
             self.assertEqual(list(outside.iterdir()), [])
 
@@ -336,9 +337,8 @@ class UpdaterTests(unittest.TestCase):
             except (OSError, NotImplementedError) as exc:
                 self.skipTest(f"当前环境无法创建目录符号链接：{exc}")
             cache = link / "updates"
-            with patch("hwtstudio.updater.urllib.request.urlopen") as urlopen:
-                with self.assertRaisesRegex(ValueError, "缓存目录的父路径.*符号链接"):
-                    download_asset(release, download_dir=cache)
+            with patch("hwtstudio.updater.urllib.request.urlopen") as urlopen, self.assertRaisesRegex(ValueError, "缓存目录的父路径.*符号链接"):
+                download_asset(release, download_dir=cache)
             urlopen.assert_not_called()
             self.assertFalse((outside / "updates").exists())
 
@@ -401,7 +401,7 @@ class UpdaterTests(unittest.TestCase):
                 patch("hwtstudio.updater.subprocess.Popen"),
                 patch("hwtstudio.updater._launch_portable_update", return_value=True) as launch,
             ):
-                import hwtstudio.updater as updater
+                from hwtstudio import updater
                 with patch.object(updater.sys, "executable", str(running_exe)):
                     self.assertTrue(launch_update(download))
 
@@ -450,9 +450,8 @@ class UpdaterTests(unittest.TestCase):
             path.write_bytes(payload)
             download = VerifiedDownload(path=path, sha256=hashlib.sha256(payload).hexdigest())
             path.write_bytes(b"tampered update payload")
-            with patch("hwtstudio.updater.subprocess.Popen") as popen:
-                with self.assertRaisesRegex(ValueError, "启动前.*SHA-256"):
-                    launch_update(download)
+            with patch("hwtstudio.updater.subprocess.Popen") as popen, self.assertRaisesRegex(ValueError, "启动前.*SHA-256"):
+                launch_update(download)
             popen.assert_not_called()
 
     def test_launch_update_rejects_symlinked_download(self):
@@ -469,9 +468,8 @@ class UpdaterTests(unittest.TestCase):
             except (OSError, NotImplementedError) as exc:
                 self.skipTest(f"当前环境无法创建符号链接：{exc}")
             download = VerifiedDownload(path=path, sha256=hashlib.sha256(payload).hexdigest())
-            with patch("hwtstudio.updater.subprocess.Popen") as popen:
-                with self.assertRaisesRegex(ValueError, "符号链接"):
-                    launch_update(download)
+            with patch("hwtstudio.updater.subprocess.Popen") as popen, self.assertRaisesRegex(ValueError, "符号链接"):
+                launch_update(download)
             popen.assert_not_called()
 
     def test_download_asset_rejects_truncated_declared_response(self):
@@ -517,6 +515,90 @@ class UpdaterTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "取消"):
                 download_asset(release, download_dir=Path(directory), cancelled=cancelled)
             self.assertEqual(list(Path(directory).glob(".*.part")), [])
+
+    def test_fetch_checksum_uses_direct_github_url_only(self):
+        checksum = "b" * 64
+        release_url = "https://github.com/example/studio/releases/download/v0.2.0/studio.exe.sha256"
+        with patch(
+            "hwtstudio.updater.urllib.request.urlopen",
+            return_value=_FakeResponse((checksum + "\n").encode("ascii")),
+        ) as urlopen:
+            self.assertEqual(_fetch_checksum(release_url), checksum)
+        requested = [call.args[0].full_url for call in urlopen.call_args_list]
+        self.assertEqual(requested, [release_url])
+        for url in requested:
+            self.assertNotIn("ghproxy", url)
+            self.assertNotIn("gh-proxy", url)
+            self.assertNotIn("ghfast", url)
+
+    def test_patch_download_rejects_declared_oversize(self):
+        patch_asset = PatchAsset(
+            name="HwtThemeStudio.patch",
+            url="https://example.test/studio.patch",
+            sha256="c" * 64,
+            from_sha256="d" * 64,
+            target_sha256="e" * 64,
+        )
+        release = Release(version="v0.2.0", url="", body="", asset=None, patches=(patch_asset,))
+        with tempfile.TemporaryDirectory() as directory:
+            target_dir = Path(directory)
+            base = target_dir / "base.zip"
+            base.write_bytes(b"base")
+            target = target_dir / "new.zip"
+            oversized = _FakeResponse(b"x" * 1024)
+            oversized.headers = {"Content-Length": str(MAX_PATCH_SIZE + 1)}
+            with patch("hwtstudio.updater.urllib.request.urlopen", return_value=oversized), self.assertRaisesRegex(ValueError, "超过允许的大小限制"):
+                _download_and_apply_patch(
+                    release,
+                    patch_asset,
+                    base,
+                    target,
+                    target_dir,
+                    "e" * 64,
+                    None,
+                    None,
+                )
+            self.assertEqual(list(target_dir.glob(".*.part")), [])
+
+    def test_patch_download_rejects_oversize_stream(self):
+        patch_asset = PatchAsset(
+            name="HwtThemeStudio.patch",
+            url="https://example.test/studio.patch",
+            sha256="c" * 64,
+            from_sha256="d" * 64,
+            target_sha256="e" * 64,
+        )
+        release = Release(version="v0.2.0", url="", body="", asset=None, patches=(patch_asset,))
+        with tempfile.TemporaryDirectory() as directory:
+            target_dir = Path(directory)
+            base = target_dir / "base.zip"
+            base.write_bytes(b"base")
+            target = target_dir / "new.zip"
+            # 声明长度合法（或缺失）但实际流式输出超过上限时同样必须中断。
+            unlimited = _StreamingResponse(b"x" * (MAX_PATCH_SIZE + 1))
+            with patch("hwtstudio.updater.urllib.request.urlopen", return_value=unlimited), self.assertRaisesRegex(ValueError, "超过允许的大小限制"):
+                _download_and_apply_patch(
+                    release,
+                    patch_asset,
+                    base,
+                    target,
+                    target_dir,
+                    "e" * 64,
+                    None,
+                    None,
+                )
+            self.assertEqual(list(target_dir.glob(".*.part")), [])
+
+
+class _StreamingResponse(_FakeResponse):
+    """不声明 Content-Length 的响应，用于验证流式接收的大小上限。"""
+
+    def __init__(self, payload: bytes):
+        super().__init__(payload)
+        self.headers = {}
+
+    def read(self, size: int = -1) -> bytes:
+        return super().read(1024 * 1024)
 
 
 if __name__ == "__main__":

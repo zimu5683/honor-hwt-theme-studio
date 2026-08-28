@@ -16,7 +16,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from PySide6.QtCore import QObject, Signal
 
-
 LOGGER = logging.getLogger(__name__)
 
 QR_PAIRING_PORT = 48624
@@ -35,10 +34,10 @@ def qr_connect_url(host: str, port: int = QR_PAIRING_PORT, session: str = "") ->
 
 
 class _PairingHandler(BaseHTTPRequestHandler):
-    server: "ThreadingHTTPServer"
+    server: ThreadingHTTPServer
 
     @property
-    def pairing_server(self) -> "QrPairingServer":
+    def pairing_server(self) -> QrPairingServer:
         # start() 里通过 httpd.server 注入的 QrPairingServer 实例。
         return self.server.server  # type: ignore[attr-defined]
 
@@ -63,7 +62,12 @@ class _PairingHandler(BaseHTTPRequestHandler):
         if self.path != "/api/v1/register":
             self._json(404, {"code": "not_found"})
             return
-        length = int(self.headers.get("Content-Length") or 0)
+        raw_length = self.headers.get("Content-Length") or "0"
+        try:
+            length = int(raw_length)
+        except ValueError:
+            self._json(400, {"code": "invalid_body"})
+            return
         if length <= 0 or length > MAX_REGISTER_BYTES:
             self._json(400, {"code": "invalid_body"})
             return
@@ -125,8 +129,8 @@ class QrPairingServer(QObject):
         if thread is not None and thread.is_alive():
             thread.join(timeout=2)
 
-    def new_session(self) -> tuple[str, str]:
-        """创建一个会话令牌，返回 (二维码内容, 令牌)。"""
+    def new_session(self) -> str:
+        """创建一个会话令牌，用作二维码内容里的 ``s`` 参数。"""
         token = make_session()
         now = time.monotonic()
         with self._lock:
@@ -136,8 +140,7 @@ class QrPairingServer(QObject):
                 if expiry > now
             }
             self._sessions[token] = now + SESSION_TTL_S
-        # 二维码内容由调用方填充电脑 IP。
-        return token, token
+        return token
 
     def register(self, payload: dict, client_ip: str) -> str | None:
         """处理手机注册；返回错误码或 None。"""
@@ -167,8 +170,9 @@ class QrPairingServer(QObject):
             features=["qr_pairing"],
         )
         if pair_code:
-            # 手机注册时带上当前配对码，电脑端直接填入，省去手动输入。
-            device.name = f"{device.name}（配对码 {pair_code}）"
+            # 配对码作为独立字段传递；拼进设备显示名会允许恶意客户端伪造
+            # “配对码”文本欺骗自动填充逻辑。
+            device.pair_code = pair_code
         LOGGER.info("手机扫码注册：%s @ %s:%s", device.name, client_ip, raw_port)
         self.device_registered.emit(device)
         return None

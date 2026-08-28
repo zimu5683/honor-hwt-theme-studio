@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import traceback
 import threading
+import traceback
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
-from ..exporter import export_theme
+from ..exporter import ExportCancelled, export_theme
 from ..models import ThemeCatalog, ThemeProject
-from ..ssh_transfer import transfer_to_phone
-from ..updater import Release, check_for_update, download_asset
 from ..phone_transfer import (
     PhoneDevice,
     PhoneRegistry,
@@ -20,6 +18,8 @@ from ..phone_transfer import (
     probe_phone,
     transfer_to_app,
 )
+from ..ssh_transfer import transfer_to_phone
+from ..updater import Release, VerifiedDownload, check_for_update, download_asset, launch_update
 
 
 class ProfileWorker(QObject):
@@ -153,8 +153,10 @@ class ExportWorker(QObject):
         try:
             # The caller already snapshotted the project on the GUI thread;
             # export reads it read-only here.
-            _path, report = export_theme(self.project, self.catalog, self.output)
+            _path, report = export_theme(self.project, self.catalog, self.output, cancelled=self.cancelled)
             self.finished.emit(report, self.task_id)
+        except ExportCancelled:
+            self.failed.emit("已取消导出", self.task_id)
         except Exception as exc:
             message = str(exc) or type(exc).__name__
             self.failed.emit(message, self.task_id)
@@ -166,6 +168,7 @@ class UpdateWorker(QObject):
     checked = Signal(object, bool, int)
     check_failed = Signal(str, bool, int)
     downloaded = Signal(object, int)
+    launched = Signal(bool, int)
     failed = Signal(str, int)
     progress = Signal(int, int, str, int)
 
@@ -174,6 +177,7 @@ class UpdateWorker(QObject):
         self.release = release
         self.silent = silent
         self.task_id = task_id
+        self.download: VerifiedDownload | None = None
         self.cancelled = threading.Event()
 
     def cancel(self):
@@ -198,5 +202,14 @@ class UpdateWorker(QObject):
             self.downloaded.emit(
                 download_asset(self.release, progress=report, cancelled=self.cancelled), self.task_id
             )
+        except Exception:
+            self.failed.emit(traceback.format_exc(), self.task_id)
+
+    def run_launch(self):
+        # launch_update 要对整包重算 SHA-256 并解压便携包，必须离开 GUI 线程执行。
+        try:
+            if self.download is None:
+                raise ValueError("没有可启动的更新包")
+            self.launched.emit(launch_update(self.download), self.task_id)
         except Exception:
             self.failed.emit(traceback.format_exc(), self.task_id)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -50,10 +51,8 @@ def _remove_path(path: Path) -> None:
 
 
 def _cleanup_path(path: Path) -> None:
-    try:
+    with contextlib.suppress(OSError):
         _remove_path(path)
-    except OSError:
-        pass
 
 
 def _validate_transaction_artifact(path: Path, *, directory: bool) -> None:

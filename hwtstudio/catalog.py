@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import re
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
@@ -44,7 +45,6 @@ from .models import ResourceSlot, ThemeCatalog
 from .paths import ensure_no_symlink_parents, unique_temp_path
 from .pngmeta import extract_android_chunks
 from .xmlutil import parse_xml
-
 
 VALUE_PATTERN = re.compile(
     rb"<(color|bool|integer|dimen|string)\s+[^>]*name\s*=\s*['\"]([^'\"]+)['\"][^>]*>(.*?)</\1\s*>",
@@ -230,11 +230,9 @@ def _image_slot(
     width = height = None
     mode = None
     actual_format = detect_format(raw)
-    try:
-        with Image.open(BytesIO(raw)) as image:
-            width, height, mode = image.width, image.height, image.mode
-    except Exception:
-        pass
+    # 无法读取图片尺寸时按未知处理，仅影响告警内容，不中断扫描。
+    with contextlib.suppress(Exception), Image.open(BytesIO(raw)) as image:
+        width, height, mode = image.width, image.height, image.mode
     expected_format = _expected_image_format(path)
     if warnings is not None and expected_format is not None and actual_format != expected_format:
         warnings.append(
@@ -448,7 +446,7 @@ def scan_theme(path: Path) -> ThemeCatalog:
     return ThemeCatalog(
         source_path=str(path),
         source_sha256=sha256_file(path),
-        generated_at=datetime.now(timezone.utc).isoformat(),
+        generated_at=datetime.now(UTC).isoformat(),
         stats=dict(stats),
         warnings=warnings,
         resources=resources,

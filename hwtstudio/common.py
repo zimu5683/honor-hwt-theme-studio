@@ -4,7 +4,6 @@ import re
 import unicodedata
 from pathlib import PurePosixPath
 
-
 MAX_ARCHIVE_ENTRY_BYTES = 256 * 1024 * 1024
 MAX_ARCHIVE_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 MAX_ARCHIVE_ENTRIES = 20_000
@@ -80,10 +79,7 @@ def honor_resource_path(value: str) -> str:
     parts = value.split("/")
     converted: list[str] = []
     for index, part in enumerate(parts):
-        if part == "framework-res-hwext":
-            part = "framework-res-hnext"
-        else:
-            part = _honor_package_alias(part)
+        part = "framework-res-hnext" if part == "framework-res-hwext" else _honor_package_alias(part)
         if index == len(parts) - 1 and part.lower().endswith(".png"):
             part = re.sub(
                 r"(?<![A-Za-z0-9])emui(?=[A-Za-z_]|$)",
@@ -111,7 +107,7 @@ def is_safe_archive_path(value: str) -> bool:
     value = normalize_archive_path(value)
     if not value or "\\" in value or ":" in value or value.startswith("/") or "\x00" in value:
         return False
-    path_value = value[:-1] if value.endswith("/") else value
+    path_value = value.removesuffix("/")
     parts = path_value.split("/")
     if not path_value or any(part in {"", ".", ".."} for part in parts):
         return False

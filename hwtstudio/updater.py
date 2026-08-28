@@ -14,15 +14,14 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable
-import zipfile
+from typing import Any
 
-from . import __version__
-from . import bspatch
+from . import __version__, bspatch
 from .paths import APP_NAME, data_dir, ensure_no_symlink_parents
-
 
 DEFAULT_REPOSITORY = "zimu5683/honor-hwt-theme-studio"
 DEFAULT_LATEST_JSON_URL = (
@@ -37,6 +36,7 @@ GITHUB_MIRROR_PREFIXES = (
     "https://ghfast.top/",
 )
 MAX_DOWNLOAD_SIZE = 512 * 1024 * 1024
+MAX_PATCH_SIZE = 64 * 1024 * 1024
 MAX_METADATA_BYTES = 2 * 1024 * 1024
 MAX_ASSET_NAME_BYTES = 200
 MAX_RELEASE_VERSION_CHARS = 64
@@ -351,20 +351,20 @@ def _extract_sha256(text: str) -> str:
 
 
 def _fetch_checksum(url: str, *, cancelled: threading.Event | None = None) -> str:
-    for candidate in _github_url_candidates(url):
-        try:
-            _check_cancelled(cancelled)
-            with urllib.request.urlopen(_request(candidate, accept="text/plain"), timeout=20) as response:
-                value = _extract_sha256(
-                    _read_metadata(response, limit=4096, context="校验文件").decode("utf-8", errors="replace")
-                )
-            _check_cancelled(cancelled)
-            return value
-        except RuntimeError:
-            raise
-        except (OSError, ValueError, urllib.error.URLError):
-            continue
-    return ""
+    # 校验值只允许来自 GitHub 直连的 TLS 通道：镜像可能同时篡改安装包与
+    # 旁边的 .sha256 文件，校验值一旦也走镜像，SHA-256 就失去保护作用。
+    try:
+        _check_cancelled(cancelled)
+        with urllib.request.urlopen(_request(url, accept="text/plain"), timeout=20) as response:
+            value = _extract_sha256(
+                _read_metadata(response, limit=4096, context="校验文件").decode("utf-8", errors="replace")
+            )
+        _check_cancelled(cancelled)
+        return value
+    except RuntimeError:
+        raise
+    except (OSError, ValueError, urllib.error.URLError):
+        return ""
 
 
 def _asset_checksum(asset: ReleaseAsset, *, cancelled: threading.Event | None = None) -> str:
@@ -437,18 +437,31 @@ def _download_and_apply_patch(
             if progress:
                 progress(0, 0, "正在下载差分补丁…")
             with urllib.request.urlopen(_request(candidate, accept="application/octet-stream"), timeout=60) as response:
+                raw_total = response.headers.get("Content-Length", "")
+                declared_total: int | None = None
+                if raw_total:
+                    if not raw_total.isdigit():
+                        raise ValueError("补丁响应长度无效")
+                    declared_total = int(raw_total)
+                    if declared_total > MAX_PATCH_SIZE:
+                        raise ValueError("差分补丁超过允许的大小限制")
+                received = 0
                 with patch_partial.open("wb") as handle:
                     while True:
                         _check_cancelled(cancelled)
                         block = response.read(1024 * 1024)
                         if not block:
                             break
+                        received += len(block)
+                        if received > MAX_PATCH_SIZE:
+                            raise ValueError("差分补丁超过允许的大小限制")
                         handle.write(block)
             break
         except RuntimeError:
             raise  # 取消任务必须立刻中止，不能回退到镜像
         except Exception as exc:
             last_error = exc
+            patch_partial.unlink(missing_ok=True)
     if last_error is not None:
         raise last_error
     new_partial = target_dir / f".{target.name}.{os.getpid()}.{threading.get_ident()}.new"

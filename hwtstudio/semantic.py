@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from typing import Iterable
 
 from .models import ResourceSlot, ThemeCatalog
-
 
 TYPE_LABELS = {
     "color": "颜色",

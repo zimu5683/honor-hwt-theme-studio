@@ -61,9 +61,9 @@ def apply(old_bytes: bytes, patch_bytes: bytes) -> bytes:
 
         # diff 块：new[j] = diff[j] + old[oldpos+j]，old 越界时按 0 处理。
         diff_slice = diff[diffpos:diffpos + x]
-        start = oldpos if oldpos > 0 else 0
+        start = max(0, oldpos)
         end = oldpos + x
-        end = end if end < old_len else old_len
+        end = min(old_len, end)
         old_slice = old_bytes[start:end] if start < end else b""
         old_slice = (
             b"\x00" * max(0, -oldpos)
@@ -73,7 +73,7 @@ def apply(old_bytes: bytes, patch_bytes: bytes) -> bytes:
         if not diff_slice.strip(b"\x00"):
             new += old_slice
         else:
-            new += bytes((a + b) & 0xFF for a, b in zip(diff_slice, old_slice))
+            new += bytes((a + b) & 0xFF for a, b in zip(diff_slice, old_slice, strict=False))
         diffpos += x
         oldpos += x
 

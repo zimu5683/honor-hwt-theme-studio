@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import stat
 import struct
 from collections import Counter
 from typing import BinaryIO
 
 from .common import normalize_archive_path
-
 
 _LOCAL_FILE_HEADER = b"PK\x03\x04"
 _LOCAL_FILE_HEADER_SIZE = 30
@@ -71,10 +71,8 @@ def _local_data_start(info, fileobj: BinaryIO | None) -> int | None:
             pass
         finally:
             if position is not None:
-                try:
+                with contextlib.suppress(AttributeError, OSError, TypeError, ValueError):
                     fileobj.seek(position)
-                except (AttributeError, OSError, TypeError, ValueError):
-                    pass
 
     filename = getattr(info, "filename", None)
     if not isinstance(filename, str):
@@ -207,10 +205,8 @@ def archive_local_header_issues(
             issues.append((filename, "local_header_unreadable"))
         finally:
             if position is not None:
-                try:
+                with contextlib.suppress(AttributeError, OSError, TypeError, ValueError):
                     fileobj.seek(position)
-                except (AttributeError, OSError, TypeError, ValueError):
-                    pass
     return issues
 
 

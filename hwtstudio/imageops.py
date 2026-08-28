@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from io import BytesIO
 from pathlib import Path
 
@@ -7,7 +8,6 @@ from PIL import Image, ImageDraw, ImageOps
 
 from .models import ResourceChange, ResourceSlot
 from .pngmeta import inject_android_chunks
-
 
 PLACEHOLDER_SIZE = (1080, 1920)
 PLACEHOLDER_RGBA = (242, 242, 242, 255)
@@ -66,10 +66,8 @@ def load_image_preview(source: Path, max_edge: int = PREVIEW_MAX_EDGE) -> Image.
     with Image.open(source) as opened:
         _validate_image_size(opened.width, opened.height)
         if opened.format == "JPEG" and max(opened.size) > max_edge:
-            try:
+            with contextlib.suppress(OSError, ValueError):
                 opened.draft("RGB", (max_edge, max_edge))
-            except (OSError, ValueError):
-                pass
         width, height = opened.width, opened.height
         image = opened.convert("RGBA")
         scale = max_edge / max(width, height)

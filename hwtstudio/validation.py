@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import re
 from io import BytesIO
 from pathlib import Path
@@ -25,7 +26,6 @@ from .common import (
 )
 from .models import ResourceSlot
 from .xmlutil import parse_xml
-
 
 COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 INTEGER_RE = re.compile(r"^[+-]?\d+$")
@@ -378,11 +378,10 @@ def validate_theme(path: Path) -> dict:
                                 })
                                 continue
                             if Path(child.filename).suffix.lower() == ".xml":
-                                try:
+                                # 子包计数失败仅影响统计，主校验错误已另行收集。
+                                with contextlib.suppress(Exception):
                                     parsed = parse_xml(child_raw)
                                     resources += len(parsed)
-                                except Exception:
-                                    pass
                                 _validate_resource_xml(child_raw, module=info.filename, path=child.filename, errors=errors)
                             suffix = Path(child.filename).suffix.lower()
                             if suffix in IMAGE_SUFFIXES:

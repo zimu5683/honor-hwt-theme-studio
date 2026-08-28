@@ -1,0 +1,48 @@
+# 仓库级 ruff 配置：显式固定规则集，保证本地与 CI（安装 requirements-dev.txt
+# 中锁定的 ruff 版本）行为一致，不受 ruff 版本默认规则变化影响。
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = [
+  "E4", "E7", "E9",    # pycodestyle 错误
+  "F",                 # pyflakes
+  "I",                 # isort 导入排序
+  "B",                 # flake8-bugbear 常见缺陷
+  "UP",                # pyupgrade 过时写法
+  "SIM",               # flake8-simplify
+  "RUF",               # ruff 专属规则
+  "BLE",               # 盲目的 except Exception（豁免见下方 per-file-ignores）
+  "DTZ",               # datetime 缺时区
+  "FURB",              # refurb 惯用改写
+  "ISC004",            # 集合字面量里的隐式字符串拼接
+  "FLY002",            # 静态 join 可写成 f-string
+  "PLR0402",           # from X import Y as Y 可简写
+  "S110", "S112",      # try-except-pass/continue 必须有理由注释
+]
+ignore = [
+  # 中文项目：字符串/注释/文档里的全角标点（，、（）等）是有意为之，
+  # RUF001/002/003 会把几乎所有中文文案都报成“歧义 Unicode”，纯属噪音。
+  "RUF001", "RUF002", "RUF003",
+  # 编辑器面向用户的解析/校验错误统一用 ValueError（弹窗展示给用户），
+  # 不改用 TypeError；TRY004 会把所有 isinstance+ValueError 都判违规。
+  "TRY004",
+]
+
+[lint.per-file-ignores]
+# 测试代码允许：断言语句（S101）；测试替身把 BaseException 传给 Future 是
+# 模拟线程池行为，需要捕获一切异常。
+"tests/**" = ["S101", "BLE001"]
+# UI/worker 边界模式：捕获所有异常后弹窗/回传 traceback 呈现给用户，
+# 绝不静默吞掉；这是刻意的架构决策而非疏忽。
+"hwtstudio/app.py" = ["BLE001"]
+"hwtstudio/ui/workers.py" = ["BLE001"]
+# 扫描/校验模块面对上万个不可信条目：单条解析失败必须收集进报告后继续
+# 扫描；网络/镜像回退循环收集 last_error 后统一抛出。宽泛捕获是功能本身。
+"hwtstudio/catalog.py" = ["BLE001"]
+"hwtstudio/validation.py" = ["BLE001"]
+"hwtstudio/updater.py" = ["BLE001"]
+"hwtstudio/phone_transfer.py" = ["BLE001"]
+"hwtstudio/projectio.py" = ["BLE001"]
+"hwtstudio/services/catalog_service.py" = ["BLE001"]
+"hwtstudio/ssh_transfer.py" = ["BLE001"]

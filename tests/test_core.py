@@ -5,6 +5,7 @@ import json
 import os
 import stat
 import tempfile
+import threading
 import unittest
 from io import BytesIO
 from pathlib import Path
@@ -20,11 +21,11 @@ from hwtstudio.catalog import (
     scan_theme,
     source_compatibility_report,
 )
-from hwtstudio.exporter import export_theme
+from hwtstudio.exporter import ExportCancelled, export_theme
 from hwtstudio.imageops import MAX_IMAGE_DIMENSION, load_image, render_image
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
-from hwtstudio.projectio import load_project, save_project
 from hwtstudio.paths import bundled_catalog, default_source_theme
+from hwtstudio.projectio import load_project, save_project
 from hwtstudio.validation import validate_theme
 
 
@@ -225,6 +226,18 @@ class CoreTests(unittest.TestCase):
                     self.assertIn(slot.name, xml)
                     self.assertIn("#FF336699", xml)
 
+    def test_export_honors_cancellation(self):
+        slot = next(x for x in self.catalog.resources if x.resource_type == "color" and x.module == "com.android.settings")
+        project = ThemeProject(name="取消测试")
+        project.set_change(ResourceChange(slot_id=slot.id, value="#FF336699"))
+        cancelled = threading.Event()
+        cancelled.set()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "cancel.hwt"
+            with self.assertRaises(ExportCancelled):
+                export_theme(project, self.catalog, output, cancelled=cancelled)
+            self.assertFalse(output.exists())
+
     def test_disable_resource_removes_module(self):
         slot = next(x for x in self.catalog.resources if x.resource_type == "color" and x.module == "com.android.systemui")
         project = ThemeProject(name="禁用测试")
@@ -245,20 +258,19 @@ class CoreTests(unittest.TestCase):
             output = Path(directory) / "background.hwt"
             _, report = export_theme(project, self.catalog, output)
             self.assertFalse(any(item["kind"] == "resource_fanout" for item in report["preflight"]["warnings"]))
-            with ZipFile(output) as outer:
-                with ZipFile(BytesIO(outer.read("com.android.settings"))) as module:
-                    self.assertIn(
-                        "framework-res-hnext/res/drawable-xxhdpi/background_magic.9.png",
-                        module.namelist(),
-                    )
-                    rendered = module.read("framework-res-hnext/res/drawable-xxhdpi/background_magic.9.png")
-                    with Image.open(BytesIO(rendered)) as image:
-                        self.assertEqual(image.size, (1220, 2700))
+            with ZipFile(output) as outer, ZipFile(BytesIO(outer.read("com.android.settings"))) as module:
+                self.assertIn(
+                    "framework-res-hnext/res/drawable-xxhdpi/background_magic.9.png",
+                    module.namelist(),
+                )
+                rendered = module.read("framework-res-hnext/res/drawable-xxhdpi/background_magic.9.png")
+                with Image.open(BytesIO(rendered)) as image:
+                    self.assertEqual(image.size, (1220, 2700))
 
     def test_original_file_is_not_modified_by_scan(self):
         source = default_source_theme()
-        if not source.exists():
-            self.skipTest("源主题不在默认路径")
+        if not str(source) or not source.is_file():
+            self.skipTest("未设置 HWTSTUDIO_SOURCE_THEME 或源主题不存在")
         before = hashlib.sha256(source.read_bytes()).hexdigest()
         scan_theme(source)
         after = hashlib.sha256(source.read_bytes()).hexdigest()

@@ -1,26 +1,32 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import http.client
 import json
+import logging
 import os
 import re
+import shutil
 import socket
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from ipaddress import IPv4Address, IPv4Network
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import ClassVar
 from urllib.parse import quote
 
-from .paths import data_dir, ensure_no_symlink_parents
 from .locking import interprocess_lock
+from .paths import data_dir, ensure_no_symlink_parents
 
+LOGGER = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = 1
 FEATURE_TRANSFER_CHUNKED = "transfer_chunked"
@@ -101,6 +107,7 @@ class PhoneDevice:
     protocol: int = PROTOCOL_VERSION
     app_version: str = ""
     token: str = ""
+    pair_code: str = ""
     features: list[str] = field(default_factory=list)
     profile: PhoneProfile | None = None
 
@@ -119,7 +126,7 @@ class PhoneRegistry:
     """Persist paired phones with thread- and process-level serialization."""
 
     _lock_guard = threading.Lock()
-    _locks: dict[Path, threading.RLock] = {}
+    _locks: ClassVar[dict[Path, threading.RLock]] = {}
 
     def __init__(self, path: Path | None = None):
         self.path = Path(path) if path else data_dir() / "paired_phones.json"
@@ -152,7 +159,12 @@ class PhoneRegistry:
             if len(encoded) > MAX_REGISTRY_BYTES:
                 return {}
             raw = json.loads(encoded.decode("utf-8"))
-        except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError, OSError):
+        except FileNotFoundError:
+            return {}
+        except (UnicodeDecodeError, json.JSONDecodeError, OSError):
+            # 配对记录损坏时不静默丢弃：先留档再返回空，避免用户已保存的
+            # 手机配对无声消失且毫无线索。
+            self._preserve_corrupt_file()
             return {}
         if not isinstance(raw, dict) or not isinstance(raw.get("devices"), list):
             return {}
@@ -214,6 +226,7 @@ class PhoneRegistry:
                     protocol=protocol,
                     app_version=_saved_text(item.get("app_version")),
                         token=_saved_token(token),
+                    pair_code=_saved_text(item.get("pair_code")),
                     features=_payload_strings(item.get("features", [])),
                     profile=profile,
                 )
@@ -228,6 +241,18 @@ class PhoneRegistry:
             self._validate_path()
             with _interprocess_lock(self.path):
                 self._save_unlocked(devices)
+
+    def _preserve_corrupt_file(self) -> None:
+        try:
+            if not self.path.exists():
+                return
+            backup = self.path.with_name(
+                f"{self.path.name}.corrupt-{datetime.now().astimezone().strftime('%Y%m%d-%H%M%S')}"
+            )
+            shutil.copyfile(self.path, backup)
+            LOGGER.warning("手机配对记录损坏，原文件已保留为 %s", backup.name)
+        except OSError:
+            LOGGER.warning("手机配对记录损坏，且留档失败", exc_info=True)
 
     def _save_unlocked(self, devices: dict[str, PhoneDevice]) -> None:
         self._validate_path()
@@ -247,8 +272,9 @@ class PhoneRegistry:
                 os.replace(temp, self.path)
             except OSError:
                 # 某些虚拟/过滤文件系统（重定向目录、沙箱卷）不支持同卷原子
-                # 替换；降级为直接写入，保证手机记录不会阻断发现与配对。
-                self.path.write_bytes(encoded)
+                # 替换；降级为从已完整写入的临时文件单次复制，比直接重写
+                # 目标文件留下半截 JSON 的窗口更小。
+                shutil.copyfile(temp, self.path)
                 temp.unlink(missing_ok=True)
         finally:
             temp.unlink(missing_ok=True)
@@ -522,11 +548,10 @@ def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
     discovery_started = time.monotonic()
     deadline = discovery_started + timeout
     http_candidates = _http_discovery_candidates(saved, http_targets)
-    if http_candidates:
-        udp_budget = min(timeout / 2, HTTP_DISCOVERY_UDP_BUDGET)
-    else:
-        # 没有可探测的兜底目标时也没必要把全部预算都耗在广播等待上。
-        udp_budget = min(timeout, 3.0)
+    # 没有可探测的兜底目标时也没必要把全部预算都耗在广播等待上。
+    udp_budget = (
+        min(timeout / 2, HTTP_DISCOVERY_UDP_BUDGET) if http_candidates else min(timeout, 3.0)
+    )
     udp_deadline = discovery_started + udp_budget
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -546,7 +571,7 @@ def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
             sock.settimeout(min(0.2, max(0.001, udp_deadline - time.monotonic())))
             try:
                 data, address = sock.recvfrom(4096)
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 # 忽略瞬时错误（如个别网卡上的 WSAECONNRESET），继续收包，
@@ -590,10 +615,10 @@ def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
                     for future in as_completed(futures, timeout=remaining):
                         if cancelled and cancelled.is_set():
                             break
-                        try:
+                        # 单个探测目标失败不影响其余目标的发现。
+                        device = None
+                        with contextlib.suppress(Exception):
                             device = future.result()
-                        except Exception:
-                            continue
                         if device is not None:
                             found[device.device_id] = _merge_saved(device, saved)
                 except FuturesTimeoutError:
@@ -604,11 +629,9 @@ def discover_phones(timeout: float = 2.0, registry: PhoneRegistry | None = None,
     if cancelled and cancelled.is_set():
         return []
     for device in found.values():
-        try:
+        # 手机记录不可写时仍返回发现结果，避免整个搜索失败。
+        with contextlib.suppress(OSError):
             registry.update(device)
-        except OSError:
-            # 手机记录不可写时仍返回发现结果，避免整个搜索失败。
-            pass
     return sorted(found.values(), key=lambda item: (item.name.casefold(), item.device_id))
 
 
@@ -646,10 +669,8 @@ def probe_phone(host: str, port: int = HTTP_PORT, timeout: float = 5.0,
     )
     registry = registry or PhoneRegistry()
     device = _merge_saved(device, registry.load())
-    try:
+    with contextlib.suppress(OSError):
         registry.update(device)
-    except OSError:
-        pass
     return device
 
 
@@ -696,10 +717,8 @@ def pair_phone(device: PhoneDevice, code: str, *, client_name: str = "大雪主�
         features=_payload_strings(payload.get("features", device.features)),
         profile=device.profile,
     )
-    try:
+    with contextlib.suppress(OSError):
         (registry or PhoneRegistry()).update(paired)
-    except OSError:
-        pass
     return paired
 
 
@@ -736,15 +755,13 @@ def fetch_phone_profile(device: PhoneDevice, *, timeout: float = 10.0,
         os_name=_payload_text(payload, "os_name", "手机配置"),
         build_display=_payload_text(payload, "build_display", "手机配置"),
         installed_packages=_payload_strings(
-            payload.get("installed_packages", []), context="已安装应用", strict=True,
+            payload.get("installed_packages", []), context="已安装应用", strict=False,
         ),
-        updated_at=datetime.now(timezone.utc).isoformat(),
+        updated_at=datetime.now(UTC).isoformat(),
     )
     device.profile = profile
-    try:
+    with contextlib.suppress(OSError):
         (registry or PhoneRegistry()).update(device)
-    except OSError:
-        pass
     return profile
 
 
@@ -1035,10 +1052,8 @@ class _ChunkUploader:
         connection = self._connection
         self._connection = None
         if connection is not None:
-            try:
+            with contextlib.suppress(OSError):
                 connection.close()
-            except OSError:
-                pass
 
 
 def _prepare_transfer(device: PhoneDevice, transfer_id: str, *, filename: str, size: int,
@@ -1175,7 +1190,7 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                         raise
                     if cancelled and cancelled.is_set():
                         _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
-                        raise TransferCancelled()
+                        raise TransferCancelled() from None
                     status_payload = _remote_transfer_status(
                         device, transfer_id, timeout=min(timeout, 5.0), require_transfer_id=True,
                     )
@@ -1207,11 +1222,11 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                                 size=size,
                                 filename=filename,
                             )
-                        raise PhoneTransferError("手机提交主题的状态无效", code="bad_response")
+                        raise PhoneTransferError("手机提交主题的状态无效", code="bad_response") from None
                     if status_payload and status_payload.get("state") == "receiving":
                         remote_total, remote_offset = _remote_receiving_offset(status_payload, "传输状态")
                         if remote_total != size or remote_offset > size:
-                            raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response")
+                            raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response") from None
                         offset = remote_offset
                     else:
                         offset = 0
@@ -1251,7 +1266,7 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                     raise
                 if cancelled and cancelled.is_set():
                     _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
-                    raise TransferCancelled()
+                    raise TransferCancelled() from None
                 status_payload = _remote_transfer_status(
                     device, transfer_id, timeout=min(timeout, 5.0), require_transfer_id=True,
                 )
@@ -1283,11 +1298,11 @@ def _upload_theme_chunked(path: Path, device: PhoneDevice, *, cancelled: threadi
                             size=size,
                             filename=filename,
                         )
-                    raise PhoneTransferError("手机提交主题的状态无效", code="bad_response")
+                    raise PhoneTransferError("手机提交主题的状态无效", code="bad_response") from None
                 if status_payload and status_payload.get("state") == "receiving":
                     remote_total, offset = _remote_receiving_offset(status_payload, "传输状态")
                     if remote_total != size or offset > size:
-                        raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response")
+                        raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response") from None
                     continue
                 offset = 0
                 continue
@@ -1439,7 +1454,7 @@ def _upload_theme_parallel(path: Path, device: PhoneDevice, *, transfer_id: str,
         sent_bytes = [0]
         sent_lock = threading.Lock()
 
-        def send_one(offset: int) -> None:
+        def send_one(offset: int, *, sent_lock=sent_lock, sent_bytes=sent_bytes) -> None:
             if cancelled and cancelled.is_set():
                 raise TransferCancelled()
             _ensure_file_signature(path, initial_signature, "发送中")
@@ -1468,8 +1483,7 @@ def _upload_theme_parallel(path: Path, device: PhoneDevice, *, transfer_id: str,
             if state != "receiving":
                 raise PhoneTransferError("手机返回了无效的分块状态", code="bad_response")
             _payload_transfer_id(payload, transfer_id, "分块上传")
-            if "chunk_offset" in payload:
-                if _payload_int(payload, "chunk_offset", "分块上传") != offset:
+            if "chunk_offset" in payload and _payload_int(payload, "chunk_offset", "分块上传") != offset:
                     raise PhoneTransferError("手机返回的分块偏移量不一致", code="bad_response")
             with sent_lock:
                 sent_bytes[0] += len(block)
@@ -1497,7 +1511,7 @@ def _upload_theme_parallel(path: Path, device: PhoneDevice, *, transfer_id: str,
                 raise
             if cancelled and cancelled.is_set():
                 _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
-                raise TransferCancelled()
+                raise TransferCancelled() from None
             if attempt >= 3:
                 raise
             continue
@@ -1612,7 +1626,7 @@ def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event 
             raise
         if cancelled and cancelled.is_set():
             _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
-            raise TransferCancelled()
+            raise TransferCancelled() from None
         # A full PUT has no resumable offset. Wait for the original request to
         # release its session before issuing the single idempotent retry.
         for _attempt in range(40):
@@ -1637,7 +1651,7 @@ def upload_theme(path: Path, device: PhoneDevice, *, cancelled: threading.Event 
             if cancelled:
                 if cancelled.wait(0.25):
                     _cancel_remote_transfer(device, transfer_id, timeout=min(timeout, 5.0))
-                    raise TransferCancelled()
+                    raise TransferCancelled() from None
             else:
                 time.sleep(0.25)
         callback(0, 0, "网络中断，正在重试上传")

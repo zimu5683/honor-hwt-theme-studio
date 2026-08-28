@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import shlex
 import shutil
@@ -11,8 +12,31 @@ from pathlib import Path
 
 from .phone_transfer import TransferCancelled, safe_hwt_filename
 
-
 REMOTE_DIR = "/storage/emulated/0/Honor/Themes"
+
+
+def _drain_stream(stream, sink: list[str]) -> None:
+    """持续读取子进程输出直到 EOF；kill 后管道关闭，读失败按结束处理。"""
+    try:
+        while True:
+            block = stream.read(4096)
+            if not block:
+                break
+            sink.append(block)
+    except (OSError, ValueError):
+        pass
+
+
+def _stop_process(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=5)
 
 
 def _run(args: list[str], *, timeout: int, check: bool = False,
@@ -36,23 +60,48 @@ def _run(args: list[str], *, timeout: int, check: bool = False,
         encoding="utf-8",
         errors="replace",
     )
+    # 两个读线程持续排空 stdout/stderr：ssh/scp 的输出一旦超过管道缓冲
+    # （约 64KB）而无人读取，子进程会写阻塞，仅靠轮询等待就会把正常任务
+    # 误判成超时。
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    readers = (
+        threading.Thread(target=_drain_stream, args=(process.stdout, stdout_chunks), daemon=True),
+        threading.Thread(target=_drain_stream, args=(process.stderr, stderr_chunks), daemon=True),
+    )
+    for reader in readers:
+        reader.start()
     deadline = time.monotonic() + timeout
-    while process.poll() is None:
-        if cancelled.is_set():
-            process.terminate()
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-            process.communicate()
-            raise TransferCancelled()
-        if time.monotonic() >= deadline:
+    timed_out = False
+    try:
+        while process.poll() is None:
+            if cancelled.is_set():
+                _stop_process(process)
+                raise TransferCancelled()
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            time.sleep(0.05)
+    finally:
+        if timed_out:
             process.kill()
-            stdout, stderr = process.communicate()
-            raise subprocess.TimeoutExpired(args, timeout, output=stdout, stderr=stderr)
-        time.sleep(0.05)
-    stdout, stderr = process.communicate()
+        for reader in readers:
+            reader.join(timeout=2)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=5)
+        # 读线程已结束（或已被 kill 触发 EOF），关闭管道避免句柄泄漏。
+        for stream in (process.stdout, process.stderr):
+            try:
+                if stream is not None:
+                    stream.close()
+            except OSError:
+                pass
+    if timed_out:
+        raise subprocess.TimeoutExpired(
+            args, timeout, output="".join(stdout_chunks), stderr="".join(stderr_chunks)
+        )
+    stdout = "".join(stdout_chunks)
+    stderr = "".join(stderr_chunks)
     result = subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
     if check and result.returncode:
         raise subprocess.CalledProcessError(result.returncode, args, output=stdout, stderr=stderr)
@@ -206,9 +255,11 @@ def transfer_to_phone(path: Path, host: str = "phone-termux", timeout: int = 180
             [
                 "ssh",
                 host,
-                "am start -a android.intent.action.MAIN "
-                "-c android.intent.category.LAUNCHER "
-                "-n com.hihonor.android.thememanager/.PageActivity",
+                (
+                    "am start -a android.intent.action.MAIN "
+                    "-c android.intent.category.LAUNCHER "
+                    "-n com.hihonor.android.thememanager/.PageActivity"
+                ),
             ],
             timeout=30,
             cancelled=cancelled,
@@ -223,13 +274,11 @@ def transfer_to_phone(path: Path, host: str = "phone-termux", timeout: int = 180
         }
     finally:
         if remote_started and not finalized:
-            try:
+            # Cleanup is best-effort but must still run after the
+            # caller sets the cancellation flag.
+            with contextlib.suppress(Exception):
                 _run_with_cancel(
                     ["ssh", host, f"rm -f {shlex.quote(remote_temp)}"],
                     timeout=15,
-                    # Cleanup is best-effort but must still run after the
-                    # caller sets the cancellation flag.
                     cancelled=None,
                 )
-            except Exception:
-                pass

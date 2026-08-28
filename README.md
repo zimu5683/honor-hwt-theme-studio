@@ -60,7 +60,7 @@ ZIP 便携包继续用于旧版兼容和故障回退。更新源固定为本项�
 ## 开发运行
 
 ```powershell
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.txt -r requirements-dev.txt
 python run.py
 ```
 
@@ -70,6 +70,9 @@ python run.py
 python tools/build_assets.py `
   "D:\HONOR Share\Honor Share\30039574_大雪.hwt"
 ```
+
+如需让程序记住大雪源主题的位置（用于“重新扫描源主题”的默认路径），
+可设置用户环境变量 `HWTSTUDIO_SOURCE_THEME` 指向该 `.hwt` 文件。
 
 ## 测试与打包
 
@@ -90,6 +93,10 @@ GitHub Release 下载。
 ## Android 传输助手
 
 Android 工程位于 `android/`，支持 Android 13–16（`minSdk 33`、`targetSdk 36`）：
+
+> ⚠️ 安全提示：电脑与手机之间的局域网发现、配对与传输当前为明文协议，
+> 仅依赖 6 位配对码做一次性握手。请只在可信的私人局域网中使用，避免在
+> 公共 Wi-Fi 等不可信网络环境下发送主题。
 
 ```powershell
 cd android

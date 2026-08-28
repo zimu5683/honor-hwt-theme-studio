@@ -7,7 +7,6 @@ from pathlib import Path
 from PySide6.QtCore import QLibraryInfo, QTranslator
 from PySide6.QtWidgets import QApplication
 
-
 _TRANSLATORS: list[QTranslator] = []
 
 

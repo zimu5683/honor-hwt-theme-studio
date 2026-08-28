@@ -10,7 +10,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PIL import Image
-from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer, Qt
+from PySide6.QtCore import QCoreApplication, QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from hwtstudio.app import MainWindow, transfer_error_message

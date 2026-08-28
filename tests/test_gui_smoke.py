@@ -8,16 +8,16 @@ from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEventLoop, QThread, QTimer, Qt
+from PySide6.QtCore import QEventLoop, Qt, QThread, QTimer
 from PySide6.QtWidgets import QApplication
 
 from hwtstudio import __version__
 from hwtstudio.app import MainWindow
 from hwtstudio.models import ResourceChange, ResourceSlot, ThemeProject
-from hwtstudio.semantic import SIMPLE_BY_ID
 from hwtstudio.phone_transfer import PhoneDevice, PhoneProfile
+from hwtstudio.semantic import SIMPLE_BY_ID
+from hwtstudio.ui.design_system import STYLE_SHEET, Colors
 from hwtstudio.ui.dialogs import resolve_missing_assets
-from hwtstudio.ui.design_system import Colors, STYLE_SHEET
 from hwtstudio.ui.phone_dialog import PhoneTransferDialog
 from hwtstudio.updater import UpdateCheck
 

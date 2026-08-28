@@ -6,9 +6,9 @@ import os
 import re
 import shutil
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from ..catalog import (
     load_catalog,
@@ -20,13 +20,13 @@ from ..common import MAX_CATALOG_BYTES
 from ..locking import InterprocessLockTimeoutError, interprocess_lock
 from ..models import ThemeCatalog
 from ..paths import (
+    SOURCE_THEME_ENV,
     bundled_catalog,
     data_dir,
     default_source_theme,
     ensure_no_symlink_parents,
     unique_temp_path,
 )
-
 
 _CATALOG_FILE_NAME = "catalog_daxue.json"
 _REPORT_FILE_NAME = "source_compatibility.report.json"
@@ -44,13 +44,12 @@ def _catalog_bundle_lock(root: Path) -> Iterator[None]:
     target = (root / _CATALOG_FILE_NAME).resolve()
     with _CATALOG_LOCK_GUARD:
         thread_lock = _CATALOG_LOCKS.setdefault(target, threading.RLock())
-    with thread_lock:
-        with interprocess_lock(
-            target,
-            timeout=_CATALOG_LOCK_TIMEOUT,
-            timeout_message="用户资源目录锁等待超时",
-        ):
-            yield
+    with thread_lock, interprocess_lock(
+        target,
+        timeout=_CATALOG_LOCK_TIMEOUT,
+        timeout_message="用户资源目录锁等待超时",
+    ):
+        yield
 
 
 def _bounded_sha256(path: Path) -> str | None:
@@ -276,7 +275,7 @@ def _save_catalog_bundle(catalog: ThemeCatalog, root: Path) -> None:
                 raise OSError(f"资源目录事务临时对象不是{reason}：{artifact}")
         save_catalog(catalog, stages[0])
         save_source_compatibility_report(catalog, stages[1])
-        for target, stage, backup in zip(targets, stages, backups):
+        for target, stage, backup in zip(targets, stages, backups, strict=True):
             if target.is_symlink() or (target.exists() and not target.is_file()):
                 reason = "符号链接" if target.is_symlink() else "普通文件"
                 raise OSError(f"资源目录目标不是{reason}：{target}")
@@ -303,12 +302,12 @@ def _save_catalog_bundle(catalog: ThemeCatalog, root: Path) -> None:
         marker_written = True
         if not _complete_transaction(root, entries):
             raise OSError("资源目录与兼容性报告提交校验失败")
-    except Exception:
+    except Exception as exc:
         if marker_written and not _rollback_transaction(root, entries):
-            raise OSError("资源目录保存失败，且无法回滚到上一版本")
+            raise OSError("资源目录保存失败，且无法回滚到上一版本") from exc
         raise
     finally:
-        for stage, backup in zip(stages, backups):
+        for stage, backup in zip(stages, backups, strict=True):
             _safe_unlink(stage)
             _safe_unlink(backup)
 
@@ -333,7 +332,10 @@ def _load_preferred_catalog_unlocked(root: Path) -> tuple[ThemeCatalog, str]:
         return load_catalog(bundled), warning
     source = default_source_theme()
     if not source.is_file():
-        raise FileNotFoundError("找不到资源目录，也找不到默认大雪主题。")
+        raise FileNotFoundError(
+            "找不到资源目录，也没有可用的源主题。"
+            f"可设置环境变量 {SOURCE_THEME_ENV} 指向大雪 .hwt 文件后重试。"
+        )
     catalog = scan_theme(source)
     if recovered:
         save_catalog(catalog, cached)

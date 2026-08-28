@@ -13,10 +13,10 @@ import os
 import re
 import subprocess
 import time
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 from xml.etree import ElementTree
 
 
@@ -205,7 +205,7 @@ def tappable_for(node: UiNode, nodes: Iterable[UiNode]) -> UiNode:
 def wait_for_package(info: DeviceInfo, package: str, timeout: float = 8.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        xml, nodes = dump_ui(info)
+        _xml, nodes = dump_ui(info)
         if any(node.package == package for node in nodes):
             return
         time.sleep(0.25)
@@ -240,7 +240,7 @@ def capture(
     xml_path.write_text(xml, encoding="utf-8")
     metadata_path.write_text(json.dumps({
         "scene": scene,
-        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "captured_at": datetime.now(UTC).isoformat(),
         "device": asdict(info),
         "packages": packages,
         "node_count": len(nodes),

@@ -9,7 +9,6 @@ from PIL import Image
 
 from .paths import ensure_no_symlink_parents, unique_temp_path
 
-
 PLACEHOLDER_COLOR = (242, 242, 242)
 IMAGE_LAYOUT = {
     "wallpaper/home_wallpaper_0.jpg": (2160, 2160),

@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import socket
 import tempfile
 import threading
 import unittest
@@ -11,6 +10,7 @@ import zipfile
 from concurrent.futures import Future, ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import patch
 
 from hwtstudio.phone_transfer import (
@@ -20,20 +20,20 @@ from hwtstudio.phone_transfer import (
     FEATURE_TRANSFER_PARALLEL,
     FEATURE_TRANSFER_PREPARE,
     MAX_FILENAME_BYTES,
+    MAX_REGISTRY_BYTES,
     MAX_REMOTE_ERROR_CHARS,
     MAX_REMOTE_TEXT_CHARS,
-    MAX_REGISTRY_BYTES,
     MAX_RESPONSE_BYTES,
     PhoneDevice,
     PhoneProfile,
     PhoneRegistry,
     PhoneTransferError,
     TransferCancelled,
-    bounded_ipv4_discovery_targets,
-    _merge_saved,
     _error_from_response,
     _http_discovery_candidates,
     _interprocess_lock,
+    _merge_saved,
+    bounded_ipv4_discovery_targets,
     discover_phones,
     fetch_phone_profile,
     pair_phone,
@@ -120,9 +120,9 @@ class FakeHttpResponse:
 
 
 class FakeHttpConnection:
-    response_payload = {}
-    response_status = 200
-    response_headers = {}
+    response_payload: ClassVar[dict] = {}
+    response_status: ClassVar[int] = 200
+    response_headers: ClassVar[dict] = {}
 
     def __init__(self, *_args, **_kwargs):
         pass
@@ -154,8 +154,8 @@ class FakeHttpConnection:
 
 
 class ChunkedConnection:
-    plans = []
-    instances = []
+    plans: ClassVar[list] = []
+    instances: ClassVar[list] = []
 
     def __init__(self, *_args, **_kwargs):
         self.headers = {}
@@ -191,7 +191,7 @@ class ChunkedConnection:
         try:
             self.plan = type(self).plans.pop(0)
         except IndexError:
-            raise AssertionError("计划序列已耗尽")
+            raise AssertionError("计划序列已耗尽") from None
         if isinstance(self.plan, BaseException):
             raise self.plan
         status, payload = self.plan
@@ -205,11 +205,7 @@ class ChunkedConnection:
             and self.method == "GET"
             and payload.get("state") == "completed"
             and "transfer_id" not in payload
-        ):
-            payload = dict(payload)
-            marker = "/api/v1/transfers/"
-            payload["transfer_id"] = self.target.split(marker, 1)[1].split("/", 1)[0]
-        elif (
+        ) or (
             isinstance(payload, dict)
             and self.method == "POST"
             and self.target.endswith("/complete")
@@ -254,7 +250,7 @@ class FakeDiscoverySocket:
                 "features": ["device_profile"],
             }).encode()
             return body, ("10.0.0.8", 48620)
-        raise socket.timeout()
+        raise TimeoutError()
 
     def close(self):
         pass
@@ -272,7 +268,7 @@ class InvalidPortDiscoverySocket(FakeDiscoverySocket):
                 "http_port": 70000,
             }).encode()
             return body, ("10.0.0.9", 48620)
-        raise socket.timeout()
+        raise TimeoutError()
 
 
 class MissingDeviceIdDiscoverySocket(FakeDiscoverySocket):
@@ -286,7 +282,7 @@ class MissingDeviceIdDiscoverySocket(FakeDiscoverySocket):
                 "http_port": 48621,
             }).encode()
             return body, ("10.0.0.10", 48620)
-        raise socket.timeout()
+        raise TimeoutError()
 
 
 class InvalidShapeDiscoverySocket(FakeDiscoverySocket):
@@ -294,16 +290,16 @@ class InvalidShapeDiscoverySocket(FakeDiscoverySocket):
         if self.sent and not self.returned:
             self.returned = True
             return b"[]", ("10.0.0.11", 48620)
-        raise socket.timeout()
+        raise TimeoutError()
 
 
 class SilentDiscoverySocket(FakeDiscoverySocket):
     def recvfrom(self, _size):
-        raise socket.timeout()
+        raise TimeoutError()
 
 
 class HttpDiscoveryConnection:
-    calls = []
+    calls: ClassVar[list] = []
 
     def __init__(self, host, port, timeout):
         type(self).calls.append((host, port, timeout))
@@ -535,9 +531,8 @@ class PhoneTransferTests(unittest.TestCase):
                 features=[FEATURE_TRANSFER_CHUNKED],
             )
 
-            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
-                with self.assertRaisesRegex(PhoneTransferError, "偏移量不一致") as raised:
-                    upload_theme(path, device)
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection), self.assertRaisesRegex(PhoneTransferError, "偏移量不一致") as raised:
+                upload_theme(path, device)
 
             self.assertEqual(raised.exception.code, "bad_response")
             self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "GET"])
@@ -559,9 +554,8 @@ class PhoneTransferTests(unittest.TestCase):
                 features=[FEATURE_TRANSFER_CHUNKED],
             )
 
-            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
-                with self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
-                    upload_theme(path, device)
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection), self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
+                upload_theme(path, device)
 
             self.assertEqual(raised.exception.code, "bad_response")
             self.assertEqual(len(ChunkedConnection.instances), 1)
@@ -584,9 +578,8 @@ class PhoneTransferTests(unittest.TestCase):
                 features=[FEATURE_TRANSFER_CHUNKED],
             )
 
-            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
-                with self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
-                    upload_theme(path, device)
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection), self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
+                upload_theme(path, device)
 
             self.assertEqual(raised.exception.code, "bad_response")
             self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "GET"])
@@ -614,9 +607,8 @@ class PhoneTransferTests(unittest.TestCase):
                 features=[FEATURE_TRANSFER_CHUNKED],
             )
 
-            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
-                with self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
-                    upload_theme(path, device)
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection), self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
+                upload_theme(path, device)
 
             self.assertEqual(raised.exception.code, "bad_response")
             self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "POST"])
@@ -638,9 +630,9 @@ class PhoneTransferTests(unittest.TestCase):
                 patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection),
                 patch("hwtstudio.phone_transfer._remote_transfer_status", return_value=None) as status,
                 patch("hwtstudio.phone_transfer._cancel_remote_transfer") as cancel,
+                self.assertRaisesRegex(PhoneTransferError, "上传连接中断") as raised,
             ):
-                with self.assertRaisesRegex(PhoneTransferError, "上传连接中断") as raised:
-                    upload_theme(path, device)
+                upload_theme(path, device)
 
             self.assertEqual(raised.exception.code, "upload_interrupted")
             self.assertGreaterEqual(status.call_count, 3)
@@ -791,9 +783,9 @@ class PhoneTransferTests(unittest.TestCase):
             with (
                 patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection),
                 patch("hwtstudio.phone_transfer.ThreadPoolExecutor", SerialExecutor),
+                self.assertRaisesRegex(PhoneTransferError, "校验失败") as raised,
             ):
-                with self.assertRaisesRegex(PhoneTransferError, "校验失败") as raised:
-                    upload_theme(path, device)
+                upload_theme(path, device)
 
             self.assertEqual(raised.exception.code, "hash_mismatch")
             self.assertEqual(len(ChunkedConnection.instances), 1)
@@ -879,9 +871,8 @@ class PhoneTransferTests(unittest.TestCase):
             with patch(
                 "hwtstudio.phone_transfer.http.client.HTTPConnection",
                 MutatingStatusConnection,
-            ):
-                with self.assertRaisesRegex(PhoneTransferError, "状态确认后.*发生变化") as raised:
-                    upload_theme(path, device)
+            ), self.assertRaisesRegex(PhoneTransferError, "状态确认后.*发生变化") as raised:
+                upload_theme(path, device)
 
             self.assertEqual(raised.exception.code, "file_changed")
 
@@ -919,9 +910,8 @@ class PhoneTransferTests(unittest.TestCase):
             with patch(
                 "hwtstudio.phone_transfer.http.client.HTTPConnection",
                 MutatingCommitConnection,
-            ):
-                with self.assertRaisesRegex(PhoneTransferError, "提交响应后.*发生变化") as raised:
-                    upload_theme(path, device)
+            ), self.assertRaisesRegex(PhoneTransferError, "提交响应后.*发生变化") as raised:
+                upload_theme(path, device)
 
             self.assertEqual(raised.exception.code, "file_changed")
 
@@ -951,9 +941,8 @@ class PhoneTransferTests(unittest.TestCase):
                 features=[FEATURE_TRANSFER_CHUNKED],
             )
 
-            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", CancelAfterChunkConnection):
-                with self.assertRaisesRegex(TransferCancelled, "发送已取消"):
-                    upload_theme(path, device, cancelled=cancelled)
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", CancelAfterChunkConnection), self.assertRaisesRegex(TransferCancelled, "发送已取消"):
+                upload_theme(path, device, cancelled=cancelled)
 
             self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "DELETE"])
 
@@ -1183,9 +1172,8 @@ class PhoneTransferTests(unittest.TestCase):
             ]
             device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token")
 
-            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
-                with self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
-                    upload_theme(path, device)
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection), self.assertRaisesRegex(PhoneTransferError, "会话标识不一致") as raised:
+                upload_theme(path, device)
 
             self.assertEqual(raised.exception.code, "bad_response")
             self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT"])
@@ -1202,9 +1190,8 @@ class PhoneTransferTests(unittest.TestCase):
                 return "0" * 64
 
             device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token")
-            with patch("hwtstudio.phone_transfer.sha256_file", side_effect=hash_then_mutate):
-                with self.assertRaisesRegex(PhoneTransferError, "发生变化") as raised:
-                    upload_theme(path, device)
+            with patch("hwtstudio.phone_transfer.sha256_file", side_effect=hash_then_mutate), self.assertRaisesRegex(PhoneTransferError, "发生变化") as raised:
+                upload_theme(path, device)
             self.assertEqual(raised.exception.code, "file_changed")
 
     def test_upload_refuses_file_changed_during_send(self):
@@ -1219,9 +1206,9 @@ class PhoneTransferTests(unittest.TestCase):
             with (
                 patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection),
                 patch.object(FakeHttpConnection, "send", side_effect=mutate),
+                self.assertRaisesRegex(PhoneTransferError, "发送后") as raised,
             ):
-                with self.assertRaisesRegex(PhoneTransferError, "发送后") as raised:
-                    upload_theme(path, device)
+                upload_theme(path, device)
             self.assertEqual(raised.exception.code, "file_changed")
 
     def test_legacy_upload_refuses_file_changed_after_response(self):
@@ -1251,18 +1238,16 @@ class PhoneTransferTests(unittest.TestCase):
             with patch(
                 "hwtstudio.phone_transfer.http.client.HTTPConnection",
                 MutatingResponseConnection,
-            ):
-                with self.assertRaisesRegex(PhoneTransferError, "响应确认后.*发生变化") as raised:
-                    upload_theme(path, device)
+            ), self.assertRaisesRegex(PhoneTransferError, "响应确认后.*发生变化") as raised:
+                upload_theme(path, device)
 
             self.assertEqual(raised.exception.code, "file_changed")
 
     def test_malformed_remote_protocol_is_reported_as_bad_response(self):
         device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token", features=["device_profile"])
         FakeHttpConnection.response_payload = {"protocol": "not-a-number"}
-        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-            with self.assertRaisesRegex(PhoneTransferError, "协议版本") as raised:
-                probe_phone(device.host, device.port)
+        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaisesRegex(PhoneTransferError, "协议版本") as raised:
+            probe_phone(device.host, device.port)
         self.assertEqual(raised.exception.code, "bad_response")
 
     def test_remote_text_fields_are_bounded_and_errors_are_single_line(self):
@@ -1271,9 +1256,8 @@ class PhoneTransferTests(unittest.TestCase):
             "device_id": "phone-1",
             "name": "x" * 513,
         }
-        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-            with self.assertRaisesRegex(PhoneTransferError, "过长") as raised:
-                probe_phone("127.0.0.1")
+        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaisesRegex(PhoneTransferError, "过长") as raised:
+            probe_phone("127.0.0.1")
         self.assertEqual(raised.exception.code, "bad_response")
 
         error = _error_from_response(500, {"message": "x" * 600 + "\n第二行\x00", "code": "remote"})
@@ -1288,11 +1272,9 @@ class PhoneTransferTests(unittest.TestCase):
                 "device_id": value,
                 "name": "测试手机",
             }
-            with self.subTest(value=repr(value)):
-                with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-                    with self.assertRaisesRegex(PhoneTransferError, "过长或包含控制字符") as raised:
-                        probe_phone("127.0.0.1")
-                self.assertEqual(raised.exception.code, "bad_response")
+            with self.subTest(value=repr(value)), patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaisesRegex(PhoneTransferError, "过长或包含控制字符") as raised:
+                probe_phone("127.0.0.1")
+            self.assertEqual(raised.exception.code, "bad_response")
 
     def test_oversized_remote_response_is_rejected(self):
         device = PhoneDevice("phone-1", "测试手机", "127.0.0.1")
@@ -1301,18 +1283,16 @@ class PhoneTransferTests(unittest.TestCase):
             "device_id": "phone-1",
             "padding": "x" * MAX_RESPONSE_BYTES,
         }
-        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-            with self.assertRaisesRegex(PhoneTransferError, "过大") as raised:
-                probe_phone(device.host, device.port)
+        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaisesRegex(PhoneTransferError, "过大") as raised:
+            probe_phone(device.host, device.port)
         self.assertEqual(raised.exception.code, "bad_response")
 
     def test_invalid_remote_content_length_is_rejected(self):
         FakeHttpConnection.response_payload = {"protocol": 1}
         FakeHttpConnection.response_headers = {"Content-Length": "not-a-number"}
         try:
-            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-                with self.assertRaisesRegex(PhoneTransferError, "响应长度") as raised:
-                    probe_phone("127.0.0.1")
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaisesRegex(PhoneTransferError, "响应长度") as raised:
+                probe_phone("127.0.0.1")
             self.assertEqual(raised.exception.code, "bad_response")
         finally:
             FakeHttpConnection.response_headers = {}
@@ -1322,26 +1302,23 @@ class PhoneTransferTests(unittest.TestCase):
         body_length = len(json.dumps(FakeHttpConnection.response_payload).encode("utf-8"))
         FakeHttpConnection.response_headers = {"Content-Length": str(body_length + 1)}
         try:
-            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-                with self.assertRaisesRegex(PhoneTransferError, "长度与声明不一致") as raised:
-                    probe_phone("127.0.0.1")
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaisesRegex(PhoneTransferError, "长度与声明不一致") as raised:
+                probe_phone("127.0.0.1")
             self.assertEqual(raised.exception.code, "bad_response")
         finally:
             FakeHttpConnection.response_headers = {}
 
     def test_missing_remote_device_id_is_reported_as_bad_response(self):
         FakeHttpConnection.response_payload = {"protocol": 1}
-        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-            with self.assertRaisesRegex(PhoneTransferError, "device_id") as raised:
-                probe_phone("127.0.0.1")
+        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaisesRegex(PhoneTransferError, "device_id") as raised:
+            probe_phone("127.0.0.1")
         self.assertEqual(raised.exception.code, "bad_response")
 
     def test_malformed_pair_token_is_reported_as_bad_response(self):
         device = PhoneDevice("phone-1", "测试手机", "127.0.0.1")
         FakeHttpConnection.response_payload = {"protocol": 1, "token": {}}
-        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-            with self.assertRaisesRegex(PhoneTransferError, "token") as raised:
-                pair_phone(device, "123456")
+        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaisesRegex(PhoneTransferError, "token") as raised:
+            pair_phone(device, "123456")
         self.assertEqual(raised.exception.code, "bad_response")
 
     def test_pair_rejects_unbounded_remote_device_id(self):
@@ -1351,9 +1328,8 @@ class PhoneTransferTests(unittest.TestCase):
             "token": "token",
             "device_id": "x" * (MAX_REMOTE_TEXT_CHARS + 1),
         }
-        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-            with self.assertRaisesRegex(PhoneTransferError, "配对响应device_id.*过长") as raised:
-                pair_phone(device, "123456")
+        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaisesRegex(PhoneTransferError, "配对响应device_id.*过长") as raised:
+            pair_phone(device, "123456")
         self.assertEqual(raised.exception.code, "bad_response")
 
     def test_pair_compacts_remote_error_message(self):
@@ -1361,9 +1337,8 @@ class PhoneTransferTests(unittest.TestCase):
         FakeHttpConnection.response_status = 400
         FakeHttpConnection.response_payload = {"message": "x" * 600 + "\n第二行\x00"}
         try:
-            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-                with self.assertRaises(PhoneTransferError) as raised:
-                    pair_phone(device, "123456")
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaises(PhoneTransferError) as raised:
+                pair_phone(device, "123456")
             self.assertEqual(raised.exception.code, "pair_failed")
             self.assertNotIn("\n", str(raised.exception))
             self.assertNotIn("\x00", str(raised.exception))
@@ -1378,9 +1353,8 @@ class PhoneTransferTests(unittest.TestCase):
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             FakeHttpConnection.response_payload = {"size": 999, "sha256": digest}
             device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token")
-            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-                with self.assertRaisesRegex(PhoneTransferError, "大小") as raised:
-                    upload_theme(path, device)
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaisesRegex(PhoneTransferError, "大小") as raised:
+                upload_theme(path, device)
             self.assertEqual(raised.exception.code, "bad_response")
 
     def test_upload_rejects_non_boolean_success_fields(self):
@@ -1394,9 +1368,8 @@ class PhoneTransferTests(unittest.TestCase):
                 "overwritten": "false",
             }
             device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token")
-            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-                with self.assertRaisesRegex(PhoneTransferError, "overwritten") as raised:
-                    upload_theme(path, device)
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaisesRegex(PhoneTransferError, "overwritten") as raised:
+                upload_theme(path, device)
             self.assertEqual(raised.exception.code, "bad_response")
 
     def test_upload_rejects_missing_success_fields(self):
@@ -1413,18 +1386,15 @@ class PhoneTransferTests(unittest.TestCase):
                     "theme_app_opened": False,
                 }
                 FakeHttpConnection.response_payload.pop(missing)
-                with self.subTest(missing=missing):
-                    with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-                        with self.assertRaisesRegex(PhoneTransferError, missing) as raised:
-                            upload_theme(path, device)
-                    self.assertEqual(raised.exception.code, "bad_response")
+                with self.subTest(missing=missing), patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaisesRegex(PhoneTransferError, missing) as raised:
+                    upload_theme(path, device)
+                self.assertEqual(raised.exception.code, "bad_response")
 
     def test_malformed_profile_fields_are_rejected_without_partial_state(self):
         device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token", features=["device_profile"])
         FakeHttpConnection.response_payload = {"sdk_int": "not-a-number", "installed_packages": "bad"}
-        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-            with self.assertRaisesRegex(PhoneTransferError, "SDK") as raised:
-                fetch_phone_profile(device)
+        with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaisesRegex(PhoneTransferError, "SDK") as raised:
+            fetch_phone_profile(device)
         self.assertEqual(raised.exception.code, "bad_response")
         self.assertIsNone(device.profile)
 
@@ -1432,16 +1402,13 @@ class PhoneTransferTests(unittest.TestCase):
         device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token", features=["device_profile"])
         for payload, message in (
             ({"sdk_int": True}, "SDK"),
-            ({"sdk_int": 36, "installed_packages": ["com.example", 7]}, "列表"),
             ({"sdk_int": 36, "model": 7}, "model"),
         ):
             FakeHttpConnection.response_payload = payload
-            with self.subTest(message=message):
-                with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
-                    with self.assertRaisesRegex(PhoneTransferError, message) as raised:
-                        fetch_phone_profile(device)
-                self.assertEqual(raised.exception.code, "bad_response")
-                self.assertIsNone(device.profile)
+            with self.subTest(message=message), patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection), self.assertRaisesRegex(PhoneTransferError, message) as raised:
+                fetch_phone_profile(device)
+            self.assertEqual(raised.exception.code, "bad_response")
+            self.assertIsNone(device.profile)
 
     def test_registry_discards_malformed_entries_and_normalizes_profiles(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1540,6 +1507,58 @@ class PhoneTransferTests(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
 
+    def test_registry_preserves_corrupt_file_instead_of_silent_loss(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "phones.json"
+            path.write_bytes(b'{"devices": [ broken')
+            self.assertEqual(PhoneRegistry(path).load(), {})
+            backups = list(Path(directory).glob("phones.json.corrupt-*"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_bytes(), b'{"devices": [ broken')
+
+    def test_registry_save_survives_failed_atomic_replace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "phones.json"
+            device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="tok-123")
+            registry = PhoneRegistry(path)
+            with patch("hwtstudio.phone_transfer.os.replace", side_effect=OSError("模拟不支持原子替换")):
+                registry.save({device.device_id: device})
+            self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
+            loaded = registry.load()
+            self.assertEqual(loaded["phone-1"].name, "测试手机")
+            self.assertEqual(loaded["phone-1"].token, "tok-123")
+
+    def test_registry_roundtrips_pair_code_field(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "phones.json"
+            device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", pair_code="654321")
+            PhoneRegistry(path).save({device.device_id: device})
+            loaded = PhoneRegistry(path).load()
+            self.assertEqual(loaded["phone-1"].pair_code, "654321")
+
+    def test_registry_loads_legacy_file_without_pair_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "phones.json"
+            path.write_text(json.dumps({
+                "devices": [{"device_id": "old", "host": "127.0.0.1", "name": "旧记录"}],
+            }), encoding="utf-8")
+            loaded = PhoneRegistry(path).load()
+            self.assertEqual(loaded["old"].pair_code, "")
+
+    def test_fetch_phone_profile_tolerates_dirty_package_list(self):
+        device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="tok-1", features=["device_profile"])
+        FakeHttpConnection.response_payload = {
+            "manufacturer": "HONOR",
+            "model": "PAD",
+            "sdk_int": 34,
+            "installed_packages": ["com.example.good", 123, None, ""],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            registry = PhoneRegistry(Path(directory) / "phones.json")
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", FakeHttpConnection):
+                profile = fetch_phone_profile(device, registry=registry)
+            self.assertEqual(profile.installed_packages, ["com.example.good"])
+
     def test_registry_rejects_symlinked_parent_before_lock_creation(self):
         if not hasattr(os, "symlink"):
             self.skipTest("当前平台不支持符号链接")
@@ -1598,10 +1617,9 @@ class PhoneTransferTests(unittest.TestCase):
             with (
                 patch("hwtstudio.locking.time.monotonic", side_effect=[0.0, 6.0]),
                 patch(lock_call, side_effect=OSError("busy")),
+                self.assertRaisesRegex(OSError, "超时"),_interprocess_lock(path)
             ):
-                with self.assertRaisesRegex(OSError, "超时"):
-                    with _interprocess_lock(path):
-                        pass
+                pass
 
     def test_registry_serializes_concurrent_updates_from_separate_instances(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1819,14 +1837,13 @@ class PhoneTransferTests(unittest.TestCase):
             with patch(
                 "hwtstudio.phone_transfer.http.client.HTTPConnection",
                 side_effect=[upload_connection, cancel_connection],
-            ):
-                with self.assertRaises(TransferCancelled):
-                    upload_theme(
-                        theme,
-                        PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="test-token"),
-                        cancelled=cancelled,
-                        progress=progress,
-                    )
+            ), self.assertRaises(TransferCancelled):
+                upload_theme(
+                    theme,
+                    PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="test-token"),
+                    cancelled=cancelled,
+                    progress=progress,
+                )
 
             self.assertRegex(upload_connection.headers["X-HWT-Transfer-Id"], r"^[0-9a-f]{32}$")
             self.assertEqual(cancel_connection.requests[0][0][0], "DELETE")
@@ -1960,12 +1977,11 @@ class PhoneTransferTests(unittest.TestCase):
             with patch(
                 "hwtstudio.phone_transfer.http.client.HTTPConnection",
                 side_effect=[MutatingStatusConnection(fail=True), MutatingStatusConnection()],
-            ):
-                with self.assertRaisesRegex(PhoneTransferError, "状态确认后.*发生变化") as raised:
-                    upload_theme(
-                        theme,
-                        PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="test-token"),
-                    )
+            ), self.assertRaisesRegex(PhoneTransferError, "状态确认后.*发生变化") as raised:
+                upload_theme(
+                    theme,
+                    PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="test-token"),
+                )
 
             self.assertEqual(raised.exception.code, "file_changed")
 
@@ -1980,9 +1996,8 @@ class PhoneTransferTests(unittest.TestCase):
             ]
             device = PhoneDevice("phone-1", "测试手机", "127.0.0.1", token="token")
 
-            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection):
-                with self.assertRaisesRegex(PhoneTransferError, "未知的传输状态") as raised:
-                    upload_theme(theme, device)
+            with patch("hwtstudio.phone_transfer.http.client.HTTPConnection", ChunkedConnection), self.assertRaisesRegex(PhoneTransferError, "未知的传输状态") as raised:
+                upload_theme(theme, device)
 
             self.assertEqual(raised.exception.code, "bad_response")
             self.assertEqual([request.method for request in ChunkedConnection.instances], ["PUT", "GET"])

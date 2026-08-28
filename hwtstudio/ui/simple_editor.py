@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
+    QColorDialog,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -16,7 +17,6 @@ from PySide6.QtWidgets import (
     QSlider,
     QVBoxLayout,
     QWidget,
-    QColorDialog,
 )
 
 from ..models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
@@ -29,7 +29,6 @@ from ..semantic import (
 )
 from .design_system import Colors, apply_type, set_role
 from .simple_preview import ClickablePreview, PreviewDialog, PreviewRepository
-
 
 _TINT_BY_SECTION = {
     "主题": "lavender",
@@ -402,7 +401,7 @@ class SimpleEditor(QWidget):
             grid.setVerticalSpacing(16)
             items = [item for item in SIMPLE_SETTINGS if item.section == section]
             section_cards: list[SimpleSettingCard] = []
-            for index, setting in enumerate(items):
+            for setting in items:
                 card = SimpleSettingCard(
                     setting,
                     apply_callback,

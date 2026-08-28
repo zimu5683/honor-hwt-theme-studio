@@ -7,16 +7,17 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+import qtawesome as qta
 from PySide6.QtCore import QSettings, QSize, QStandardPaths, Qt, QThread, QTimer, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QPixmap, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
+    QBoxLayout,
     QCheckBox,
     QColorDialog,
     QComboBox,
     QDialog,
     QFileDialog,
-    QBoxLayout,
     QFormLayout,
     QFrame,
     QGridLayout,
@@ -24,8 +25,8 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QMenu,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QProgressDialog,
@@ -34,14 +35,13 @@ from PySide6.QtWidgets import (
     QSlider,
     QSplitter,
     QStatusBar,
-    QTabWidget,
     QTableView,
+    QTabWidget,
     QToolBar,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
-import qtawesome as qta
 
 from . import __version__
 from .catalog import scan_theme, source_compatibility_report
@@ -51,9 +51,8 @@ from .models import ResourceChange, ResourceSlot, ThemeCatalog, ThemeProject
 from .paths import APP_NAME, data_dir, default_source_theme
 from .phone_transfer import PhoneRegistry
 from .projectio import load_project, save_project
-from .validation import validate_change_value
-from .services.catalog_service import load_preferred_catalog, save_user_catalog
 from .semantic import SIMPLE_SETTINGS, TYPE_LABELS, friendly_resource_label, resolve_all, surface_treatment_label
+from .services.catalog_service import load_preferred_catalog, save_user_catalog
 from .ui.commands import BulkChangeCommand, ChangeCommand
 from .ui.design_system import Colors, apply_design_system, apply_type, set_role, set_state
 from .ui.dialogs import CustomResourceDialog, resolve_missing_assets
@@ -63,7 +62,8 @@ from .ui.resource_models import ResourceFilterModel, ResourceTableModel
 from .ui.simple_editor import SimpleEditor
 from .ui.simple_preview import PreviewRepository
 from .ui.workers import ExportWorker, ProfileWorker, TransferWorker, UpdateWorker
-from .updater import Release, UpdateCheck, VerifiedDownload, launch_update, release_page_url
+from .updater import Release, UpdateCheck, VerifiedDownload, release_page_url
+from .validation import validate_change_value
 
 
 def _compact_error_detail(detail: str, fallback: str, *, limit: int = 240) -> str:
@@ -166,6 +166,9 @@ class MainWindow(QMainWindow):
         self.export_action: QAction | None = None
         self.update_thread: QThread | None = None
         self.update_worker: UpdateWorker | None = None
+        self.update_launch_thread: QThread | None = None
+        self.update_launch_worker: UpdateWorker | None = None
+        self._update_download_path: Path | None = None
         self._update_generation = 0
         self.update_info: UpdateCheck | None = None
         self.update_progress: QProgressDialog | None = None
@@ -380,7 +383,7 @@ class MainWindow(QMainWindow):
         combo.clear()
         combo.addItems(values)
         index = combo.findText(current)
-        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.setCurrentIndex(max(index, 0))
         combo.blockSignals(False)
 
     def _replace_type_items(self, resources: list[ResourceSlot]):
@@ -391,7 +394,7 @@ class MainWindow(QMainWindow):
         for resource_type in sorted({item.resource_type for item in resources}):
             self.type_combo.addItem(TYPE_LABELS.get(resource_type, resource_type), resource_type)
         index = self.type_combo.findData(current)
-        self.type_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.type_combo.setCurrentIndex(max(index, 0))
         self.type_combo.blockSignals(False)
 
     def bind_catalog(self, catalog: ThemeCatalog):
@@ -401,7 +404,7 @@ class MainWindow(QMainWindow):
         self.resource_model.project = self.project
         resources = [*catalog.resources, *self.project.custom_resources]
         self.resource_model.set_resources(resources)
-        self._replace_combo_items(self.category_combo, ["全部"] + sorted({x.category for x in resources}))
+        self._replace_combo_items(self.category_combo, ["全部", *sorted({x.category for x in resources})])
         self._replace_type_items(resources)
         self.selected_slot = None
         self.table.clearSelection()
@@ -426,7 +429,7 @@ class MainWindow(QMainWindow):
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("搜索应用、中文作用、资源名或路径……")
         self.category_combo = QComboBox()
-        self.category_combo.addItems(["全部"] + sorted({x.category for x in self.catalog.resources}))
+        self.category_combo.addItems(["全部", *sorted({x.category for x in self.catalog.resources})])
         self.type_combo = QComboBox()
         self.type_combo.addItem("全部类型", "全部")
         for resource_type in sorted({x.resource_type for x in self.catalog.resources}):
@@ -625,14 +628,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.changes_text)
         return page
 
-    def _build_log_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        self.log_text = QPlainTextEdit()
-        self.log_text.setReadOnly(True)
-        layout.addWidget(self.log_text)
-        return page
-
     def show_log_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("运行日志")
@@ -782,17 +777,74 @@ class MainWindow(QMainWindow):
             progress.close()
         path = download.path
         self.log(f"更新包已下载并通过 SHA-256 校验：{path}")
-        try:
-            should_exit = launch_update(download)
-        except Exception:
-            self.log(traceback.format_exc())
-            QMessageBox.critical(self, "启动更新失败", f"更新包已保存到：\n{path}\n\n无法自动启动新版本，请手动打开该文件。")
+        # launch_update 要对整包重算 SHA-256 并解压便携包，耗时可达数十秒，
+        # 放入后台线程执行，避免冻结界面。
+        self._update_download_path = path
+        self.update_progress = QProgressDialog("正在准备更新……", None, 0, 0, self)
+        self.update_progress.setWindowTitle("更新大雪主题编辑器")
+        self.update_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self.update_progress.setMinimumDuration(0)
+        self.update_progress.setAutoClose(False)
+        self.update_progress.setAutoReset(False)
+        self.update_progress.show()
+        self.update_launch_thread = QThread(self)
+        worker = UpdateWorker(task_id=generation)
+        worker.download = download
+        worker.moveToThread(self.update_launch_thread)
+        self.update_launch_thread.started.connect(worker.run_launch)
+        worker.launched.connect(self._update_launched, Qt.ConnectionType.QueuedConnection)
+        worker.failed.connect(self._update_launch_failed, Qt.ConnectionType.QueuedConnection)
+        worker.launched.connect(self.update_launch_thread.quit)
+        worker.failed.connect(self.update_launch_thread.quit)
+        self.update_launch_thread.finished.connect(worker.deleteLater)
+        self.update_launch_thread.setProperty("hwt_generation", generation)
+        self.update_launch_thread.finished.connect(self._update_launch_finished)
+        self.update_launch_thread.finished.connect(self.update_launch_thread.deleteLater)
+        self.update_launch_worker = worker
+        self.update_launch_thread.start()
+
+    def _update_launched(self, should_exit: bool, generation: int | None = None):
+        if generation is not None and generation != self._update_generation:
             return
+        if self._closing:
+            return
+        progress = self.update_progress
+        self.update_progress = None
+        if progress is not None:
+            progress.close()
         if should_exit:
             self.statusBar().showMessage("更新程序已启动，编辑器即将退出……")
             QTimer.singleShot(0, QApplication.instance().quit)
         else:
-            QMessageBox.information(self, "更新包已准备好", f"更新包已下载：\n{path}\n\n已打开新版本程序。")
+            QMessageBox.information(
+                self, "更新包已准备好", f"更新包已下载：\n{self._update_download_path}\n\n已打开新版本程序。"
+            )
+
+    def _update_launch_failed(self, detail: str, generation: int | None = None):
+        if generation is not None and generation != self._update_generation:
+            return
+        if self._closing:
+            return
+        progress = self.update_progress
+        self.update_progress = None
+        if progress is not None:
+            progress.close()
+        self.log(f"启动更新失败：{detail}")
+        QMessageBox.critical(
+            self,
+            "启动更新失败",
+            f"更新包已保存到：\n{self._update_download_path}\n\n无法自动启动新版本，请手动打开该文件。",
+        )
+
+    def _update_launch_finished(self, generation: int | None = None):
+        if generation is None:
+            sender = self.sender()
+            generation = sender.property("hwt_generation") if sender is not None else None
+        if generation is not None and generation != self._update_generation:
+            return
+        self.update_launch_thread = None
+        self.update_launch_worker = None
+        self._maybe_close_after_threads()
 
     def _update_download_failed(self, detail: str, generation: int | None = None):
         if generation is not None and generation != self._update_generation:
@@ -910,7 +962,7 @@ class MainWindow(QMainWindow):
         resources = [*self.catalog.resources, *self.project.custom_resources]
         if [slot.id for slot in self.resource_model.resources] != [slot.id for slot in resources]:
             self.resource_model.set_resources(resources)
-        self._replace_combo_items(self.category_combo, ["全部"] + sorted({x.category for x in resources}))
+        self._replace_combo_items(self.category_combo, ["全部", *sorted({x.category for x in resources})])
         self._replace_type_items(resources)
         self.name_edit.setText(self.project.name)
         self.title_edit.setText(self.project.title)
@@ -1188,7 +1240,7 @@ class MainWindow(QMainWindow):
 
     def show_category(self, category: str):
         index = self.category_combo.findText(category)
-        self.category_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.category_combo.setCurrentIndex(max(index, 0))
         self.tabs.setCurrentIndex(2)
 
     def select_slot(self, slot_id: str):
@@ -1333,10 +1385,9 @@ class MainWindow(QMainWindow):
         self._exporting = True
         if self.export_action is not None:
             self.export_action.setEnabled(False)
-        self.export_progress = QProgressDialog("正在导出 HWT…", None, 0, 0, self)
+        self.export_progress = QProgressDialog("正在导出 HWT…", "取消", 0, 0, self)
         self.export_progress.setWindowTitle("导出 HWT")
         self.export_progress.setWindowModality(Qt.WindowModality.WindowModal)
-        self.export_progress.setCancelButton(None)
         self.export_progress.setMinimumDuration(0)
         self.export_progress.setAutoClose(False)
         self.export_progress.setAutoReset(False)
@@ -1344,6 +1395,7 @@ class MainWindow(QMainWindow):
         self.export_thread = QThread(self)
         # 在界面线程先拍快照,避免导出线程复制工程时与用户编辑竞争。
         worker = ExportWorker(copy.deepcopy(self.project), self.catalog, output, task_id=generation)
+        self.export_progress.canceled.connect(worker.cancel)
         worker.moveToThread(self.export_thread)
         self.export_thread.started.connect(worker.run)
         worker.finished.connect(self._export_finished)
@@ -1396,6 +1448,9 @@ class MainWindow(QMainWindow):
             progress.close()
         self.log(f"导出失败（原始错误）：{detail}")
         if self._closing:
+            return
+        if "取消" in detail:
+            QMessageBox.information(self, "已取消导出", "导出已取消，未生成文件。")
             return
         QMessageBox.critical(
             self,
@@ -1578,7 +1633,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "发送失败", message)
 
     def rescan_source(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "选择大雪源主题", str(default_source_theme()), "荣耀主题 (*.hwt)")
+        start = str(default_source_theme()) or str(self._theme_file_dialog_directory())
+        filename, _ = QFileDialog.getOpenFileName(self, "选择大雪源主题", start, "荣耀主题 (*.hwt)")
         if not filename:
             return
         try:
@@ -1631,7 +1687,13 @@ class MainWindow(QMainWindow):
     def _background_threads(self) -> list[QThread]:
         return [
             thread
-            for thread in (self.update_thread, self.profile_thread, self.transfer_thread, self.export_thread)
+            for thread in (
+                self.update_thread,
+                self.update_launch_thread,
+                self.profile_thread,
+                self.transfer_thread,
+                self.export_thread,
+            )
             if thread is not None
         ]
 
@@ -1639,7 +1701,13 @@ class MainWindow(QMainWindow):
         return any(thread.isRunning() for thread in self._background_threads())
 
     def _cancel_background_tasks(self):
-        for worker in (self.update_worker, self._profile_worker, self._transfer_worker, self._export_worker):
+        for worker in (
+            self.update_worker,
+            self.update_launch_worker,
+            self._profile_worker,
+            self._transfer_worker,
+            self._export_worker,
+        ):
             if worker is not None:
                 worker.cancel()
         for thread in self._background_threads():
@@ -1704,8 +1772,6 @@ class MainWindow(QMainWindow):
 
     def log(self, message: str):
         self._log_lines.append(message.rstrip())
-        if hasattr(self, "log_text"):
-            self.log_text.appendPlainText(message.rstrip() + "\n")
         self._append_log_file(message)
 
     _LOG_MAX_BYTES = 4 * 1024 * 1024
@@ -1714,7 +1780,7 @@ class MainWindow(QMainWindow):
         """Persist a bounded log so failures can be diagnosed without a live UI."""
         try:
             path = data_dir() / "editor.log"
-            line = f"{datetime.now().isoformat(timespec='seconds')}  {message.rstrip()}\n"
+            line = f"{datetime.now().astimezone().isoformat(timespec='seconds')}  {message.rstrip()}\n"
             if path.is_file():
                 size = path.stat().st_size
                 if size > self._LOG_MAX_BYTES:

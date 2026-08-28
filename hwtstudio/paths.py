@@ -5,14 +5,13 @@ import sys
 import threading
 from pathlib import Path
 
-
 APP_NAME = "大雪主题编辑器"
 
 
 def bundle_root() -> Path:
     """Return the source tree or PyInstaller extraction root."""
     if getattr(sys, "frozen", False):
-        return Path(getattr(sys, "_MEIPASS"))
+        return Path(sys._MEIPASS)
     return Path(__file__).resolve().parent.parent
 
 
@@ -72,5 +71,17 @@ def bundled_blank_theme() -> Path:
     return bundle_root() / "assets" / "空白主题_子木.hwt"
 
 
+SOURCE_THEME_ENV = "HWTSTUDIO_SOURCE_THEME"
+
+
 def default_source_theme() -> Path:
-    return Path(r"D:\HONOR Share\Honor Share\30039574_大雪.hwt")
+    """大雪源主题默认路径。
+
+    只认环境变量 ``HWTSTUDIO_SOURCE_THEME``；未设置时返回空路径，由调用方
+    按“没有默认源主题”处理（文件对话框回退到最近使用目录）。过去这里
+    硬编码了开发机器的绝对路径，在其他机器上永远不存在。
+    """
+    configured = os.environ.get(SOURCE_THEME_ENV, "").strip()
+    if configured:
+        return Path(configured)
+    return Path("")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import uuid
 import os
+import uuid
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -20,7 +20,6 @@ from ..models import ResourceSlot, ThemeProject
 from ..projectio import missing_project_assets
 from ..validation import validate_custom_slot
 from .design_system import set_role
-
 
 RESOURCE_TYPE_LABELS = {
     "color": "颜色",

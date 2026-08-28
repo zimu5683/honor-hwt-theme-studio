@@ -16,7 +16,6 @@ from ..paths import bundle_root
 from ..semantic import SURFACE_LAYER_VALUES, SURFACE_TREATMENT_VALUES, PreviewSpec, surface_treatment_label
 from .design_system import set_role
 
-
 _MAX_COMPOSITE_CACHE = 24
 
 # 分层面板处理在真机截图上的示意区域：全图铺壁纸，半透明只覆盖这些区域。

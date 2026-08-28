@@ -184,8 +184,10 @@ class SurfaceSyncTests(unittest.TestCase):
             self.assertTrue(report["validation"]["valid"])
             self.assertEqual(report["preflight"]["errors"], [])
             self.assertGreater(report["preflight"]["value_targets"], 0)
-            with ZipFile(output) as outer:
-                with ZipFile(io.BytesIO(outer.read("com.hihonor.contacts"))) as module:
+            with (
+                ZipFile(output) as outer,
+                ZipFile(io.BytesIO(outer.read("com.hihonor.contacts"))) as module,
+            ):
                     self.assertIn(
                         "framework-res-hnext/res/drawable-xxhdpi/background_magic.9.png",
                         module.namelist(),
@@ -206,8 +208,10 @@ class SurfaceSyncTests(unittest.TestCase):
             output = Path(directory) / "frosted.hwt"
             _, report = export_theme(project, self.catalog, output)
             self.assertTrue(report["validation"]["valid"])
-            with ZipFile(output) as outer:
-                with ZipFile(io.BytesIO(outer.read("com.hihonor.contacts"))) as module:
+            with (
+                ZipFile(output) as outer,
+                ZipFile(io.BytesIO(outer.read("com.hihonor.contacts"))) as module,
+            ):
                     fw_xml = module.read("framework-res-hnext/theme.xml").decode("utf-8")
                     self.assertIn("#4DFFFFFF", fw_xml)
 
@@ -222,8 +226,10 @@ class SurfaceSyncTests(unittest.TestCase):
             _, report = export_theme(project, self.catalog, output)
             self.assertTrue(report["validation"]["valid"])
             self.assertEqual(report["preflight"]["value_targets"], 0)
-            with ZipFile(output) as outer:
-                with ZipFile(io.BytesIO(outer.read("com.hihonor.contacts"))) as module:
+            with (
+                ZipFile(output) as outer,
+                ZipFile(io.BytesIO(outer.read("com.hihonor.contacts"))) as module,
+            ):
                     self.assertNotIn("theme.xml", module.namelist())
                     self.assertIn(
                         "framework-res-hnext/res/drawable-xxhdpi/background_magic.9.png",
@@ -255,8 +261,10 @@ class SurfaceSyncTests(unittest.TestCase):
                     for item in report["preflight"]["warnings"]
                 )
             )
-            with ZipFile(output) as outer:
-                with ZipFile(io.BytesIO(outer.read("com.hihonor.contacts"))) as module:
+            with (
+                ZipFile(output) as outer,
+                ZipFile(io.BytesIO(outer.read("com.hihonor.contacts"))) as module,
+            ):
                     root_xml = module.read("theme.xml").decode("utf-8")
                     self.assertIn("#FF112233", root_xml)
 
@@ -271,8 +279,10 @@ class SurfaceSyncTests(unittest.TestCase):
             _, report = export_theme(project, self.catalog, output)
             self.assertTrue(report["validation"]["valid"])
             self.assertEqual(report["preflight"]["errors"], [])
-            with ZipFile(output) as outer:
-                with ZipFile(io.BytesIO(outer.read("com.android.settings"))) as module:
+            with (
+                ZipFile(output) as outer,
+                ZipFile(io.BytesIO(outer.read("com.android.settings"))) as module,
+            ):
                     fw_xml = module.read("framework-res-hnext/theme.xml").decode("utf-8")
                     root_xml = module.read("theme.xml").decode("utf-8")
                     self.assertIn("#00000000", fw_xml)
@@ -291,8 +301,10 @@ class SurfaceSyncTests(unittest.TestCase):
             output = Path(directory) / "dialer_layered.hwt"
             _, report = export_theme(project, self.catalog, output)
             self.assertTrue(report["validation"]["valid"])
-            with ZipFile(output) as outer:
-                with ZipFile(io.BytesIO(outer.read("com.hihonor.contacts"))) as module:
+            with (
+                ZipFile(output) as outer,
+                ZipFile(io.BytesIO(outer.read("com.hihonor.contacts"))) as module,
+            ):
                     root_xml = module.read("theme.xml").decode("utf-8")
                     self.assertIn("dialpad_background_color", root_xml)
                     self.assertIn("recent_task_jhh_background_color", root_xml)

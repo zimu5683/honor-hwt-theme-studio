@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-import bsdiff4  # noqa: F401  — 仅 CI 端依赖
+import bsdiff4
 
 
 def _gh(*args: str) -> str:

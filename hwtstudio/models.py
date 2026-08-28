@@ -32,7 +32,7 @@ class ResourceSlot:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "ResourceSlot":
+    def from_dict(cls, value: dict[str, Any]) -> ResourceSlot:
         fields = cls.__dataclass_fields__
         return cls(**{k: v for k, v in value.items() if k in fields})
 
@@ -58,7 +58,7 @@ class ThemeCatalog:
         }
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "ThemeCatalog":
+    def from_dict(cls, value: dict[str, Any]) -> ThemeCatalog:
         return cls(
             source_path=value.get("source_path", ""),
             source_sha256=value.get("source_sha256", ""),
@@ -92,7 +92,7 @@ class ResourceChange:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "ResourceChange":
+    def from_dict(cls, value: dict[str, Any]) -> ResourceChange:
         fields = cls.__dataclass_fields__
         return cls(**{k: v for k, v in value.items() if k in fields})
 
@@ -132,7 +132,7 @@ class ThemeProject:
         }
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any], project_file: Path | None = None) -> "ThemeProject":
+    def from_dict(cls, value: dict[str, Any], project_file: Path | None = None) -> ThemeProject:
         project = cls(
             name=value.get("name", "我的主题"),
             title=value.get("title", "空白主题"),
